@@ -3,6 +3,7 @@ set -euo pipefail
 shopt -s dotglob nullglob
 
 msg_file="$1"
+sha="${2:-}"
 header="$(head -n1 "$msg_file")"
 
 case "$header" in
@@ -70,7 +71,11 @@ pattern="^(${types})${scope_part}: [a-z0-9].*[^.]\$"
 
 [[ "$header" =~ $pattern ]] || fail
 
-description="${header#*: }"
+full_pattern="^(${types})${scope_part}: (.*)\$"
+[[ "$header" =~ $full_pattern ]]
+written_scope="${BASH_REMATCH[3]}"
+description="${BASH_REMATCH[4]}"
+
 case "$description" in
   added\ *|adds\ *|fixed\ *|fixes\ *|updated\ *|updates\ *|removed\ *|removes\ *|changed\ *|changes\ *|created\ *|creates\ *)
     echo "Invalid commit message:" >&2
@@ -80,3 +85,49 @@ case "$description" in
     exit 1
     ;;
 esac
+
+if [ -n "$sha" ]; then
+  mapfile -t changed_files < <(git diff-tree --no-commit-id --name-only -r "$sha")
+else
+  mapfile -t changed_files < <(git diff --cached --name-only)
+fi
+
+[ "${#changed_files[@]}" -eq 0 ] && exit 0
+
+touched=()
+all_crate_scoped=1
+for path in "${changed_files[@]}"; do
+  first="${path%%/*}"
+  if [ "$first" = "crates" ] && [[ "$path" == crates/*/* ]]; then
+    rest="${path#crates/}"
+    touched+=("${rest%%/*}")
+  else
+    touched+=("$first")
+    all_crate_scoped=0
+  fi
+done
+
+mapfile -t touched < <(printf '%s\n' "${touched[@]}" | sort -u)
+
+fail_scope() {
+  echo "Invalid commit message:" >&2
+  echo "  $header" >&2
+  echo >&2
+  echo "$1" >&2
+  echo "  files touched: ${changed_files[*]}" >&2
+  exit 1
+}
+
+if [ "${#touched[@]}" -eq 1 ]; then
+  if [ -n "$written_scope" ] && [ "$written_scope" != "${touched[0]}" ]; then
+    fail_scope "This commit only touches '${touched[0]}', but the scope says '$written_scope'."
+  fi
+elif [ "$all_crate_scoped" -eq 1 ]; then
+  if [ -n "$written_scope" ] && [ "$written_scope" != "crates" ]; then
+    fail_scope "This commit touches multiple crates (${touched[*]}); use scope 'crates' or omit the scope."
+  fi
+else
+  if [ -n "$written_scope" ]; then
+    fail_scope "This commit touches multiple unrelated areas (${touched[*]}); omit the scope."
+  fi
+fi
