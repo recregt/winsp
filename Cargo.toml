@@ -12,7 +12,7 @@ edition = "2024"
 rust-version = "1.85"
 authors = ["WinSP Contributors"]
 license = "MIT"
-repository = "https://gitlab.com/winsp/winsp"
+repository = "https://github.com/recregt/winsp"
 
 [profile.release]
 opt-level = 3

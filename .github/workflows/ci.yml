@@ -1,0 +1,63 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# Supersede in-flight runs when a branch or PR is pushed again.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
+
+jobs:
+  # The whole workspace compiles in seconds, so every check runs in one job:
+  # separate jobs would spend far longer on runner and toolchain setup than on
+  # the work itself.
+  check:
+    name: Check, test and build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+          targets: x86_64-pc-windows-gnu
+
+      - name: Install mingw-w64 linker
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends gcc-mingw-w64-x86-64
+
+      - name: Format
+        run: cargo fmt --all -- --check
+
+      - name: Clippy (host)
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+
+      # Most of this codebase sits behind #[cfg(windows)] and is invisible to a
+      # host-only lint pass, so it is linted against the Windows target too.
+      - name: Clippy (windows)
+        run: cargo clippy --workspace --all-targets --locked --target x86_64-pc-windows-gnu -- -D warnings
+
+      - name: Test
+        run: cargo test --workspace --locked
+
+      - name: Build Windows release binary
+        run: cargo build -p winsp-app --target x86_64-pc-windows-gnu --release --locked
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: winsp-${{ github.sha }}
+          path: target/x86_64-pc-windows-gnu/release/winsp.exe
+          retention-days: 7
+          if-no-files-found: error

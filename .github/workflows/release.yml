@@ -1,0 +1,62 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    name: Publish release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+          targets: x86_64-pc-windows-gnu
+
+      - name: Install mingw-w64 linker
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends gcc-mingw-w64-x86-64
+
+      # The same gate CI applies, so a tag can never publish an unchecked build.
+      - name: Format
+        run: cargo fmt --all -- --check
+
+      - name: Clippy (host)
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+
+      - name: Clippy (windows)
+        run: cargo clippy --workspace --all-targets --locked --target x86_64-pc-windows-gnu -- -D warnings
+
+      - name: Test
+        run: cargo test --workspace --locked
+
+      - name: Build Windows release binary
+        run: cargo build -p winsp-app --target x86_64-pc-windows-gnu --release --locked
+
+      - name: Checksum
+        working-directory: target/x86_64-pc-windows-gnu/release
+        run: sha256sum winsp.exe > winsp.exe.sha256
+
+      - name: Create GitHub release
+        working-directory: target/x86_64-pc-windows-gnu/release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "winsp $GITHUB_REF_NAME" \
+            --generate-notes \
+            winsp.exe winsp.exe.sha256
