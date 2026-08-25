@@ -3,7 +3,7 @@ set -euo pipefail
 
 version="2.1.11"
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-bin_dir="$HOME/.local/bin"
+bin_dir="$HOME/.cargo/bin"
 
 if command -v lefthook >/dev/null 2>&1; then
   installed="$(lefthook version 2>/dev/null | head -n1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' || true)"
