@@ -25,10 +25,15 @@ jobs:
           components: clippy, rustfmt
           targets: x86_64-pc-windows-gnu
 
+      # Only the release link step needs mingw (clippy --target does not link).
+      # apt-get update is the expensive half, so it is a fallback, not the default.
       - name: Install mingw-w64 linker
         run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq --no-install-recommends gcc-mingw-w64-x86-64
+          if ! command -v x86_64-w64-mingw32-gcc >/dev/null 2>&1; then
+            sudo apt-get install -y -qq --no-install-recommends gcc-mingw-w64-x86-64 \
+              || { sudo apt-get update -qq \
+                   && sudo apt-get install -y -qq --no-install-recommends gcc-mingw-w64-x86-64; }
+          fi
 
       # The same gate CI applies, so a tag can never publish an unchecked build.
       - name: Format

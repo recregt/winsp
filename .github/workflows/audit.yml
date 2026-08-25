@@ -2,12 +2,16 @@ name: Audit
 
 on:
   push:
+    branches: [main]
     paths: ["**/Cargo.toml", "**/Cargo.lock", ".github/workflows/audit.yml"]
   pull_request:
     paths: ["**/Cargo.toml", "**/Cargo.lock", ".github/workflows/audit.yml"]
   schedule:
-    # Advisories land independently of commits, so re-check weekly.
     - cron: "0 6 * * 1"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
@@ -16,12 +20,9 @@ jobs:
   audit:
     name: cargo audit
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      issues: write
-      checks: write
     steps:
       - uses: actions/checkout@v7
-      - uses: rustsec/audit-check@v2
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: taiki-e/install-action@cargo-audit
+
+      - run: cargo audit --deny warnings
