@@ -29,7 +29,9 @@
   "customManagers": [
     {
       "customType": "regex",
-      "fileMatch": ["^scripts/install-lefthook\\.sh$"],
+      "managerFilePatterns": [
+        "/^scripts/install-lefthook\\.sh$/"
+      ],
       "matchStrings": [
         "version=\"(?<currentValue>[\\d.]+)\""
       ],
