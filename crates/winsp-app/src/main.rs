@@ -1,0 +1,83 @@
+mod state;
+mod window;
+
+use state::AppState;
+#[cfg(not(windows))]
+use std::io::{self, Write};
+use std::sync::{Arc, Mutex};
+use winsp_indexer::populate_search_index;
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    println!("====================================================");
+    println!("  WinSP - Lightning-Fast Windows Spotlight Launcher ");
+    println!("====================================================");
+
+    // 1. Initialize & populate in-memory search index
+    let start_init = std::time::Instant::now();
+    let index = populate_search_index();
+    let init_duration = start_init.elapsed();
+    println!(
+        "⚡ Indexed {} applications & settings in {:.2?}",
+        index.len(),
+        init_duration
+    );
+
+    let state = Arc::new(Mutex::new(AppState::new(index)));
+
+    #[cfg(windows)]
+    {
+        println!("🚀 Starting WinSP native floating search bar...");
+        println!("Press Alt+Space to toggle Spotlight, Esc to dismiss.");
+        window::win32_window::run_app(state).map_err(|e| e.into())
+    }
+
+    #[cfg(not(windows))]
+    {
+        run_terminal_demo(state)
+    }
+}
+
+#[cfg(not(windows))]
+fn run_terminal_demo(state: Arc<Mutex<AppState>>) -> Result<(), Box<dyn std::error::Error>> {
+    println!("\n[Running in Cross-Platform Interactive Demo Mode]");
+    println!("Type a query to search, '=expr' for math, or ':q' to quit.\n");
+
+    loop {
+        print!("Spotlight > ");
+        io::stdout().flush()?;
+
+        let mut input = String::new();
+        if io::stdin().read_line(&mut input)? == 0 {
+            break;
+        }
+
+        let query = input.trim();
+        if query == ":q" || query == "exit" {
+            println!("Goodbye!");
+            break;
+        }
+
+        let start_search = std::time::Instant::now();
+        let mut app_state = state.lock().unwrap();
+        app_state.set_query(query.to_string());
+        let search_duration = start_search.elapsed();
+
+        println!(
+            "---------------------------------------------------- (Found {} in {:.3?})",
+            app_state.results.len(),
+            search_duration
+        );
+
+        if app_state.results.is_empty() {
+            println!("  No matching applications or calculations found.");
+        } else {
+            for (i, res) in app_state.results.iter().enumerate() {
+                let sub = res.subtitle.as_deref().unwrap_or("");
+                println!("  [{}] {:<25} | {}", i + 1, res.title, sub);
+            }
+        }
+        println!("----------------------------------------------------\n");
+    }
+
+    Ok(())
+}
