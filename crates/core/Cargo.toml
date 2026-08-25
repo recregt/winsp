@@ -9,3 +9,9 @@ authors.workspace = true
 [dependencies]
 # No mandatory external dependencies for core to ensure maximum compilation speed and zero bloat
 
+[dev-dependencies]
+criterion = { version = "0.7.0", features = ["html_reports"] }
+
+[[bench]]
+name = "search"
+harness = false
