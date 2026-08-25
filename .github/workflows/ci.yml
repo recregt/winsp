@@ -26,7 +26,7 @@ jobs:
     name: Check, test and build
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -55,7 +55,7 @@ jobs:
       - name: Build Windows release binary
         run: cargo build -p winsp-app --target x86_64-pc-windows-gnu --release --locked
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: winsp-${{ github.sha }}
           path: target/x86_64-pc-windows-gnu/release/winsp.exe
