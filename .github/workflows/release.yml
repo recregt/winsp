@@ -11,10 +11,14 @@ concurrency:
 permissions:
   contents: read
 
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
+
 jobs:
   release:
     name: Publish release
-    runs-on: ubuntu-latest
+    runs-on: windows-latest
     permissions:
       contents: write
     steps:
@@ -23,40 +27,29 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy, rustfmt
-          targets: x86_64-pc-windows-gnu
 
-      # Only the release link step needs mingw (clippy --target does not link).
-      # apt-get update is the expensive half, so it is a fallback, not the default.
-      - name: Install mingw-w64 linker
-        run: |
-          if ! command -v x86_64-w64-mingw32-gcc >/dev/null 2>&1; then
-            sudo apt-get install -y -qq --no-install-recommends gcc-mingw-w64-x86-64 \
-              || { sudo apt-get update -qq \
-                   && sudo apt-get install -y -qq --no-install-recommends gcc-mingw-w64-x86-64; }
-          fi
-
-      # The same gate CI applies, so a tag can never publish an unchecked build.
       - name: Format
         run: cargo fmt --all -- --check
 
-      - name: Clippy (host)
+      - name: Clippy
         run: cargo clippy --workspace --all-targets --locked -- -D warnings
-
-      - name: Clippy (windows)
-        run: cargo clippy --workspace --all-targets --locked --target x86_64-pc-windows-gnu -- -D warnings
 
       - name: Test
         run: cargo test --workspace --locked
 
-      - name: Build Windows release binary
-        run: cargo build -p winsp-app --target x86_64-pc-windows-gnu --release --locked
+      - name: Build release binary
+        run: cargo build -p winsp-app --release --locked
 
       - name: Checksum
-        working-directory: target/x86_64-pc-windows-gnu/release
-        run: sha256sum winsp.exe > winsp.exe.sha256
+        working-directory: target/release
+        shell: pwsh
+        run: |
+          $hash = (Get-FileHash winsp.exe -Algorithm SHA256).Hash.ToLower()
+          "$hash  winsp.exe" | Out-File -Encoding ascii -NoNewline winsp.exe.sha256
 
       - name: Create GitHub release
-        working-directory: target/x86_64-pc-windows-gnu/release
+        working-directory: target/release
+        shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
         run: |

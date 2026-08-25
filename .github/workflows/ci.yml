@@ -18,8 +18,8 @@ env:
   CARGO_INCREMENTAL: "0"
 
 jobs:
-  check:
-    name: Check, test and build
+  lint:
+    name: Lint and test (ubuntu)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -27,34 +27,38 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy, rustfmt
-          targets: x86_64-pc-windows-gnu
-
-      - name: Install mingw-w64 linker
-        run: |
-          if ! command -v x86_64-w64-mingw32-gcc >/dev/null 2>&1; then
-            sudo apt-get install -y -qq --no-install-recommends gcc-mingw-w64-x86-64 \
-              || { sudo apt-get update -qq \
-                   && sudo apt-get install -y -qq --no-install-recommends gcc-mingw-w64-x86-64; }
-          fi
 
       - name: Format
         run: cargo fmt --all -- --check
 
-      - name: Clippy (host)
+      - name: Clippy
         run: cargo clippy --workspace --all-targets --locked -- -D warnings
-
-      - name: Clippy (windows)
-        run: cargo clippy --workspace --all-targets --locked --target x86_64-pc-windows-gnu -- -D warnings
 
       - name: Test
         run: cargo test --workspace --locked
 
-      - name: Build Windows release binary
-        run: cargo build -p winsp-app --target x86_64-pc-windows-gnu --release --locked
+  windows:
+    name: Build and test (windows)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+
+      - name: Test
+        run: cargo test --workspace --locked
+
+      - name: Build release binary
+        run: cargo build -p winsp-app --release --locked
 
       - uses: actions/upload-artifact@v7
         with:
           name: winsp-${{ github.sha }}
-          path: target/x86_64-pc-windows-gnu/release/winsp.exe
+          path: target/release/winsp.exe
           retention-days: 7
           if-no-files-found: error
