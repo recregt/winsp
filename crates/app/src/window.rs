@@ -28,6 +28,7 @@ pub mod win32_window {
     pub const SEARCH_BAR_HEIGHT: i32 = 64;
     pub const ITEM_ROW_HEIGHT: i32 = 54;
     pub const PADDING: i32 = 12;
+    pub const WINDOW_CLASS_NAME: &str = "WinSP_Spotlight_Window";
 
     static APP_STATE: OnceLock<Arc<Mutex<AppState>>> = OnceLock::new();
 
@@ -42,7 +43,7 @@ pub mod win32_window {
             SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
 
             let instance = GetModuleHandleW(std::ptr::null());
-            let class_name = to_wide("WinSP_Spotlight_Window");
+            let class_name = to_wide(WINDOW_CLASS_NAME);
             let window_title = to_wide("WinSP");
 
             let wnd_class = WNDCLASSEXW {

@@ -1,6 +1,9 @@
 mod state;
 mod window;
 
+#[cfg(windows)]
+mod single_instance;
+
 use state::AppState;
 #[cfg(not(windows))]
 use std::io::{self, Write};
@@ -11,6 +14,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("====================================================");
     println!("  WinSP - Lightning-Fast Windows Spotlight Launcher ");
     println!("====================================================");
+
+    #[cfg(windows)]
+    let _instance_mutex = match single_instance::acquire() {
+        Some(mutex) => mutex,
+        None => {
+            println!("WinSP is already running — focusing the existing window.");
+            return Ok(());
+        }
+    };
 
     // 1. Initialize & populate in-memory search index
     let start_init = std::time::Instant::now();
