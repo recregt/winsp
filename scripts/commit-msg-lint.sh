@@ -38,12 +38,7 @@ if [ -d "$repo_root/crates" ]; then
   done
 fi
 
-scope_list="$(printf '%s\n' "${scopes[@]}" | sort -u | paste -sd '|' -)"
-
-types="feat|fix|refactor|ci|perf|test|chore|docs"
-scope_part=""
-[ -n "$scope_list" ] && scope_part="(\\((${scope_list})\\))?"
-pattern="^(${types})${scope_part}: [a-z0-9].*[^.]\$"
+scope_list="$(printf '%s\n' "${scopes[@]}" | sort -u | paste -sd ' ' -)"
 
 fail() {
   echo "Invalid commit message:" >&2
@@ -52,14 +47,33 @@ fail() {
   echo "Expected: <type>(<scope>): <imperative description>" >&2
   echo "  scope is optional: <type>: <description> is also valid" >&2
   echo "  type:  feat fix refactor ci perf test chore docs" >&2
-  echo "  scope: $(printf '%s' "$scope_list" | tr '|' ' ')" >&2
+  echo "  scope: $scope_list" >&2
   echo "  example: fix(indexer): handle null pointer dereference in shell enumeration" >&2
   exit 1
 }
 
-[[ "$header" =~ $pattern ]] || fail
+struct_pattern='^([a-z]+)(\(([^()]+)\))?: (.+)$'
+[[ "$header" =~ $struct_pattern ]] || fail
 
-description="${header#*: }"
+type="${BASH_REMATCH[1]}"
+scope_group="${BASH_REMATCH[2]}"
+raw_scope="${BASH_REMATCH[3]}"
+description="${BASH_REMATCH[4]}"
+
+[[ "$type" =~ ^(feat|fix|refactor|ci|perf|test|chore|docs)$ ]] || fail
+
+if [ -n "$scope_group" ]; then
+  norm_scope="$(normalize "$raw_scope")"
+  match=0
+  for s in "${scopes[@]}"; do
+    [ "$s" = "$norm_scope" ] && { match=1; break; }
+  done
+  [ "$match" = 1 ] || fail
+fi
+
+[[ "$description" =~ ^[a-z0-9] ]] || fail
+[[ "$description" != *. ]] || fail
+
 case "$description" in
   added\ *|adds\ *|fixed\ *|fixes\ *|updated\ *|updates\ *|removed\ *|removes\ *|changed\ *|changes\ *|created\ *|creates\ *)
     echo "Invalid commit message:" >&2
