@@ -52,12 +52,12 @@ pub mod win32_window {
                 cbClsExtra: 0,
                 cbWndExtra: 0,
                 hInstance: instance,
-                hIcon: 0,
-                hCursor: LoadCursorW(0, IDC_ARROW),
+                hIcon: std::ptr::null_mut(),
+                hCursor: LoadCursorW(std::ptr::null_mut(), IDC_ARROW),
                 hbrBackground: GetStockObject(WHITE_BRUSH) as _,
                 lpszMenuName: std::ptr::null(),
                 lpszClassName: class_name.as_ptr(),
-                hIconSm: 0,
+                hIconSm: std::ptr::null_mut(),
             };
 
             RegisterClassExW(&wnd_class);
@@ -71,13 +71,13 @@ pub mod win32_window {
                 100,
                 WINDOW_WIDTH,
                 SEARCH_BAR_HEIGHT,
-                0,
-                0,
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
                 instance,
                 std::ptr::null(),
             );
 
-            if hwnd == 0 {
+            if hwnd.is_null() {
                 return Err("Failed to create WinSP window".into());
             }
 
@@ -109,7 +109,7 @@ pub mod win32_window {
 
             // Win32 Message Loop
             let mut msg = std::mem::zeroed::<MSG>();
-            while GetMessageW(&mut msg, 0, 0, 0) > 0 {
+            while GetMessageW(&mut msg, std::ptr::null_mut(), 0, 0) > 0 {
                 TranslateMessage(&msg);
                 DispatchMessageW(&msg);
             }

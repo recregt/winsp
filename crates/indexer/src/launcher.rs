@@ -22,7 +22,7 @@ fn launch_path(path: &str) -> Result<(), String> {
 
     unsafe {
         let instance = ShellExecuteW(
-            0,
+            std::ptr::null_mut(),
             op_wide.as_ptr(),
             path_wide.as_ptr(),
             std::ptr::null(),
@@ -55,7 +55,7 @@ fn launch_aumid(aumid: &str) -> Result<(), String> {
 
     unsafe {
         let instance = ShellExecuteW(
-            0,
+            std::ptr::null_mut(),
             op_wide.as_ptr(),
             explorer_wide.as_ptr(),
             param_wide.as_ptr(),
