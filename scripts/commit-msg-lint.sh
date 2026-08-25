@@ -13,12 +13,18 @@ esac
 
 repo_root="$(git rev-parse --show-toplevel)"
 
-normalize() {
-  local n="$1"
-  n="${n#.}"
-  n="${n%%.*}"
-  n="$(printf '%s' "$n" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9]+/-/g; s/^-+//; s/-+$//')"
-  printf '%s' "$n"
+escape_re() {
+  local s="$1" out="" c i
+  for (( i=0; i<${#s}; i++ )); do
+    c="${s:$i:1}"
+    case "$c" in
+      '.'|'^'|'$'|'*'|'+'|'?'|'('|')'|'['|']'|'{'|'}'|'|'|'\')
+        out+="\\$c" ;;
+      *)
+        out+="$c" ;;
+    esac
+  done
+  printf '%s' "$out"
 }
 
 scopes=()
@@ -27,18 +33,17 @@ for entry in "$repo_root"/*; do
   case "$base" in
     .git|target) continue ;;
   esac
-  norm="$(normalize "$base")"
-  [ -n "$norm" ] && scopes+=("$norm")
+  scopes+=("$base")
 done
 
 if [ -d "$repo_root/crates" ]; then
   for entry in "$repo_root"/crates/*/; do
-    norm="$(normalize "$(basename "$entry")")"
-    [ -n "$norm" ] && scopes+=("$norm")
+    scopes+=("$(basename "$entry")")
   done
 fi
 
-scope_list="$(printf '%s\n' "${scopes[@]}" | sort -u | paste -sd ' ' -)"
+mapfile -t scopes < <(printf '%s\n' "${scopes[@]}" | sort -u)
+scope_list="$(printf '%s' "${scopes[*]}")"
 
 fail() {
   echo "Invalid commit message:" >&2
@@ -46,34 +51,26 @@ fail() {
   echo >&2
   echo "Expected: <type>(<scope>): <imperative description>" >&2
   echo "  scope is optional: <type>: <description> is also valid" >&2
+  echo "  scope must match a file or folder name exactly, as it appears in the repo" >&2
   echo "  type:  feat fix refactor ci perf test chore docs" >&2
   echo "  scope: $scope_list" >&2
   echo "  example: fix(indexer): handle null pointer dereference in shell enumeration" >&2
   exit 1
 }
 
-struct_pattern='^([a-z]+)(\(([^()]+)\))?: (.+)$'
-[[ "$header" =~ $struct_pattern ]] || fail
+types="feat|fix|refactor|ci|perf|test|chore|docs"
+scope_alt=""
+for s in "${scopes[@]}"; do
+  esc="$(escape_re "$s")"
+  scope_alt="${scope_alt:+${scope_alt}|}${esc}"
+done
+scope_part=""
+[ -n "$scope_alt" ] && scope_part="(\\((${scope_alt})\\))?"
+pattern="^(${types})${scope_part}: [a-z0-9].*[^.]\$"
 
-type="${BASH_REMATCH[1]}"
-scope_group="${BASH_REMATCH[2]}"
-raw_scope="${BASH_REMATCH[3]}"
-description="${BASH_REMATCH[4]}"
+[[ "$header" =~ $pattern ]] || fail
 
-[[ "$type" =~ ^(feat|fix|refactor|ci|perf|test|chore|docs)$ ]] || fail
-
-if [ -n "$scope_group" ]; then
-  norm_scope="$(normalize "$raw_scope")"
-  match=0
-  for s in "${scopes[@]}"; do
-    [ "$s" = "$norm_scope" ] && { match=1; break; }
-  done
-  [ "$match" = 1 ] || fail
-fi
-
-[[ "$description" =~ ^[a-z0-9] ]] || fail
-[[ "$description" != *. ]] || fail
-
+description="${header#*: }"
 case "$description" in
   added\ *|adds\ *|fixed\ *|fixes\ *|updated\ *|updates\ *|removed\ *|removes\ *|changed\ *|changes\ *|created\ *|creates\ *)
     echo "Invalid commit message:" >&2
