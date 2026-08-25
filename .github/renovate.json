@@ -4,14 +4,38 @@
     "config:recommended"
   ],
   "fetchChangeLogs": "on",
+  "semanticCommits": "enabled",
+  "semanticCommitType": "chore",
+  "semanticCommitScope": "cargo",
   "packageRules": [
     {
       "matchManagers": ["cargo"],
-      "groupName": "Rust crates"
+      "groupName": "Rust crates",
+      "semanticCommitType": "chore",
+      "semanticCommitScope": "cargo"
     },
     {
       "matchManagers": ["github-actions"],
-      "groupName": "GitHub Actions"
+      "groupName": "GitHub Actions",
+      "semanticCommitType": "ci",
+      "semanticCommitScope": "github"
+    },
+    {
+      "matchDepNames": ["evilmartians/lefthook"],
+      "semanticCommitType": "chore",
+      "semanticCommitScope": "scripts"
+    }
+  ],
+  "customManagers": [
+    {
+      "customType": "regex",
+      "fileMatch": ["^scripts/install-lefthook\\.sh$"],
+      "matchStrings": [
+        "version=\"(?<currentValue>[\\d.]+)\""
+      ],
+      "depNameTemplate": "evilmartians/lefthook",
+      "datasourceTemplate": "github-releases",
+      "extractVersionTemplate": "^v(?<version>.*)$"
     }
   ]
 }

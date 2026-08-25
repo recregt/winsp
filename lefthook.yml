@@ -1,0 +1,17 @@
+commit-msg:
+  commands:
+    lint-commit-message:
+      run: scripts/commit-msg-lint.sh {1}
+
+pre-commit:
+  commands:
+    fmt:
+      glob: "*.rs"
+      run: cargo fmt --all -- --check
+
+pre-push:
+  commands:
+    clippy:
+      run: cargo clippy --workspace --all-targets --locked -- -D warnings
+    test:
+      run: cargo test --workspace --locked

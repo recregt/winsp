@@ -1,8 +1,8 @@
 [workspace]
 members = [
-    "crates/winsp-core",
-    "crates/winsp-indexer",
-    "crates/winsp-app",
+    "crates/core",
+    "crates/indexer",
+    "crates/app",
 ]
 resolver = "3"
 
