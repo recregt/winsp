@@ -24,11 +24,11 @@ Productivity
 
 ## runFullTrust capability justification
 
-WinSP is a Win32 desktop application distributed via Desktop Bridge and requires the runFullTrust capability to use three standard Win32 APIs that are unavailable to sandboxed apps:
+WinSP is a Win32 desktop application distributed via Desktop Bridge and requires the runFullTrust capability to use standard Win32 APIs that are unavailable to sandboxed apps:
 
 - **RegisterHotKey** — registers a system-wide Alt+Space hotkey so the search bar can be summoned from any application.
 - **Shell_NotifyIconW** — shows a system tray icon, letting WinSP run in the background with quick access to toggle the search bar, enable/disable autostart, and exit.
-- **HKCU Run registry key** — writes a single optional autostart entry (only when the user enables "Start with Windows" from the tray menu) under `Software\Microsoft\Windows\CurrentVersion\Run`.
+- **Windows.ApplicationModel.StartupTask** — the declared `windows.startupTask` extension lets the user optionally enable "Start with Windows" from the tray menu, through the standard Store-managed startup mechanism (visible in Settings > Apps > Startup).
 
 WinSP does not request administrator privileges, does not access other applications' data, and makes no network connections.
 
