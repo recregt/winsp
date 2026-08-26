@@ -24,6 +24,19 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      - name: Verify tag matches Cargo version
+        shell: pwsh
+        run: |
+          $tagVersion = $env:GITHUB_REF_NAME -replace '^v', ''
+          $cargoToml = Get-Content Cargo.toml -Raw
+          if ($cargoToml -notmatch '(?ms)^\[workspace\.package\].*?^version\s*=\s*"([^"]+)"') {
+            throw "could not find [workspace.package] version in Cargo.toml"
+          }
+          $cargoVersion = $Matches[1]
+          if ($tagVersion -ne $cargoVersion) {
+            throw "tag '$env:GITHUB_REF_NAME' does not match Cargo.toml version '$cargoVersion'"
+          }
+
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy, rustfmt
@@ -42,12 +55,16 @@ jobs:
       - name: Build release binary
         run: cargo build -p winsp-app --release --locked
 
+      - uses: ./.github/actions/package-msix
+
       - name: Checksum
         working-directory: target/release
         shell: pwsh
         run: |
-          $hash = (Get-FileHash winsp.exe -Algorithm SHA256).Hash.ToLower()
-          "$hash  winsp.exe" | Out-File -Encoding ascii -NoNewline winsp.exe.sha256
+          foreach ($file in "winsp.exe", "winsp.msix") {
+            $hash = (Get-FileHash $file -Algorithm SHA256).Hash.ToLower()
+            "$hash  $file" | Out-File -Encoding ascii -NoNewline "$file.sha256"
+          }
 
       - name: Create GitHub release
         working-directory: target/release
@@ -59,4 +76,4 @@ jobs:
             --repo "$GITHUB_REPOSITORY" \
             --title "winsp $GITHUB_REF_NAME" \
             --generate-notes \
-            winsp.exe winsp.exe.sha256
+            winsp.exe winsp.exe.sha256 winsp.msix winsp.msix.sha256
