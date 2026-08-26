@@ -45,12 +45,42 @@ jobs:
       - name: Build release binary
         run: cargo build -p winsp-app --release --locked
 
+      - name: Package MSIX
+        shell: pwsh
+        run: |
+          $stagingDir = "packaging-stage"
+          New-Item -ItemType Directory -Path "$stagingDir\Assets" -Force | Out-Null
+
+          $cargoToml = Get-Content Cargo.toml -Raw
+          if ($cargoToml -notmatch '(?ms)^\[workspace\.package\].*?^version\s*=\s*"([0-9]+\.[0-9]+\.[0-9]+)"') {
+            throw "could not find [workspace.package] version in Cargo.toml"
+          }
+          $msixVersion = "$($Matches[1]).0"
+
+          $manifest = Get-Content packaging\AppxManifest.xml -Raw
+          $manifest = $manifest -replace '(<Identity[^>]*\bVersion=")[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+(")', "`${1}$msixVersion`${2}"
+          Set-Content -Path "$stagingDir\AppxManifest.xml" -Value $manifest -NoNewline
+
+          Copy-Item packaging\Assets\* "$stagingDir\Assets\"
+          Copy-Item target\release\winsp.exe "$stagingDir\winsp.exe"
+
+          $makeappx = Get-ChildItem "C:\Program Files (x86)\Windows Kits\10\bin" -Recurse -Filter makeappx.exe |
+            Where-Object { $_.FullName -like "*x64*" } |
+            Sort-Object FullName -Descending |
+            Select-Object -First 1 -ExpandProperty FullName
+          if (-not $makeappx) { throw "makeappx.exe not found on runner" }
+
+          & $makeappx pack /d $stagingDir /p target\release\winsp.msix /o
+          if ($LASTEXITCODE -ne 0) { throw "makeappx failed with exit code $LASTEXITCODE" }
+
       - name: Checksum
         working-directory: target/release
         shell: pwsh
         run: |
-          $hash = (Get-FileHash winsp.exe -Algorithm SHA256).Hash.ToLower()
-          "$hash  winsp.exe" | Out-File -Encoding ascii -NoNewline winsp.exe.sha256
+          foreach ($file in "winsp.exe", "winsp.msix") {
+            $hash = (Get-FileHash $file -Algorithm SHA256).Hash.ToLower()
+            "$hash  $file" | Out-File -Encoding ascii -NoNewline "$file.sha256"
+          }
 
       - name: Publish nightly release
         working-directory: target/release
@@ -68,4 +98,4 @@ jobs:
             --title "winsp nightly ($sha)" \
             --notes "Automated build from commit $sha. Not a stable release." \
             --prerelease \
-            winsp.exe winsp.exe.sha256
+            winsp.exe winsp.exe.sha256 winsp.msix winsp.msix.sha256
