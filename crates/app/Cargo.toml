@@ -15,6 +15,7 @@ winsp-core = { path = "../core" }
 winsp-indexer = { path = "../indexer" }
 
 [target.'cfg(windows)'.dependencies]
+mimalloc = "0.1.52"
 windows-sys = { version = "0.61", features = [
     "Win32_Foundation",
     "Win32_UI_WindowsAndMessaging",

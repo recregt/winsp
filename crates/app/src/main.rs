@@ -10,6 +10,10 @@ use std::io::{self, Write};
 use std::sync::{Arc, Mutex};
 use winsp_indexer::populate_search_index;
 
+#[cfg(windows)]
+#[global_allocator]
+static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("====================================================");
     println!("  WinSP - Lightning-Fast Windows Spotlight Launcher ");
