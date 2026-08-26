@@ -10,6 +10,7 @@ authors.workspace = true
 winsp-core = { path = "../core" }
 
 [target.'cfg(windows)'.dependencies]
+notify-debouncer-mini = "0.7.0"
 windows-sys = { version = "0.61", features = [
     "Win32_Foundation",
     "Win32_System_Com",

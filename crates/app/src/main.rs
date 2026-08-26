@@ -37,6 +37,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let state = Arc::new(Mutex::new(AppState::new(index)));
 
     #[cfg(windows)]
+    let _reindex_watcher = {
+        let state = Arc::clone(&state);
+        winsp_indexer::watcher::watch_start_menu(move || {
+            let index = populate_search_index();
+            if let Ok(mut app_state) = state.lock() {
+                app_state.index = index;
+                app_state.refresh_results();
+            }
+        })
+        .ok()
+    };
+
+    #[cfg(windows)]
     {
         println!("🚀 Starting WinSP native floating search bar...");
         println!("Press Alt+Space to toggle Spotlight, Esc to dismiss.");
