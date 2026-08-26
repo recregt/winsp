@@ -7,10 +7,13 @@ license.workspace = true
 authors.workspace = true
 
 [dependencies]
+notify-debouncer-mini = "0.7.0"
 winsp-core = { path = "../core" }
 
+[dev-dependencies]
+tempfile = "3.27.0"
+
 [target.'cfg(windows)'.dependencies]
-notify-debouncer-mini = "0.7.0"
 windows-sys = { version = "0.61", features = [
     "Win32_Foundation",
     "Win32_System_Com",

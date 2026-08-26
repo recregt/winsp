@@ -36,17 +36,30 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let state = Arc::new(Mutex::new(AppState::new(index)));
 
-    #[cfg(windows)]
-    let _reindex_watcher = {
+    let reindex_callback = {
         let state = Arc::clone(&state);
-        winsp_indexer::watcher::watch_start_menu(move || {
+        move || {
             let index = populate_search_index();
+            println!("[WinSP] Reindex triggered: {} items", index.len());
             if let Ok(mut app_state) = state.lock() {
                 app_state.index = index;
                 app_state.refresh_results();
             }
-        })
-        .ok()
+        }
+    };
+
+    let _reindex_watcher = if let Some(dir) = winsp_indexer::watcher::test_watch_dir() {
+        println!("[WinSP] Test mode: watching {} for changes", dir.display());
+        winsp_indexer::watcher::watch_dirs(&[dir], reindex_callback).ok()
+    } else {
+        #[cfg(windows)]
+        {
+            winsp_indexer::watcher::watch_start_menu(reindex_callback).ok()
+        }
+        #[cfg(not(windows))]
+        {
+            None
+        }
     };
 
     #[cfg(windows)]
