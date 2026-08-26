@@ -39,6 +39,20 @@ jobs:
       - name: Test
         run: cargo test --workspace --locked
 
+  coverage:
+    name: Coverage
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - uses: taiki-e/install-action@cargo-tarpaulin
+
+      - run: cargo tarpaulin --workspace --locked --timeout 120
+
   windows:
     name: Build and test (windows)
     runs-on: windows-latest
