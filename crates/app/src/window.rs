@@ -62,12 +62,12 @@ pub mod win32_window {
                 cbClsExtra: 0,
                 cbWndExtra: 0,
                 hInstance: instance,
-                hIcon: std::ptr::null_mut(),
+                hIcon: LoadIconW(instance, 1u16 as _),
                 hCursor: LoadCursorW(std::ptr::null_mut(), IDC_ARROW),
                 hbrBackground: GetStockObject(WHITE_BRUSH) as _,
                 lpszMenuName: std::ptr::null(),
                 lpszClassName: class_name.as_ptr(),
-                hIconSm: std::ptr::null_mut(),
+                hIconSm: LoadIconW(instance, 1u16 as _),
             };
 
             RegisterClassExW(&wnd_class);
@@ -144,7 +144,7 @@ pub mod win32_window {
             let mut nid = tray_icon_data(hwnd);
             nid.uFlags = NIF_ICON | NIF_MESSAGE | NIF_TIP;
             nid.uCallbackMessage = WM_TRAYICON;
-            nid.hIcon = LoadIconW(std::ptr::null_mut(), IDI_APPLICATION);
+            nid.hIcon = LoadIconW(GetModuleHandleW(std::ptr::null()), 1u16 as _);
             let tip = to_wide("WinSP");
             let len = tip.len().min(nid.szTip.len());
             nid.szTip[..len].copy_from_slice(&tip[..len]);
