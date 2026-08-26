@@ -24,6 +24,19 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      - name: Verify tag matches Cargo version
+        shell: pwsh
+        run: |
+          $tagVersion = $env:GITHUB_REF_NAME -replace '^v', ''
+          $cargoToml = Get-Content Cargo.toml -Raw
+          if ($cargoToml -notmatch '(?ms)^\[workspace\.package\].*?^version\s*=\s*"([^"]+)"') {
+            throw "could not find [workspace.package] version in Cargo.toml"
+          }
+          $cargoVersion = $Matches[1]
+          if ($tagVersion -ne $cargoVersion) {
+            throw "tag '$env:GITHUB_REF_NAME' does not match Cargo.toml version '$cargoVersion'"
+          }
+
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy, rustfmt

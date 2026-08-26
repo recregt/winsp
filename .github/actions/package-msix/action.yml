@@ -9,7 +9,7 @@ runs:
         New-Item -ItemType Directory -Path "$stagingDir\Assets" -Force | Out-Null
 
         $cargoToml = Get-Content Cargo.toml -Raw
-        if ($cargoToml -notmatch '(?ms)^\[workspace\.package\].*?^version\s*=\s*"([0-9]+\.[0-9]+\.[0-9]+)"') {
+        if ($cargoToml -notmatch '(?ms)^\[workspace\.package\].*?^version\s*=\s*"([0-9]+\.[0-9]+\.[0-9]+)(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?"') {
           throw "could not find [workspace.package] version in Cargo.toml"
         }
         $msixVersion = "$($Matches[1]).0"
@@ -29,3 +29,5 @@ runs:
 
         & $makeappx pack /d $stagingDir /p target\release\winsp.msix /o
         if ($LASTEXITCODE -ne 0) { throw "makeappx failed with exit code $LASTEXITCODE" }
+
+        Remove-Item -Recurse -Force $stagingDir
