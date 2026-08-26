@@ -4,6 +4,8 @@ mod state;
 mod window;
 
 #[cfg(windows)]
+mod autostart;
+#[cfg(windows)]
 mod single_instance;
 
 use state::AppState;
