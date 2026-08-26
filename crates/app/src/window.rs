@@ -37,6 +37,7 @@ pub mod win32_window {
     const TRAY_ICON_ID: u32 = 1;
     const ID_TRAY_TOGGLE: usize = 1001;
     const ID_TRAY_EXIT: usize = 1002;
+    const ID_TRAY_AUTOSTART: usize = 1003;
 
     static APP_STATE: OnceLock<Arc<Mutex<AppState>>> = OnceLock::new();
 
@@ -180,8 +181,20 @@ pub mod win32_window {
         unsafe {
             let menu = CreatePopupMenu();
             let toggle_label = to_wide("Toggle Search");
+            let autostart_label = to_wide("Start with Windows");
             let exit_label = to_wide("Exit");
+            let autostart_flags = if crate::autostart::is_enabled() {
+                MF_STRING | MF_CHECKED
+            } else {
+                MF_STRING | MF_UNCHECKED
+            };
             AppendMenuW(menu, MF_STRING, ID_TRAY_TOGGLE, toggle_label.as_ptr());
+            AppendMenuW(
+                menu,
+                autostart_flags,
+                ID_TRAY_AUTOSTART,
+                autostart_label.as_ptr(),
+            );
             AppendMenuW(menu, MF_STRING, ID_TRAY_EXIT, exit_label.as_ptr());
 
             let mut cursor = std::mem::zeroed::<POINT>();
@@ -241,6 +254,9 @@ pub mod win32_window {
             WM_COMMAND => {
                 match wparam & 0xffff {
                     ID_TRAY_TOGGLE => toggle_visibility(hwnd),
+                    ID_TRAY_AUTOSTART => {
+                        crate::autostart::set_enabled(!crate::autostart::is_enabled());
+                    }
                     ID_TRAY_EXIT => unsafe {
                         DestroyWindow(hwnd);
                     },
