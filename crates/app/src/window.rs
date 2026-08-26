@@ -3,7 +3,7 @@ pub mod win32_window {
     use std::ffi::OsStr;
     use std::os::windows::ffi::OsStrExt;
     use std::sync::{Arc, Mutex, OnceLock};
-    use windows_sys::Win32::Foundation::{COLORREF, HWND, LPARAM, LRESULT, RECT, WPARAM};
+    use windows_sys::Win32::Foundation::{COLORREF, HWND, LPARAM, LRESULT, POINT, RECT, WPARAM};
     use windows_sys::Win32::Graphics::Dwm::{
         DWMSBT_TRANSIENTWINDOW, DWMWA_SYSTEMBACKDROP_TYPE, DWMWA_WINDOW_CORNER_PREFERENCE,
         DWMWCP_ROUND, DwmSetWindowAttribute,
@@ -20,6 +20,9 @@ pub mod win32_window {
         DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2, SetProcessDpiAwarenessContext,
     };
     use windows_sys::Win32::UI::Input::KeyboardAndMouse::*;
+    use windows_sys::Win32::UI::Shell::{
+        NIF_ICON, NIF_MESSAGE, NIF_TIP, NIM_ADD, NIM_DELETE, NOTIFYICONDATAW, Shell_NotifyIconW,
+    };
     use windows_sys::Win32::UI::WindowsAndMessaging::*;
 
     use crate::state::AppState;
@@ -29,6 +32,11 @@ pub mod win32_window {
     pub const ITEM_ROW_HEIGHT: i32 = 54;
     pub const PADDING: i32 = 12;
     pub const WINDOW_CLASS_NAME: &str = "WinSP_Spotlight_Window";
+
+    const WM_TRAYICON: u32 = WM_APP + 1;
+    const TRAY_ICON_ID: u32 = 1;
+    const ID_TRAY_TOGGLE: usize = 1001;
+    const ID_TRAY_EXIT: usize = 1002;
 
     static APP_STATE: OnceLock<Arc<Mutex<AppState>>> = OnceLock::new();
 
@@ -105,6 +113,8 @@ pub mod win32_window {
             // Register Alt + Space global hotkey (MOD_ALT = 0x0001, VK_SPACE = 0x20)
             let _ = RegisterHotKey(hwnd, 1, MOD_ALT, VK_SPACE as u32);
 
+            add_tray_icon(hwnd);
+
             ShowWindow(hwnd, SW_SHOW);
             SetForegroundWindow(hwnd);
 
@@ -117,6 +127,77 @@ pub mod win32_window {
 
             let _ = UnregisterHotKey(hwnd, 1);
             Ok(())
+        }
+    }
+
+    fn tray_icon_data(hwnd: HWND) -> NOTIFYICONDATAW {
+        let mut nid: NOTIFYICONDATAW = unsafe { std::mem::zeroed() };
+        nid.cbSize = std::mem::size_of::<NOTIFYICONDATAW>() as u32;
+        nid.hWnd = hwnd;
+        nid.uID = TRAY_ICON_ID;
+        nid
+    }
+
+    fn add_tray_icon(hwnd: HWND) {
+        unsafe {
+            let mut nid = tray_icon_data(hwnd);
+            nid.uFlags = NIF_ICON | NIF_MESSAGE | NIF_TIP;
+            nid.uCallbackMessage = WM_TRAYICON;
+            nid.hIcon = LoadIconW(std::ptr::null_mut(), IDI_APPLICATION);
+            let tip = to_wide("WinSP");
+            let len = tip.len().min(nid.szTip.len());
+            nid.szTip[..len].copy_from_slice(&tip[..len]);
+            Shell_NotifyIconW(NIM_ADD, &nid);
+        }
+    }
+
+    fn remove_tray_icon(hwnd: HWND) {
+        unsafe {
+            let nid = tray_icon_data(hwnd);
+            Shell_NotifyIconW(NIM_DELETE, &nid);
+        }
+    }
+
+    fn toggle_visibility(hwnd: HWND) {
+        unsafe {
+            if IsWindowVisible(hwnd) != 0 {
+                ShowWindow(hwnd, SW_HIDE);
+            } else {
+                center_window(hwnd);
+                if let Some(state_arc) = APP_STATE.get() {
+                    if let Ok(mut state) = state_arc.lock() {
+                        state.clear_query();
+                    }
+                }
+                ShowWindow(hwnd, SW_SHOW);
+                SetForegroundWindow(hwnd);
+                InvalidateRect(hwnd, std::ptr::null(), 1);
+            }
+        }
+    }
+
+    fn show_tray_menu(hwnd: HWND) {
+        unsafe {
+            let menu = CreatePopupMenu();
+            let toggle_label = to_wide("Toggle Search");
+            let exit_label = to_wide("Exit");
+            AppendMenuW(menu, MF_STRING, ID_TRAY_TOGGLE, toggle_label.as_ptr());
+            AppendMenuW(menu, MF_STRING, ID_TRAY_EXIT, exit_label.as_ptr());
+
+            let mut cursor = std::mem::zeroed::<POINT>();
+            GetCursorPos(&mut cursor);
+
+            SetForegroundWindow(hwnd);
+            TrackPopupMenu(
+                menu,
+                TPM_RIGHTBUTTON,
+                cursor.x,
+                cursor.y,
+                0,
+                hwnd,
+                std::ptr::null(),
+            );
+            DestroyMenu(menu);
         }
     }
 
@@ -148,20 +229,22 @@ pub mod win32_window {
     ) -> LRESULT {
         match msg {
             WM_HOTKEY => {
-                unsafe {
-                    if IsWindowVisible(hwnd) != 0 {
-                        ShowWindow(hwnd, SW_HIDE);
-                    } else {
-                        center_window(hwnd);
-                        if let Some(state_arc) = APP_STATE.get() {
-                            if let Ok(mut state) = state_arc.lock() {
-                                state.clear_query();
-                            }
-                        }
-                        ShowWindow(hwnd, SW_SHOW);
-                        SetForegroundWindow(hwnd);
-                        InvalidateRect(hwnd, std::ptr::null(), 1);
-                    }
+                toggle_visibility(hwnd);
+                0
+            }
+            WM_TRAYICON => {
+                if lparam as u32 == WM_RBUTTONUP {
+                    show_tray_menu(hwnd);
+                }
+                0
+            }
+            WM_COMMAND => {
+                match wparam & 0xffff {
+                    ID_TRAY_TOGGLE => toggle_visibility(hwnd),
+                    ID_TRAY_EXIT => unsafe {
+                        DestroyWindow(hwnd);
+                    },
+                    _ => {}
                 }
                 0
             }
@@ -241,6 +324,7 @@ pub mod win32_window {
                 0
             }
             WM_DESTROY => {
+                remove_tray_icon(hwnd);
                 unsafe {
                     PostQuitMessage(0);
                 }
