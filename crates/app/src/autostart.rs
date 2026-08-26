@@ -1,5 +1,7 @@
 use std::ffi::OsStr;
 use std::os::windows::ffi::OsStrExt;
+use windows::ApplicationModel::{Package, StartupTask, StartupTaskState};
+use windows::core::HSTRING;
 use windows_sys::Win32::System::LibraryLoader::GetModuleFileNameW;
 use windows_sys::Win32::System::Registry::{
     HKEY, HKEY_CURRENT_USER, KEY_QUERY_VALUE, KEY_SET_VALUE, REG_SZ, RegCloseKey, RegDeleteValueW,
@@ -8,6 +10,46 @@ use windows_sys::Win32::System::Registry::{
 
 const RUN_KEY_PATH: &str = "Software\\Microsoft\\Windows\\CurrentVersion\\Run";
 const VALUE_NAME: &str = "WinSP";
+const STARTUP_TASK_ID: &str = "WinSPStartup";
+
+fn is_packaged() -> bool {
+    Package::Current().is_ok()
+}
+
+pub fn is_enabled() -> bool {
+    if is_packaged() {
+        startup_task_is_enabled().unwrap_or(false)
+    } else {
+        registry_is_enabled()
+    }
+}
+
+pub fn set_enabled(enabled: bool) {
+    if is_packaged() {
+        let _ = startup_task_set_enabled(enabled);
+    } else {
+        registry_set_enabled(enabled);
+    }
+}
+
+fn startup_task_is_enabled() -> windows::core::Result<bool> {
+    let task = StartupTask::GetAsync(&HSTRING::from(STARTUP_TASK_ID))?.get()?;
+    let state = task.State()?;
+    Ok(matches!(
+        state,
+        StartupTaskState::Enabled | StartupTaskState::EnabledByPolicy
+    ))
+}
+
+fn startup_task_set_enabled(enabled: bool) -> windows::core::Result<()> {
+    let task = StartupTask::GetAsync(&HSTRING::from(STARTUP_TASK_ID))?.get()?;
+    if enabled {
+        task.RequestEnableAsync()?.get()?;
+    } else {
+        task.Disable()?;
+    }
+    Ok(())
+}
 
 fn to_wide(s: &str) -> Vec<u16> {
     OsStr::new(s).encode_wide().chain(Some(0)).collect()
@@ -25,7 +67,7 @@ fn current_exe_path() -> Option<Vec<u16>> {
     Some(buf)
 }
 
-pub fn is_enabled() -> bool {
+fn registry_is_enabled() -> bool {
     unsafe {
         let path = to_wide(RUN_KEY_PATH);
         let mut hkey: HKEY = std::ptr::null_mut();
@@ -53,7 +95,7 @@ pub fn is_enabled() -> bool {
     }
 }
 
-pub fn set_enabled(enabled: bool) {
+fn registry_set_enabled(enabled: bool) {
     unsafe {
         let path = to_wide(RUN_KEY_PATH);
         let mut hkey: HKEY = std::ptr::null_mut();

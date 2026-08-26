@@ -13,6 +13,7 @@ allow = [
     "CC0-1.0",
     "ISC",
     "Unlicense",
+    "Unicode-3.0",
 ]
 
 [bans]
