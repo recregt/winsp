@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>WinSP Privacy Policy</title>
+<style>
+  :root {
+    --bg: #f7f8fa;
+    --surface: #ffffff;
+    --ink: #14181f;
+    --muted: #565f6e;
+    --accent: #011645;
+    --border: #e2e5ea;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0d1117;
+      --surface: #151a23;
+      --ink: #e8ebf0;
+      --muted: #9aa4b2;
+      --accent: #4d7cc7;
+      --border: #262c38;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    padding: 3rem 1.5rem 5rem;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    line-height: 1.6;
+  }
+  main {
+    max-width: 42rem;
+    margin: 0 auto;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 2.5rem 2.75rem;
+  }
+  h1 {
+    font-size: 1.6rem;
+    margin: 0 0 0.25rem;
+    color: var(--accent);
+  }
+  .meta {
+    color: var(--muted);
+    font-size: 0.9rem;
+    margin-bottom: 2rem;
+  }
+  h2 {
+    font-size: 1.05rem;
+    margin: 2rem 0 0.6rem;
+    color: var(--ink);
+  }
+  p, li { color: var(--ink); }
+  ul { padding-left: 1.3rem; }
+  a { color: var(--accent); }
+  .summary {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 1rem 1.25rem;
+    font-size: 0.95rem;
+    margin: 1.5rem 0;
+  }
+</style>
+</head>
+<body>
+<main>
+  <h1>WinSP Privacy Policy</h1>
+  <p class="meta">Effective 2026-08-26 &middot; Applies to the WinSP desktop application (Package identity: recregt.WinSP)</p>
+
+  <div class="summary">
+    WinSP does not collect, store, transmit, or share any personal data. It has no network access, no analytics, no telemetry, and no user accounts.
+  </div>
+
+  <h2>What WinSP does on your device</h2>
+  <p>WinSP is a local application launcher. Everything it does happens entirely on your own computer:</p>
+  <ul>
+    <li>It reads the names and shortcut locations of installed Start Menu applications and Windows Settings pages to build a searchable index, held only in memory while the app runs.</li>
+    <li>If you enable &ldquo;Start with Windows&rdquo; from the tray menu, it writes a single value containing WinSP's own install path to the standard per-user Windows autostart registry key. Disabling the option removes it.</li>
+    <li>It watches your Start Menu folders for changes so the search index can refresh automatically.</li>
+  </ul>
+
+  <h2>What WinSP does not do</h2>
+  <ul>
+    <li>No network requests of any kind &mdash; WinSP has no networking code and contacts no server, ours or anyone else's.</li>
+    <li>No telemetry, analytics, crash reporting, or usage tracking.</li>
+    <li>No accounts, sign-in, or advertising identifiers.</li>
+    <li>No data is ever sent off your device, because none is collected in the first place.</li>
+  </ul>
+
+  <h2>Permissions</h2>
+  <p>WinSP runs as a standard full-trust Win32 desktop application. This lets it use ordinary Windows APIs &mdash; a global keyboard shortcut, a system tray icon, and the autostart registry key described above &mdash; and does not grant it administrator rights or access beyond what any desktop app on Windows already has.</p>
+
+  <h2>Children's privacy</h2>
+  <p>WinSP does not knowingly collect information from anyone, including children, because it does not collect information from anyone at all.</p>
+
+  <h2>Changes to this policy</h2>
+  <p>If this policy ever changes, the update will be published at this same address with a revised effective date, and noted in the project's release history.</p>
+
+  <h2>Contact</h2>
+  <p>Questions about this policy or WinSP can be raised via <a href="https://github.com/recregt/winsp/issues">the project's GitHub issue tracker</a>.</p>
+</main>
+</body>
+</html>
