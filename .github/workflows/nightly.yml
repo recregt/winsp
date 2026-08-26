@@ -1,0 +1,71 @@
+name: Nightly
+
+on:
+  schedule:
+    - cron: "0 0 * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: nightly
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
+
+jobs:
+  nightly:
+    name: Publish nightly build
+    runs-on: windows-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: main
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Format
+        run: cargo fmt --all -- --check
+
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+
+      - name: Test
+        run: cargo test --workspace --locked
+
+      - name: Build release binary
+        run: cargo build -p winsp-app --release --locked
+
+      - name: Checksum
+        working-directory: target/release
+        shell: pwsh
+        run: |
+          $hash = (Get-FileHash winsp.exe -Algorithm SHA256).Hash.ToLower()
+          "$hash  winsp.exe" | Out-File -Encoding ascii -NoNewline winsp.exe.sha256
+
+      - name: Publish nightly release
+        working-directory: target/release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          sha="$(git -C "$GITHUB_WORKSPACE" rev-parse --short HEAD)"
+          gh release delete nightly \
+            --repo "$GITHUB_REPOSITORY" \
+            --yes --cleanup-tag || true
+          gh release create nightly \
+            --repo "$GITHUB_REPOSITORY" \
+            --target main \
+            --title "winsp nightly ($sha)" \
+            --notes "Automated build from commit $sha. Not a stable release." \
+            --prerelease \
+            winsp.exe winsp.exe.sha256
