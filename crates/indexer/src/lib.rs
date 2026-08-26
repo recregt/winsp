@@ -1,6 +1,7 @@
 pub mod launcher;
 pub mod settings;
 pub mod shell_apps;
+pub mod watcher;
 
 use winsp_core::{AppItem, SearchIndex};
 

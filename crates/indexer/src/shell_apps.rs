@@ -1,33 +1,35 @@
 use winsp_core::{AppItem, AppTarget};
 
 #[cfg(windows)]
-pub fn enumerate_installed_apps() -> Vec<AppItem> {
-    use std::path::Path;
-
-    let mut apps = Vec::new();
-    let mut seen_ids = std::collections::HashSet::new();
-
-    // 1. Scan Start Menu Directories
-    let mut search_dirs = Vec::new();
+pub fn start_menu_dirs() -> Vec<std::path::PathBuf> {
+    let mut dirs = Vec::new();
 
     if let Ok(app_data) = std::env::var("APPDATA") {
-        search_dirs.push(format!(
+        dirs.push(format!(
             "{}\\Microsoft\\Windows\\Start Menu\\Programs",
             app_data
         ));
     }
     if let Ok(program_data) = std::env::var("ProgramData") {
-        search_dirs.push(format!(
+        dirs.push(format!(
             "{}\\Microsoft\\Windows\\Start Menu\\Programs",
             program_data
         ));
     }
 
-    for dir_str in search_dirs {
-        let dir_path = Path::new(&dir_str);
-        if dir_path.exists() {
-            scan_directory_for_shortcuts(dir_path, &mut apps, &mut seen_ids);
-        }
+    dirs.into_iter()
+        .map(std::path::PathBuf::from)
+        .filter(|p| p.exists())
+        .collect()
+}
+
+#[cfg(windows)]
+pub fn enumerate_installed_apps() -> Vec<AppItem> {
+    let mut apps = Vec::new();
+    let mut seen_ids = std::collections::HashSet::new();
+
+    for dir_path in start_menu_dirs() {
+        scan_directory_for_shortcuts(&dir_path, &mut apps, &mut seen_ids);
     }
 
     // 2. Add Essential Windows Built-in Tools
