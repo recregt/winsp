@@ -898,6 +898,7 @@ name = "winsp-indexer"
 version = "0.1.0"
 dependencies = [
  "notify-debouncer-mini",
+ "tempfile",
  "windows-sys 0.61.2",
  "winsp-core",
 ]
