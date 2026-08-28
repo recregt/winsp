@@ -17,8 +17,42 @@ env:
   CARGO_INCREMENTAL: "0"
 
 jobs:
+  check:
+    name: Check for new commits
+    runs-on: ubuntu-latest
+    outputs:
+      skip: ${{ steps.check.outputs.skip }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: main
+
+      - name: Compare against last nightly
+        id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "Manually triggered; building regardless of new commits."
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          current_sha="$(git rev-parse --short HEAD)"
+          last_sha="$(gh release view nightly --repo "$GITHUB_REPOSITORY" --json name -q .name 2>/dev/null | grep -oE '\([0-9a-f]+\)' | tr -d '()' || true)"
+
+          if [ "$last_sha" = "$current_sha" ]; then
+            echo "No new commits since last nightly ($current_sha); skipping."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "New commits since last nightly (was ${last_sha:-none}, now $current_sha)."
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
   nightly:
     name: Publish nightly build
+    needs: check
+    if: needs.check.outputs.skip != 'true'
     runs-on: windows-latest
     permissions:
       contents: write
