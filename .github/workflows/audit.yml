@@ -21,9 +21,11 @@ jobs:
     name: cargo audit
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
-      - uses: taiki-e/install-action@cargo-audit
+      - uses: taiki-e/install-action@aa7e9e10a2fd43c88f1948b7de4af2f4efd56483 # cargo-audit
 
       - run: cargo audit --deny warnings
 
@@ -31,9 +33,11 @@ jobs:
     name: cargo deny
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
-      - uses: taiki-e/install-action@cargo-deny
+      - uses: taiki-e/install-action@d865e9aac326f15b06ac52b57abb58cd0e3330e4 # cargo-deny
 
       - run: cargo deny check bans licenses sources
 
@@ -41,7 +45,9 @@ jobs:
     name: actionlint
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Download actionlint
         id: get_actionlint
@@ -49,15 +55,19 @@ jobs:
         shell: bash
 
       - name: Check workflow files
-        run: ${{ steps.get_actionlint.outputs.executable }} -color
+        run: ${STEPS_GET_ACTIONLINT_OUTPUTS_EXECUTABLE} -color
+        env:
+          STEPS_GET_ACTIONLINT_OUTPUTS_EXECUTABLE: ${{ steps.get_actionlint.outputs.executable }}
 
   zizmor:
     name: zizmor
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
-      - uses: taiki-e/install-action@zizmor
+      - uses: taiki-e/install-action@95c99d4c170b8b57660f617267c76687cb248a7d # zizmor
 
       - name: Audit workflows
         env:
