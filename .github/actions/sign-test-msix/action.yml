@@ -1,0 +1,29 @@
+name: Sign test MSIX
+description: Signs target/release/winsp.msix with the repo's reusable self-signed test certificate, for local sideload testing only (not used for Store submissions)
+inputs:
+  pfx-base64:
+    description: Base64-encoded PFX certificate
+    required: true
+  pfx-password:
+    description: Password protecting the PFX
+    required: true
+runs:
+  using: composite
+  steps:
+    - shell: pwsh
+      run: |
+        $pfxPath = Join-Path $env:RUNNER_TEMP "winsp-test-signing.pfx"
+        [IO.File]::WriteAllBytes($pfxPath, [Convert]::FromBase64String("${{ inputs.pfx-base64 }}"))
+
+        $signtool = Get-ChildItem "C:\Program Files (x86)\Windows Kits\10\bin" -Recurse -Filter signtool.exe |
+          Where-Object { $_.FullName -like "*x64*" } |
+          Sort-Object FullName -Descending |
+          Select-Object -First 1 -ExpandProperty FullName
+        if (-not $signtool) { throw "signtool.exe not found on runner" }
+
+        & $signtool sign /fd SHA256 /f $pfxPath /p "${{ inputs.pfx-password }}" target\release\winsp.msix
+        $exitCode = $LASTEXITCODE
+
+        Remove-Item -Force $pfxPath
+
+        if ($exitCode -ne 0) { throw "signtool failed with exit code $exitCode" }
