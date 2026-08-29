@@ -48,5 +48,5 @@ jobs:
             -vvv 2>&1 | ForEach-Object { Write-Host $_ }
           if ($LASTEXITCODE -ne 0) { throw "msstore reconfigure failed with exit code $LASTEXITCODE" }
 
-          msstore publish target\release\winsp.msix -id 9N22CB01DDDJ -vvv 2>&1 | ForEach-Object { Write-Host $_ }
+          msstore publish target\release\winsp.msix -id 9N22CB01DDDJ -uploadTimeout 600 -vvv 2>&1 | ForEach-Object { Write-Host $_ }
           if ($LASTEXITCODE -ne 0) { throw "msstore publish failed with exit code $LASTEXITCODE" }
