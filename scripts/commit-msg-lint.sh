@@ -12,6 +12,27 @@ case "$header" in
     ;;
 esac
 
+header_len=${#header}
+if [ "$header_len" -gt 50 ]; then
+  echo "Invalid commit message:" >&2
+  echo "  $header" >&2
+  echo >&2
+  echo "Subject line is $header_len characters, must be 50 or fewer." >&2
+  exit 1
+fi
+
+mapfile -t body_lines < <(tail -n +3 "$msg_file")
+for line in "${body_lines[@]}"; do
+  line_len=${#line}
+  if [ "$line_len" -gt 72 ]; then
+    echo "Invalid commit message body:" >&2
+    echo "  $line" >&2
+    echo >&2
+    echo "Body line is $line_len characters, must be 72 or fewer." >&2
+    exit 1
+  fi
+done
+
 repo_root="$(git rev-parse --show-toplevel)"
 
 escape_re() {
