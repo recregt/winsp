@@ -40,6 +40,24 @@ pub mod win32_window {
     const ID_TRAY_AUTOSTART: usize = 1003;
 
     static APP_STATE: OnceLock<Arc<Mutex<AppState>>> = OnceLock::new();
+    static PENDING_HIGH_SURROGATE: Mutex<Option<u16>> = Mutex::new(None);
+
+    fn decode_utf16_unit(pending: &mut Option<u16>, unit: u16) -> Option<char> {
+        if let Some(high) = pending.take() {
+            if (0xDC00..=0xDFFF).contains(&unit) {
+                let scalar =
+                    0x10000 + (u32::from(high) - 0xD800) * 0x400 + (u32::from(unit) - 0xDC00);
+                char::from_u32(scalar)
+            } else {
+                None
+            }
+        } else if (0xD800..=0xDBFF).contains(&unit) {
+            *pending = Some(unit);
+            None
+        } else {
+            char::from_u32(u32::from(unit))
+        }
+    }
 
     fn to_wide(s: &str) -> Vec<u16> {
         OsStr::new(s).encode_wide().chain(Some(0)).collect()
@@ -269,16 +287,18 @@ pub mod win32_window {
                 0
             }
             WM_CHAR => {
-                let c = char::from_u32(wparam as u32).unwrap_or('\0');
-                if !c.is_control() {
-                    if let Some(state_arc) = APP_STATE.get() {
-                        if let Ok(mut state) = state_arc.lock() {
-                            state.insert_char(c);
-                            resize_window_for_results(hwnd, state.results.len());
+                let mut pending = PENDING_HIGH_SURROGATE.lock().unwrap();
+                if let Some(c) = decode_utf16_unit(&mut pending, wparam as u16) {
+                    if !c.is_control() {
+                        if let Some(state_arc) = APP_STATE.get() {
+                            if let Ok(mut state) = state_arc.lock() {
+                                state.insert_char(c);
+                                resize_window_for_results(hwnd, state.results.len());
+                            }
                         }
-                    }
-                    unsafe {
-                        InvalidateRect(hwnd, std::ptr::null(), 1);
+                        unsafe {
+                            InvalidateRect(hwnd, std::ptr::null(), 1);
+                        }
                     }
                 }
                 0
@@ -560,6 +580,43 @@ pub mod win32_window {
             SelectObject(mem_dc, old_bmp);
             DeleteObject(mem_bmp);
             DeleteDC(mem_dc);
+        }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn decodes_bmp_characters_directly() {
+            let mut pending = None;
+            assert_eq!(decode_utf16_unit(&mut pending, 0x0041), Some('A'));
+            assert_eq!(pending, None);
+        }
+
+        #[test]
+        fn decodes_surrogate_pair_into_non_bmp_character() {
+            let mut pending = None;
+            assert_eq!(decode_utf16_unit(&mut pending, 0xD83D), None);
+            assert_eq!(pending, Some(0xD83D));
+            assert_eq!(decode_utf16_unit(&mut pending, 0xDE00), Some('😀'));
+            assert_eq!(pending, None);
+        }
+
+        #[test]
+        fn ignores_lone_low_surrogate() {
+            let mut pending = None;
+            assert_eq!(decode_utf16_unit(&mut pending, 0xDE00), None);
+            assert_eq!(pending, None);
+        }
+
+        #[test]
+        fn drops_pending_high_surrogate_on_invalid_follow_up() {
+            let mut pending = None;
+            assert_eq!(decode_utf16_unit(&mut pending, 0xD83D), None);
+            assert_eq!(pending, Some(0xD83D));
+            assert_eq!(decode_utf16_unit(&mut pending, 0x0041), None);
+            assert_eq!(pending, None);
         }
     }
 }
