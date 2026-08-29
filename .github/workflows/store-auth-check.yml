@@ -1,0 +1,38 @@
+name: Store auth check
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: Verify Store credentials
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: microsoft/microsoft-store-apppublisher@15abd1c50fcc164b19cb240fb04ef3c49bf715a2 # v1.1
+
+      - name: Authenticate and read submission (no changes made)
+        shell: pwsh
+        env:
+          AZURE_AD_TENANT_ID: ${{ secrets.AZURE_AD_TENANT_ID }}
+          SELLER_ID: ${{ secrets.SELLER_ID }}
+          AZURE_AD_APPLICATION_CLIENT_ID: ${{ secrets.AZURE_AD_APPLICATION_CLIENT_ID }}
+          AZURE_AD_APPLICATION_SECRET: ${{ secrets.AZURE_AD_APPLICATION_SECRET }}
+        run: |
+          msstore reconfigure `
+            --tenantId $env:AZURE_AD_TENANT_ID `
+            --sellerId $env:SELLER_ID `
+            --clientId $env:AZURE_AD_APPLICATION_CLIENT_ID `
+            --clientSecret $env:AZURE_AD_APPLICATION_SECRET
+          if ($LASTEXITCODE -ne 0) { throw "msstore reconfigure failed with exit code $LASTEXITCODE" }
+
+          msstore submission get 9N22CB01DDDJ
+          if ($LASTEXITCODE -ne 0) { throw "msstore submission get failed with exit code $LASTEXITCODE" }
+
+          Write-Host "Credentials are valid and can see the WinSP submission."
