@@ -15,6 +15,10 @@ jobs:
     name: Retry Microsoft Store publish
     runs-on: windows-latest
     steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
       - name: Download release asset
         shell: bash
         env:
@@ -28,25 +32,13 @@ jobs:
             --dir target/release \
             --clobber
 
-      - uses: microsoft/microsoft-store-apppublisher@15abd1c50fcc164b19cb240fb04ef3c49bf715a2 # v1.1
+      - uses: ./.github/actions/msstore-configure
+        with:
+          tenant-id: ${{ secrets.AZURE_AD_TENANT_ID }}
+          seller-id: ${{ secrets.SELLER_ID }}
+          client-id: ${{ secrets.AZURE_AD_APPLICATION_CLIENT_ID }}
+          client-secret: ${{ secrets.AZURE_AD_APPLICATION_SECRET }}
 
-      - name: Publish to Microsoft Store
-        shell: pwsh
-        env:
-          AZURE_AD_TENANT_ID: ${{ secrets.AZURE_AD_TENANT_ID }}
-          SELLER_ID: ${{ secrets.SELLER_ID }}
-          AZURE_AD_APPLICATION_CLIENT_ID: ${{ secrets.AZURE_AD_APPLICATION_CLIENT_ID }}
-          AZURE_AD_APPLICATION_SECRET: ${{ secrets.AZURE_AD_APPLICATION_SECRET }}
-        run: |
-          $PSNativeCommandUseErrorActionPreference = $false
-
-          msstore reconfigure `
-            --tenantId $env:AZURE_AD_TENANT_ID `
-            --sellerId $env:SELLER_ID `
-            --clientId $env:AZURE_AD_APPLICATION_CLIENT_ID `
-            --clientSecret $env:AZURE_AD_APPLICATION_SECRET `
-            -vvv 2>&1 | ForEach-Object { Write-Host $_ }
-          if ($LASTEXITCODE -ne 0) { throw "msstore reconfigure failed with exit code $LASTEXITCODE" }
-
-          msstore publish target\release\winsp.msix -id 9N22CB01DDDJ --uploadTimeout 600 -vvv 2>&1 | ForEach-Object { Write-Host $_ }
-          if ($LASTEXITCODE -ne 0) { throw "msstore publish failed with exit code $LASTEXITCODE" }
+      - uses: ./.github/actions/msstore-publish
+        with:
+          msix-path: target\release\winsp.msix

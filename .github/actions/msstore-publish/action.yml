@@ -1,0 +1,24 @@
+name: Publish to Microsoft Store
+description: Publishes an MSIX package via msstore-cli (requires msstore-configure to have run first)
+inputs:
+  msix-path:
+    required: true
+  product-id:
+    required: false
+    default: "9N22CB01DDDJ"
+  upload-timeout:
+    required: false
+    default: "600"
+runs:
+  using: composite
+  steps:
+    - shell: pwsh
+      env:
+        MSIX_PATH: ${{ inputs.msix-path }}
+        PRODUCT_ID: ${{ inputs.product-id }}
+        UPLOAD_TIMEOUT: ${{ inputs.upload-timeout }}
+      run: |
+        $PSNativeCommandUseErrorActionPreference = $false
+
+        msstore publish $env:MSIX_PATH -id $env:PRODUCT_ID --uploadTimeout $env:UPLOAD_TIMEOUT -vvv 2>&1 | ForEach-Object { Write-Host $_ }
+        if ($LASTEXITCODE -ne 0) { throw "msstore publish failed with exit code $LASTEXITCODE" }
