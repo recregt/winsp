@@ -88,7 +88,9 @@ fn scan_directory_for_shortcuts(
                             continue;
                         }
 
-                        let id = format!("shortcut:{}", stem_lower);
+                        let identity = resolve_shortcut_target(&path, &ext_lower)
+                            .unwrap_or_else(|| stem_lower.clone());
+                        let id = format!("shortcut:{}", identity);
                         if seen_ids.insert(id.clone()) {
                             apps.push(
                                 AppItem::new(
@@ -102,6 +104,60 @@ fn scan_directory_for_shortcuts(
                     }
                 }
             }
+        }
+    }
+}
+
+#[cfg(windows)]
+fn resolve_shortcut_target(path: &std::path::Path, ext_lower: &str) -> Option<String> {
+    match ext_lower {
+        "lnk" => resolve_lnk_target(path),
+        "url" => resolve_url_target(path),
+        _ => None,
+    }
+}
+
+#[cfg(windows)]
+fn resolve_url_target(path: &std::path::Path) -> Option<String> {
+    let contents = std::fs::read_to_string(path).ok()?;
+    contents
+        .lines()
+        .find_map(|line| line.strip_prefix("URL="))
+        .map(|url| url.trim().to_lowercase())
+}
+
+#[cfg(windows)]
+fn resolve_lnk_target(path: &std::path::Path) -> Option<String> {
+    use std::os::windows::ffi::OsStrExt;
+    use windows::Win32::System::Com::{
+        CLSCTX_INPROC_SERVER, COINIT_APARTMENTTHREADED, CoCreateInstance, CoInitializeEx,
+        IPersistFile, STGM_READ,
+    };
+    use windows::Win32::UI::Shell::{IShellLinkW, SLGP_RAWPATH, ShellLink};
+    use windows::core::{Interface, PCWSTR};
+
+    unsafe {
+        let _ = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
+
+        let shell_link: IShellLinkW =
+            CoCreateInstance(&ShellLink, None, CLSCTX_INPROC_SERVER).ok()?;
+        let persist_file: IPersistFile = shell_link.cast().ok()?;
+
+        let wide_path: Vec<u16> = path.as_os_str().encode_wide().chain(Some(0)).collect();
+        persist_file
+            .Load(PCWSTR(wide_path.as_ptr()), STGM_READ)
+            .ok()?;
+
+        let mut buffer = [0u16; 260];
+        shell_link
+            .GetPath(&mut buffer, std::ptr::null_mut(), SLGP_RAWPATH.0 as u32)
+            .ok()?;
+
+        let end = buffer.iter().position(|&c| c == 0).unwrap_or(buffer.len());
+        if end == 0 {
+            None
+        } else {
+            Some(String::from_utf16_lossy(&buffer[..end]).to_lowercase())
         }
     }
 }
@@ -159,7 +215,7 @@ mod tests {
     use std::fs;
 
     #[test]
-    fn dedupes_same_named_shortcut_across_directories() {
+    fn dedupes_by_stem_when_target_cannot_be_resolved() {
         let per_user = tempfile::tempdir().unwrap();
         let system_wide = tempfile::tempdir().unwrap();
 
@@ -182,6 +238,47 @@ mod tests {
 
         fs::write(per_user.path().join("Chrome.lnk"), []).unwrap();
         fs::write(system_wide.path().join("Firefox.lnk"), []).unwrap();
+
+        let mut apps = Vec::new();
+        let mut seen_ids = std::collections::HashSet::new();
+        scan_directory_for_shortcuts(per_user.path(), &mut apps, &mut seen_ids);
+        scan_directory_for_shortcuts(system_wide.path(), &mut apps, &mut seen_ids);
+
+        assert_eq!(apps.len(), 2);
+    }
+
+    #[test]
+    fn dedupes_same_named_shortcut_with_same_resolved_target() {
+        let per_user = tempfile::tempdir().unwrap();
+        let system_wide = tempfile::tempdir().unwrap();
+
+        let contents = "[InternetShortcut]\nURL=https://example.com/app\n";
+        fs::write(per_user.path().join("App.url"), contents).unwrap();
+        fs::write(system_wide.path().join("App.url"), contents).unwrap();
+
+        let mut apps = Vec::new();
+        let mut seen_ids = std::collections::HashSet::new();
+        scan_directory_for_shortcuts(per_user.path(), &mut apps, &mut seen_ids);
+        scan_directory_for_shortcuts(system_wide.path(), &mut apps, &mut seen_ids);
+
+        assert_eq!(apps.len(), 1);
+    }
+
+    #[test]
+    fn keeps_same_named_shortcuts_with_different_resolved_targets() {
+        let per_user = tempfile::tempdir().unwrap();
+        let system_wide = tempfile::tempdir().unwrap();
+
+        fs::write(
+            per_user.path().join("App.url"),
+            "[InternetShortcut]\nURL=https://vendor-a.example.com/app\n",
+        )
+        .unwrap();
+        fs::write(
+            system_wide.path().join("App.url"),
+            "[InternetShortcut]\nURL=https://vendor-b.example.com/app\n",
+        )
+        .unwrap();
 
         let mut apps = Vec::new();
         let mut seen_ids = std::collections::HashSet::new();
