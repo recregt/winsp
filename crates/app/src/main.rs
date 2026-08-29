@@ -74,7 +74,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     {
         println!("🚀 Starting WinSP native floating search bar...");
         println!("Press Alt+Space to toggle Spotlight, Esc to dismiss.");
-        window::win32_window::run_app(state).map_err(|e| e.into())
+        window::run_app(state).map_err(|e| e.into())
     }
 
     #[cfg(not(windows))]
