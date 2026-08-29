@@ -6,7 +6,7 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{
     FindWindowW, SW_SHOW, SetForegroundWindow, ShowWindow,
 };
 
-use crate::window::win32_window::WINDOW_CLASS_NAME;
+use crate::window::WINDOW_CLASS_NAME;
 
 const MUTEX_NAME: &str = "WinSP_SingleInstance_Mutex";
 
