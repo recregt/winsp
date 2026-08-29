@@ -17,6 +17,7 @@ Follow standard conventional commits: `type(scope): imperative description`
 * **Scope:** Matches any crate under `crates/` (e.g. `indexer`, `app`) or top-level file (e.g. `Cargo.toml`, `.github`). Use `crates` if touching multiple crates; omit the scope entirely if the commit also touches something outside `crates/`.
 * **Types:** `feat`, `fix`, `refactor`, `perf`, `test`, `ci`, `chore`, `docs`.
 * **`.github/`-only changes are always `ci:`**, even when the change fixes a bug in a workflow. `cliff.toml` excludes `ci:` commits from `CHANGELOG.md`; a `fix:`/`refactor:` on a workflow file leaks CI plumbing into the user-facing changelog.
+* **Subject line:** 50 characters or fewer. **Body lines** (if any): 72 characters or fewer each. Both are enforced by the commit-msg hook.
 
 ## Commands
 
