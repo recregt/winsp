@@ -42,7 +42,6 @@ pub(super) unsafe extern "system" fn wnd_proc(
             0
         }
         WM_KILLFOCUS => {
-            // Auto-hide when focus is lost
             unsafe {
                 ShowWindow(hwnd, SW_HIDE);
             }

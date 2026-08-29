@@ -14,12 +14,10 @@ pub(super) unsafe fn render_ui(hwnd: HWND, hdc: HDC) {
         let mut client_rect = std::mem::zeroed::<RECT>();
         let _ = GetClientRect(hwnd, &mut client_rect);
 
-        // Double buffering to eliminate flicker
         let mem_dc = CreateCompatibleDC(hdc);
         let mem_bmp = CreateCompatibleBitmap(hdc, client_rect.right, client_rect.bottom);
         let old_bmp = SelectObject(mem_dc, mem_bmp);
 
-        // Background brush (Dark / Translucent tone: #1E1E1E)
         let bg_brush = CreateSolidBrush(0x001E1E1E as COLORREF);
         FillRect(mem_dc, &client_rect, bg_brush);
         DeleteObject(bg_brush);
@@ -28,7 +26,6 @@ pub(super) unsafe fn render_ui(hwnd: HWND, hdc: HDC) {
 
         if let Some(state_arc) = APP_STATE.get() {
             if let Ok(state) = state_arc.lock() {
-                // 1. Draw Search Bar Text
                 let font_name = to_wide("Segoe UI Variable Display");
                 let font_title = CreateFontW(
                     26,
@@ -71,7 +68,6 @@ pub(super) unsafe fn render_ui(hwnd: HWND, hdc: HDC) {
                     DT_LEFT | DT_SINGLELINE | DT_VCENTER,
                 );
 
-                // 2. Draw Results
                 let font_item_name = to_wide("Segoe UI Variable Text");
                 let font_item_title = CreateFontW(
                     18,
@@ -108,7 +104,6 @@ pub(super) unsafe fn render_ui(hwnd: HWND, hdc: HDC) {
 
                 let mut current_y = SEARCH_BAR_HEIGHT;
 
-                // Subtle separator line
                 if !state.results.is_empty() {
                     let sep_pen = CreatePen(PS_SOLID, 1, 0x00333333);
                     let old_pen = SelectObject(mem_dc, sep_pen);
@@ -129,14 +124,12 @@ pub(super) unsafe fn render_ui(hwnd: HWND, hdc: HDC) {
                         bottom: current_y + ITEM_ROW_HEIGHT - 6,
                     };
 
-                    // Draw selection highlight capsule
                     if is_selected {
                         let sel_brush = CreateSolidBrush(0x003A3A3A);
                         FillRect(mem_dc, &row_rect, sel_brush);
                         DeleteObject(sel_brush);
                     }
 
-                    // Title
                     SelectObject(mem_dc, font_item_title);
                     SetTextColor(mem_dc, if is_selected { 0x00FFFFFF } else { 0x00E0E0E0 });
                     let mut title_wide = to_wide(&result.title);
@@ -154,7 +147,6 @@ pub(super) unsafe fn render_ui(hwnd: HWND, hdc: HDC) {
                         DT_LEFT | DT_SINGLELINE | DT_VCENTER,
                     );
 
-                    // Subtitle
                     if let Some(sub) = &result.subtitle {
                         SelectObject(mem_dc, font_item_sub);
                         SetTextColor(mem_dc, 0x00999999);
@@ -184,7 +176,6 @@ pub(super) unsafe fn render_ui(hwnd: HWND, hdc: HDC) {
             }
         }
 
-        // Copy back buffer to screen
         BitBlt(
             hdc,
             0,

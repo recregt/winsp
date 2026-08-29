@@ -2,7 +2,21 @@ use windows_sys::Win32::Foundation::{HWND, RECT};
 use windows_sys::Win32::Graphics::Gdi::InvalidateRect;
 use windows_sys::Win32::UI::WindowsAndMessaging::*;
 
-use super::{APP_STATE, ITEM_ROW_HEIGHT, PADDING, SEARCH_BAR_HEIGHT, WINDOW_WIDTH};
+use super::{
+    APP_STATE, ITEM_ROW_HEIGHT, PADDING, SEARCH_BAR_HEIGHT, WINDOW_CLASS_NAME, WINDOW_WIDTH,
+    to_wide,
+};
+
+pub(crate) fn focus_existing_window() {
+    let class_name = to_wide(WINDOW_CLASS_NAME);
+    unsafe {
+        let existing = FindWindowW(class_name.as_ptr(), std::ptr::null());
+        if !existing.is_null() {
+            ShowWindow(existing, SW_SHOW);
+            SetForegroundWindow(existing);
+        }
+    }
+}
 
 pub(super) fn toggle_visibility(hwnd: HWND) {
     unsafe {
@@ -28,7 +42,7 @@ pub(super) fn center_window(hwnd: HWND) {
         let screen_height = GetSystemMetrics(SM_CYSCREEN);
 
         let x = (screen_width - WINDOW_WIDTH) / 2;
-        let y = screen_height / 4; // Upper 1/3 like macOS Spotlight
+        let y = screen_height / 4;
 
         SetWindowPos(
             hwnd,

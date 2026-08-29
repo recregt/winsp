@@ -2,11 +2,8 @@ use std::ffi::OsStr;
 use std::os::windows::ffi::OsStrExt;
 use windows_sys::Win32::Foundation::{CloseHandle, ERROR_ALREADY_EXISTS, HANDLE};
 use windows_sys::Win32::System::Threading::CreateMutexW;
-use windows_sys::Win32::UI::WindowsAndMessaging::{
-    FindWindowW, SW_SHOW, SetForegroundWindow, ShowWindow,
-};
 
-use crate::window::WINDOW_CLASS_NAME;
+use crate::window::focus_existing_window;
 
 const MUTEX_NAME: &str = "WinSP_SingleInstance_Mutex";
 
@@ -42,15 +39,4 @@ pub fn acquire() -> Option<InstanceGuard> {
     }
 
     Some(InstanceGuard(handle))
-}
-
-fn focus_existing_window() {
-    let class_name = to_wide(WINDOW_CLASS_NAME);
-    unsafe {
-        let existing = FindWindowW(class_name.as_ptr(), std::ptr::null());
-        if !existing.is_null() {
-            ShowWindow(existing, SW_SHOW);
-            SetForegroundWindow(existing);
-        }
-    }
 }

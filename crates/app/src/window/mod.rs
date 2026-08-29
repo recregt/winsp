@@ -26,11 +26,13 @@ use geometry::center_window;
 use tray::add_tray_icon;
 use wndproc::wnd_proc;
 
+pub(crate) use geometry::focus_existing_window;
+
 pub const WINDOW_WIDTH: i32 = 680;
 pub const SEARCH_BAR_HEIGHT: i32 = 64;
 pub const ITEM_ROW_HEIGHT: i32 = 54;
 pub const PADDING: i32 = 12;
-pub const WINDOW_CLASS_NAME: &str = "WinSP_Spotlight_Window";
+const WINDOW_CLASS_NAME: &str = "WinSP_Spotlight_Window";
 
 static APP_STATE: OnceLock<Arc<Mutex<AppState>>> = OnceLock::new();
 
@@ -84,7 +86,6 @@ pub fn run_app(state: Arc<Mutex<AppState>>) -> Result<(), String> {
             return Err("Failed to create WinSP window".into());
         }
 
-        // Enable Windows 11 Acrylic backdrop & Rounded Corners
         let backdrop = DWMSBT_TRANSIENTWINDOW;
         let _ = DwmSetWindowAttribute(
             hwnd,
@@ -101,15 +102,12 @@ pub fn run_app(state: Arc<Mutex<AppState>>) -> Result<(), String> {
             std::mem::size_of_val(&corner_pref) as u32,
         );
 
-        // Center window on screen
         center_window(hwnd);
 
-        // Register Alt + Space global hotkey (MOD_ALT = 0x0001, VK_SPACE = 0x20)
         let _ = RegisterHotKey(hwnd, 1, MOD_ALT, VK_SPACE as u32);
 
         add_tray_icon(hwnd);
 
-        // Win32 Message Loop
         let mut msg = std::mem::zeroed::<MSG>();
         while GetMessageW(&mut msg, std::ptr::null_mut(), 0, 0) > 0 {
             TranslateMessage(&msg);
