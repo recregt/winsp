@@ -1,7 +1,7 @@
 commit-msg:
   commands:
     lint-commit-message:
-      run: scripts/commit-msg-lint.sh {1}
+      run: python3 scripts/commit-msg-lint.py {1}
 
 pre-commit:
   commands:
