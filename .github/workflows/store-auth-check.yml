@@ -35,7 +35,7 @@ jobs:
             -vvv 2>&1 | ForEach-Object { Write-Host $_ }
           if ($LASTEXITCODE -ne 0) { throw "msstore reconfigure failed with exit code $LASTEXITCODE" }
 
-          msstore submission get 9N22CB01DDDJ
+          msstore submission get 9N22CB01DDDJ -vvv 2>&1 | ForEach-Object { Write-Host $_ }
           if ($LASTEXITCODE -ne 0) { throw "msstore submission get failed with exit code $LASTEXITCODE" }
 
           Write-Host "Credentials are valid and can see the WinSP submission."
