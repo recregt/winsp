@@ -127,4 +127,4 @@ jobs:
             --clientId $env:AZURE_AD_APPLICATION_CLIENT_ID `
             --clientSecret $env:AZURE_AD_APPLICATION_SECRET
 
-          msstore publish target\release\winsp.msix -id 9N22CB01DDDJ -uploadTimeout 600
+          msstore publish target\release\winsp.msix -id 9N22CB01DDDJ --uploadTimeout 600
