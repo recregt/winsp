@@ -17,9 +17,6 @@ All notable changes to WinSP are documented here. Format follows
 - Keep MSIX logo source out of packaged Assets dir (#30)
 - Embed a real tray/window icon so it renders in the MSIX-packaged environment (#52)
 - Statically link the MSVC CRT so the release binary needs no VC++ Redistributable (#54)
-- Refresh taiki-e/install-action pins to their current commits (#70)
-- Surface msstore stderr output in store-auth-check (#72)
-- Surface verbose output for msstore submission get (#73)
 - Use an obvious placeholder for AppxManifest.xml version (#77)
 
 ## [nightly] - 2026-08-26
