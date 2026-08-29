@@ -53,7 +53,7 @@ jobs:
 
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
 
-      - uses: taiki-e/install-action@94f54106ddd448427843411da73d6b8a35ae69b3 # cargo-tarpaulin
+      - uses: taiki-e/install-action@ea1c3734cd0711356678179db64b866219fd688b # cargo-tarpaulin
 
       - run: cargo tarpaulin --workspace --locked --timeout 120
 
