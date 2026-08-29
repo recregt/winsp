@@ -25,12 +25,14 @@ jobs:
           AZURE_AD_APPLICATION_CLIENT_ID: ${{ secrets.AZURE_AD_APPLICATION_CLIENT_ID }}
           AZURE_AD_APPLICATION_SECRET: ${{ secrets.AZURE_AD_APPLICATION_SECRET }}
         run: |
+          $PSNativeCommandUseErrorActionPreference = $false
+
           msstore reconfigure `
             --tenantId $env:AZURE_AD_TENANT_ID `
             --sellerId $env:SELLER_ID `
             --clientId $env:AZURE_AD_APPLICATION_CLIENT_ID `
             --clientSecret $env:AZURE_AD_APPLICATION_SECRET `
-            -vvv
+            -vvv 2>&1 | ForEach-Object { Write-Host $_ }
           if ($LASTEXITCODE -ne 0) { throw "msstore reconfigure failed with exit code $LASTEXITCODE" }
 
           msstore submission get 9N22CB01DDDJ
