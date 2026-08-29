@@ -19,9 +19,10 @@ jobs:
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.tag }}
         run: |
           mkdir -p target/release
-          gh release download "${{ inputs.tag }}" \
+          gh release download "$RELEASE_TAG" \
             --repo "$GITHUB_REPOSITORY" \
             --pattern "winsp.msix" \
             --dir target/release \
