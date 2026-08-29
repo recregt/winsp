@@ -9,7 +9,7 @@
   <Identity
     Name="recregt.WinSP"
     Publisher="CN=B23DDA4B-C6CF-42E5-8309-6203F0B89700"
-    Version="0.1.0.0"
+    Version="0.0.0.0"
     ProcessorArchitecture="x64" />
 
   <Properties>
