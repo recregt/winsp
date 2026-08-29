@@ -42,9 +42,9 @@ IMPERATIVE_BASE_FORMS = {
 EXEMPT_PREFIXES = ("Merge ", "Revert ", "fixup! ", "squash! ")
 
 
-def fail(header: str, reason: str) -> None:
-    print("Invalid commit message:", file=sys.stderr)
-    print(f"  {header}", file=sys.stderr)
+def fail(context_line: str, reason: str, label: str = "Invalid commit message:") -> None:
+    print(label, file=sys.stderr)
+    print(f"  {context_line}", file=sys.stderr)
     print(file=sys.stderr)
     print(reason, file=sys.stderr)
     sys.exit(1)
@@ -59,7 +59,9 @@ def comment_char() -> str:
         check=False,
     )
     value = out.stdout.strip()
-    return value if value else "#"
+    if not value or value == "auto":
+        return "#"
+    return value
 
 
 def repo_root() -> Path:
@@ -141,22 +143,20 @@ def main() -> None:
 
     for line in lines[2:]:
         if len(line) > 72:
-            print("Invalid commit message body:", file=sys.stderr)
-            print(f"  {line}", file=sys.stderr)
-            print(file=sys.stderr)
-            print(
+            fail(
+                line,
                 f"Body line is {len(line)} characters, must be 72 or fewer.",
-                file=sys.stderr,
+                label="Invalid commit message body:",
             )
-            sys.exit(1)
 
     scopes = valid_scopes(repo_root())
     types_re = "|".join(TYPES)
     scope_re = "|".join(re.escape(s) for s in scopes) if scopes else "(?!)"
     scope_part = rf"(?:\((?P<scope>{scope_re})\))?"
-    pattern = rf"^(?P<type>{types_re}){scope_part}: [a-z0-9].*[^.]$"
+    pattern = rf"^(?P<type>{types_re}){scope_part}: (?P<desc>[a-z0-9].*[^.\s])$"
 
-    if not re.match(pattern, header):
+    match = re.match(pattern, header)
+    if not match:
         fail(
             header,
             "Expected: <type>(<scope>): <imperative description>\n"
@@ -167,10 +167,9 @@ def main() -> None:
             "  example: fix(indexer): handle null pointer dereference in shell enumeration",
         )
 
-    full_match = re.match(rf"^(?P<type>{types_re}){scope_part}: (?P<desc>.*)$", header)
-    commit_type = full_match.group("type")
-    written_scope = full_match.group("scope")
-    description = full_match.group("desc")
+    commit_type = match.group("type")
+    written_scope = match.group("scope")
+    description = match.group("desc")
 
     first_word = description.split(" ", 1)[0]
     base_form = IMPERATIVE_BASE_FORMS.get(first_word)
