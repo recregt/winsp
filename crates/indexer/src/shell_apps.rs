@@ -24,9 +24,34 @@ pub fn start_menu_dirs() -> Vec<std::path::PathBuf> {
 }
 
 #[cfg(windows)]
+struct ComGuard;
+
+#[cfg(windows)]
+impl ComGuard {
+    fn new() -> Option<Self> {
+        use windows::Win32::System::Com::{COINIT_APARTMENTTHREADED, CoInitializeEx};
+        unsafe {
+            CoInitializeEx(None, COINIT_APARTMENTTHREADED).ok().ok()?;
+        }
+        Some(Self)
+    }
+}
+
+#[cfg(windows)]
+impl Drop for ComGuard {
+    fn drop(&mut self) {
+        use windows::Win32::System::Com::CoUninitialize;
+        unsafe {
+            CoUninitialize();
+        }
+    }
+}
+
+#[cfg(windows)]
 pub fn enumerate_installed_apps() -> Vec<AppItem> {
     let mut apps = Vec::new();
     let mut seen_ids = std::collections::HashSet::new();
+    let _com_guard = ComGuard::new();
 
     for dir_path in start_menu_dirs() {
         scan_directory_for_shortcuts(&dir_path, &mut apps, &mut seen_ids);
@@ -120,25 +145,46 @@ fn resolve_shortcut_target(path: &std::path::Path, ext_lower: &str) -> Option<St
 #[cfg(windows)]
 fn resolve_url_target(path: &std::path::Path) -> Option<String> {
     let contents = std::fs::read_to_string(path).ok()?;
-    contents
-        .lines()
-        .find_map(|line| line.strip_prefix("URL="))
-        .map(|url| url.trim().to_lowercase())
+    contents.lines().find_map(|line| {
+        let (key, value) = line.split_once('=')?;
+        if key.trim().eq_ignore_ascii_case("URL") {
+            Some(value.trim().to_lowercase())
+        } else {
+            None
+        }
+    })
+}
+
+#[cfg(windows)]
+fn wide_str_from_buf(buf: &[u16]) -> String {
+    let end = buf.iter().position(|&c| c == 0).unwrap_or(buf.len());
+    String::from_utf16_lossy(&buf[..end])
+}
+
+#[cfg(windows)]
+fn expand_env_vars(raw: &[u16]) -> String {
+    use windows::Win32::System::Environment::ExpandEnvironmentStringsW;
+    use windows::core::PCWSTR;
+
+    let mut expanded = [0u16; 260];
+    let written = unsafe { ExpandEnvironmentStringsW(PCWSTR(raw.as_ptr()), Some(&mut expanded)) };
+    if written == 0 || written as usize > expanded.len() {
+        wide_str_from_buf(raw)
+    } else {
+        wide_str_from_buf(&expanded)
+    }
 }
 
 #[cfg(windows)]
 fn resolve_lnk_target(path: &std::path::Path) -> Option<String> {
     use std::os::windows::ffi::OsStrExt;
     use windows::Win32::System::Com::{
-        CLSCTX_INPROC_SERVER, COINIT_APARTMENTTHREADED, CoCreateInstance, CoInitializeEx,
-        IPersistFile, STGM_READ,
+        CLSCTX_INPROC_SERVER, CoCreateInstance, IPersistFile, STGM_READ,
     };
     use windows::Win32::UI::Shell::{IShellLinkW, SLGP_RAWPATH, ShellLink};
     use windows::core::{Interface, PCWSTR};
 
     unsafe {
-        let _ = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
-
         let shell_link: IShellLinkW =
             CoCreateInstance(&ShellLink, None, CLSCTX_INPROC_SERVER).ok()?;
         let persist_file: IPersistFile = shell_link.cast().ok()?;
@@ -148,17 +194,28 @@ fn resolve_lnk_target(path: &std::path::Path) -> Option<String> {
             .Load(PCWSTR(wide_path.as_ptr()), STGM_READ)
             .ok()?;
 
-        let mut buffer = [0u16; 260];
+        let mut raw_path = [0u16; 260];
         shell_link
-            .GetPath(&mut buffer, std::ptr::null_mut(), SLGP_RAWPATH.0 as u32)
+            .GetPath(&mut raw_path, std::ptr::null_mut(), SLGP_RAWPATH.0 as u32)
             .ok()?;
 
-        let end = buffer.iter().position(|&c| c == 0).unwrap_or(buffer.len());
-        if end == 0 {
-            None
-        } else {
-            Some(String::from_utf16_lossy(&buffer[..end]).to_lowercase())
+        let target = expand_env_vars(&raw_path);
+        if target.is_empty() {
+            return None;
         }
+
+        let mut args_buf = [0u16; 1024];
+        let arguments = shell_link
+            .GetArguments(&mut args_buf)
+            .ok()
+            .map(|()| wide_str_from_buf(&args_buf))
+            .unwrap_or_default();
+
+        Some(format!(
+            "{}|{}",
+            target.to_lowercase(),
+            arguments.to_lowercase()
+        ))
     }
 }
 
@@ -213,6 +270,112 @@ pub fn enumerate_installed_apps() -> Vec<AppItem> {
 mod tests {
     use super::*;
     use std::fs;
+    use std::os::windows::ffi::OsStrExt;
+    use windows::Win32::System::Com::{CLSCTX_INPROC_SERVER, CoCreateInstance, IPersistFile};
+    use windows::Win32::UI::Shell::{IShellLinkW, ShellLink};
+    use windows::core::{Interface, PCWSTR};
+
+    fn wide(s: &str) -> Vec<u16> {
+        std::ffi::OsStr::new(s)
+            .encode_wide()
+            .chain(Some(0))
+            .collect()
+    }
+
+    fn create_test_lnk(dir: &std::path::Path, name: &str, target: &str, args: &str) {
+        let _guard = ComGuard::new();
+        unsafe {
+            let shell_link: IShellLinkW =
+                CoCreateInstance(&ShellLink, None, CLSCTX_INPROC_SERVER).unwrap();
+
+            shell_link.SetPath(PCWSTR(wide(target).as_ptr())).unwrap();
+            if !args.is_empty() {
+                shell_link
+                    .SetArguments(PCWSTR(wide(args).as_ptr()))
+                    .unwrap();
+            }
+
+            let persist_file: IPersistFile = shell_link.cast().unwrap();
+            let lnk_path = dir.join(format!("{name}.lnk"));
+            persist_file
+                .Save(PCWSTR(wide(&lnk_path.to_string_lossy()).as_ptr()), true)
+                .unwrap();
+        }
+    }
+
+    #[test]
+    fn dedupes_real_lnk_shortcuts_with_same_target() {
+        let _guard = ComGuard::new();
+        let per_user = tempfile::tempdir().unwrap();
+        let system_wide = tempfile::tempdir().unwrap();
+
+        create_test_lnk(per_user.path(), "App", r"C:\Apps\App\app.exe", "");
+        create_test_lnk(system_wide.path(), "App", r"C:\Apps\App\app.exe", "");
+
+        let mut apps = Vec::new();
+        let mut seen_ids = std::collections::HashSet::new();
+        scan_directory_for_shortcuts(per_user.path(), &mut apps, &mut seen_ids);
+        scan_directory_for_shortcuts(system_wide.path(), &mut apps, &mut seen_ids);
+
+        assert_eq!(apps.len(), 1);
+    }
+
+    #[test]
+    fn keeps_real_lnk_shortcuts_with_different_targets_same_name() {
+        let _guard = ComGuard::new();
+        let per_user = tempfile::tempdir().unwrap();
+        let system_wide = tempfile::tempdir().unwrap();
+
+        create_test_lnk(per_user.path(), "App", r"C:\VendorA\app.exe", "");
+        create_test_lnk(system_wide.path(), "App", r"C:\VendorB\app.exe", "");
+
+        let mut apps = Vec::new();
+        let mut seen_ids = std::collections::HashSet::new();
+        scan_directory_for_shortcuts(per_user.path(), &mut apps, &mut seen_ids);
+        scan_directory_for_shortcuts(system_wide.path(), &mut apps, &mut seen_ids);
+
+        assert_eq!(apps.len(), 2);
+    }
+
+    #[test]
+    fn keeps_real_lnk_shortcuts_with_same_target_different_arguments() {
+        let _guard = ComGuard::new();
+        let per_user = tempfile::tempdir().unwrap();
+        let system_wide = tempfile::tempdir().unwrap();
+
+        create_test_lnk(
+            per_user.path(),
+            "App",
+            r"C:\Apps\App\app.exe",
+            "--profile=work",
+        );
+        create_test_lnk(
+            system_wide.path(),
+            "App",
+            r"C:\Apps\App\app.exe",
+            "--profile=personal",
+        );
+
+        let mut apps = Vec::new();
+        let mut seen_ids = std::collections::HashSet::new();
+        scan_directory_for_shortcuts(per_user.path(), &mut apps, &mut seen_ids);
+        scan_directory_for_shortcuts(system_wide.path(), &mut apps, &mut seen_ids);
+
+        assert_eq!(apps.len(), 2);
+    }
+
+    #[test]
+    fn expands_environment_variables_in_lnk_target() {
+        let program_files = std::env::var("ProgramFiles").unwrap();
+        let raw = wide(r"%ProgramFiles%\App\app.exe");
+
+        let expanded = expand_env_vars(&raw);
+
+        assert_eq!(
+            expanded.to_lowercase(),
+            format!(r"{program_files}\App\app.exe").to_lowercase()
+        );
+    }
 
     #[test]
     fn dedupes_by_stem_when_target_cannot_be_resolved() {
@@ -286,5 +449,29 @@ mod tests {
         scan_directory_for_shortcuts(system_wide.path(), &mut apps, &mut seen_ids);
 
         assert_eq!(apps.len(), 2);
+    }
+
+    #[test]
+    fn dedupes_url_shortcuts_regardless_of_key_case_and_spacing() {
+        let per_user = tempfile::tempdir().unwrap();
+        let system_wide = tempfile::tempdir().unwrap();
+
+        fs::write(
+            per_user.path().join("App.url"),
+            "[InternetShortcut]\nURL=https://example.com/app\n",
+        )
+        .unwrap();
+        fs::write(
+            system_wide.path().join("App.url"),
+            "[InternetShortcut]\nurl = https://example.com/app\n",
+        )
+        .unwrap();
+
+        let mut apps = Vec::new();
+        let mut seen_ids = std::collections::HashSet::new();
+        scan_directory_for_shortcuts(per_user.path(), &mut apps, &mut seen_ids);
+        scan_directory_for_shortcuts(system_wide.path(), &mut apps, &mut seen_ids);
+
+        assert_eq!(apps.len(), 1);
     }
 }
