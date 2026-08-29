@@ -3,9 +3,9 @@ name: Audit
 on:
   push:
     branches: [main]
-    paths: ["**/Cargo.toml", "**/Cargo.lock", "deny.toml", ".github/workflows/**", ".github/actions/**"]
+    paths: ["**/Cargo.toml", "**/Cargo.lock", "deny.toml", ".github/workflows/**", ".github/actions/**", "scripts/**"]
   pull_request:
-    paths: ["**/Cargo.toml", "**/Cargo.lock", "deny.toml", ".github/workflows/**", ".github/actions/**"]
+    paths: ["**/Cargo.toml", "**/Cargo.lock", "deny.toml", ".github/workflows/**", ".github/actions/**", "scripts/**"]
   schedule:
     - cron: "0 6 * * 1"
 
@@ -79,3 +79,16 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: zizmor .
+
+  ruff:
+    name: ruff
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install ruff
+        run: curl -LsSf https://astral.sh/ruff/0.16.5/install.sh | sh
+
+      - run: ruff check scripts/

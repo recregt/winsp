@@ -26,5 +26,5 @@ jobs:
         run: |
           for sha in $(git rev-list "${{ github.event.pull_request.base.sha }}..${{ github.event.pull_request.head.sha }}"); do
             git log --format=%B -n1 "$sha" > /tmp/commit-msg
-            scripts/commit-msg-lint.sh /tmp/commit-msg "$sha"
+            python3 scripts/commit-msg-lint.py /tmp/commit-msg "$sha"
           done
