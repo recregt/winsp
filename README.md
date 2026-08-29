@@ -43,7 +43,7 @@ Basically, It's ridiculously fast. It finds what you want before `Windows Search
 
 ### Installation
 
-Download the latest pre-built binary (`winsp.exe`) from the [Releases](https://github.com/recregt/winsp/releases) page, or build it from source.
+Download the latest `winsp.msix` from the [Releases](https://github.com/recregt/winsp/releases) page and install it (`Add-AppxPackage`), or build it from source.
 
 ### Build from Source
 

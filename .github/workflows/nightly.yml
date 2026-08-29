@@ -92,10 +92,8 @@ jobs:
         working-directory: target/release
         shell: pwsh
         run: |
-          foreach ($file in "winsp.exe", "winsp.msix") {
-            $hash = (Get-FileHash $file -Algorithm SHA256).Hash.ToLower()
-            "$hash  $file" | Out-File -Encoding ascii -NoNewline "$file.sha256"
-          }
+          $hash = (Get-FileHash winsp.msix -Algorithm SHA256).Hash.ToLower()
+          "$hash  winsp.msix" | Out-File -Encoding ascii -NoNewline winsp.msix.sha256
 
       - name: Publish nightly release
         working-directory: target/release
@@ -113,4 +111,4 @@ jobs:
             --title "winsp nightly ($sha)" \
             --notes "Automated build from commit $sha. Not a stable release." \
             --prerelease \
-            winsp.exe winsp.exe.sha256 winsp.msix winsp.msix.sha256
+            winsp.msix winsp.msix.sha256
