@@ -88,7 +88,7 @@ fn scan_directory_for_shortcuts(
                             continue;
                         }
 
-                        let id = format!("shortcut:{}", path.display());
+                        let id = format!("shortcut:{}", stem_lower);
                         if seen_ids.insert(id.clone()) {
                             apps.push(
                                 AppItem::new(
@@ -151,4 +151,43 @@ pub fn enumerate_installed_apps() -> Vec<AppItem> {
         .with_description("Music and podcasts")
         .with_keywords(vec!["music".into(), "audio".into(), "songs".into()]),
     ]
+}
+
+#[cfg(all(test, windows))]
+mod tests {
+    use super::*;
+    use std::fs;
+
+    #[test]
+    fn dedupes_same_named_shortcut_across_directories() {
+        let per_user = tempfile::tempdir().unwrap();
+        let system_wide = tempfile::tempdir().unwrap();
+
+        fs::write(per_user.path().join("Chrome.lnk"), []).unwrap();
+        fs::write(system_wide.path().join("Chrome.lnk"), []).unwrap();
+
+        let mut apps = Vec::new();
+        let mut seen_ids = std::collections::HashSet::new();
+        scan_directory_for_shortcuts(per_user.path(), &mut apps, &mut seen_ids);
+        scan_directory_for_shortcuts(system_wide.path(), &mut apps, &mut seen_ids);
+
+        assert_eq!(apps.len(), 1);
+        assert_eq!(apps[0].name, "Chrome");
+    }
+
+    #[test]
+    fn keeps_distinctly_named_shortcuts_across_directories() {
+        let per_user = tempfile::tempdir().unwrap();
+        let system_wide = tempfile::tempdir().unwrap();
+
+        fs::write(per_user.path().join("Chrome.lnk"), []).unwrap();
+        fs::write(system_wide.path().join("Firefox.lnk"), []).unwrap();
+
+        let mut apps = Vec::new();
+        let mut seen_ids = std::collections::HashSet::new();
+        scan_directory_for_shortcuts(per_user.path(), &mut apps, &mut seen_ids);
+        scan_directory_for_shortcuts(system_wide.path(), &mut apps, &mut seen_ids);
+
+        assert_eq!(apps.len(), 2);
+    }
 }
