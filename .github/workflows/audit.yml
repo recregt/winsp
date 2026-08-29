@@ -25,7 +25,9 @@ jobs:
         with:
           persist-credentials: false
 
-      - uses: taiki-e/install-action@4461c431b17cc2a25d7a5c9887ed3bd0db450303 # cargo-audit
+      - uses: taiki-e/install-action@742a3317eac7bd62f91cd888b4eead5e784ba833 # v2
+        with:
+          tool: cargo-audit
 
       - run: cargo audit --deny warnings
 
@@ -37,7 +39,9 @@ jobs:
         with:
           persist-credentials: false
 
-      - uses: taiki-e/install-action@6d0f25106f71f38a0a09c8be489575626bdb0265 # cargo-deny
+      - uses: taiki-e/install-action@742a3317eac7bd62f91cd888b4eead5e784ba833 # v2
+        with:
+          tool: cargo-deny
 
       - run: cargo deny check bans licenses sources
 
@@ -67,7 +71,9 @@ jobs:
         with:
           persist-credentials: false
 
-      - uses: taiki-e/install-action@b409b684abf7a1fd13e48ec9c25cfed18bcf8c17 # zizmor
+      - uses: taiki-e/install-action@742a3317eac7bd62f91cd888b4eead5e784ba833 # v2
+        with:
+          tool: zizmor
 
       - name: Audit workflows
         env:
