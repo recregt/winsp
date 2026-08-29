@@ -73,6 +73,7 @@ pattern="^(${types})${scope_part}: [a-z0-9].*[^.]\$"
 
 full_pattern="^(${types})${scope_part}: (.*)\$"
 [[ "$header" =~ $full_pattern ]]
+commit_type="${BASH_REMATCH[1]}"
 written_scope="${BASH_REMATCH[3]}"
 description="${BASH_REMATCH[4]}"
 
@@ -121,6 +122,9 @@ fail_scope() {
 if [ "${#touched[@]}" -eq 1 ]; then
   if [ -n "$written_scope" ] && [ "$written_scope" != "${touched[0]}" ]; then
     fail_scope "This commit only touches '${touched[0]}', but the scope says '$written_scope'."
+  fi
+  if [ "${touched[0]}" = ".github" ] && [ "$commit_type" != "ci" ]; then
+    fail_scope "This commit only touches '.github', use type 'ci' (not '$commit_type') so CHANGELOG.md skips it."
   fi
 elif [ "$all_crate_scoped" -eq 1 ]; then
   if [ -n "$written_scope" ] && [ "$written_scope" != "crates" ]; then
