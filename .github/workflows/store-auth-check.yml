@@ -18,6 +18,7 @@ jobs:
       - uses: microsoft/microsoft-store-apppublisher@15abd1c50fcc164b19cb240fb04ef3c49bf715a2 # v1.1
 
       - name: Authenticate and read submission (no changes made)
+        continue-on-error: true
         shell: pwsh
         env:
           AZURE_AD_TENANT_ID: ${{ secrets.AZURE_AD_TENANT_ID }}
@@ -39,3 +40,45 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "msstore submission get failed with exit code $LASTEXITCODE" }
 
           Write-Host "Credentials are valid and can see the WinSP submission."
+
+      - name: Raw DevCenter API diagnostic (bypasses msstore-cli's swallowed errors)
+        shell: pwsh
+        env:
+          AZURE_AD_TENANT_ID: ${{ secrets.AZURE_AD_TENANT_ID }}
+          AZURE_AD_APPLICATION_CLIENT_ID: ${{ secrets.AZURE_AD_APPLICATION_CLIENT_ID }}
+          AZURE_AD_APPLICATION_SECRET: ${{ secrets.AZURE_AD_APPLICATION_SECRET }}
+        run: |
+          $tokenBody = @{
+            grant_type    = "client_credentials"
+            client_id     = $env:AZURE_AD_APPLICATION_CLIENT_ID
+            client_secret = $env:AZURE_AD_APPLICATION_SECRET
+            scope         = "https://manage.devcenter.microsoft.com/.default"
+          }
+
+          try {
+            $tokenResponse = Invoke-RestMethod `
+              -Uri "https://login.microsoftonline.com/$($env:AZURE_AD_TENANT_ID)/oauth2/v2.0/token" `
+              -Method Post `
+              -Body $tokenBody `
+              -ContentType "application/x-www-form-urlencoded"
+            Write-Host "Token acquired for scope https://manage.devcenter.microsoft.com/.default"
+          } catch {
+            Write-Host "Token request failed:"
+            Write-Host $_.Exception.Message
+            if ($_.ErrorDetails) { Write-Host $_.ErrorDetails.Message }
+            throw
+          }
+
+          try {
+            $app = Invoke-RestMethod `
+              -Uri "https://manage.devcenter.microsoft.com/v1.0/my/applications/9N22CB01DDDJ" `
+              -Method Get `
+              -Headers @{ Authorization = "Bearer $($tokenResponse.access_token)" }
+            Write-Host "Application retrieved successfully:"
+            $app | ConvertTo-Json -Depth 5
+          } catch {
+            Write-Host "DevCenter API call failed:"
+            Write-Host $_.Exception.Message
+            if ($_.ErrorDetails) { Write-Host "Response body: $($_.ErrorDetails.Message)" }
+            throw
+          }
