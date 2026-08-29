@@ -128,7 +128,7 @@ def main() -> None:
             f"Subject line is {len(header)} characters, must be 50 or fewer.",
         )
 
-    if len(lines) > 1 and lines[1] != "":
+    if len(lines) > 1 and lines[1].strip() != "":
         fail(
             header,
             "Missing blank line: leave an empty line between the subject "
