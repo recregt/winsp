@@ -108,23 +108,15 @@ jobs:
             echo "configured=false" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Configure Microsoft Store CLI
+      - uses: ./.github/actions/msstore-configure
         if: steps.store_creds.outputs.configured == 'true'
-        uses: microsoft/microsoft-store-apppublisher@15abd1c50fcc164b19cb240fb04ef3c49bf715a2 # v1.1
+        with:
+          tenant-id: ${{ secrets.AZURE_AD_TENANT_ID }}
+          seller-id: ${{ secrets.SELLER_ID }}
+          client-id: ${{ secrets.AZURE_AD_APPLICATION_CLIENT_ID }}
+          client-secret: ${{ secrets.AZURE_AD_APPLICATION_SECRET }}
 
-      - name: Publish to Microsoft Store
+      - uses: ./.github/actions/msstore-publish
         if: steps.store_creds.outputs.configured == 'true'
-        shell: pwsh
-        env:
-          AZURE_AD_TENANT_ID: ${{ secrets.AZURE_AD_TENANT_ID }}
-          SELLER_ID: ${{ secrets.SELLER_ID }}
-          AZURE_AD_APPLICATION_CLIENT_ID: ${{ secrets.AZURE_AD_APPLICATION_CLIENT_ID }}
-          AZURE_AD_APPLICATION_SECRET: ${{ secrets.AZURE_AD_APPLICATION_SECRET }}
-        run: |
-          msstore reconfigure `
-            --tenantId $env:AZURE_AD_TENANT_ID `
-            --sellerId $env:SELLER_ID `
-            --clientId $env:AZURE_AD_APPLICATION_CLIENT_ID `
-            --clientSecret $env:AZURE_AD_APPLICATION_SECRET
-
-          msstore publish target\release\winsp.msix -id 9N22CB01DDDJ --uploadTimeout 600
+        with:
+          msix-path: target\release\winsp.msix
