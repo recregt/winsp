@@ -43,7 +43,13 @@ Basically, It's ridiculously fast. It finds what you want before `Windows Search
 
 ### Installation
 
-Download the latest `winsp.msix` from the [Releases](https://github.com/recregt/winsp/releases) page and install it (`Add-AppxPackage`), or build it from source.
+Get WinSP from the Microsoft Store:
+
+<a href="https://get.microsoft.com/installer/download/9N22CB01DDDJ?referrer=appbadge" target="_self" >
+	<img src="https://get.microsoft.com/images/en-us%20dark.svg" width="200"/>
+</a>
+
+Alternatively, download the latest `winsp.msix` from the [Releases](https://github.com/recregt/winsp/releases) page and install it manually (`Add-AppxPackage`), or build it from source.
 
 ### Build from Source
 
