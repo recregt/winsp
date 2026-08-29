@@ -6,20 +6,38 @@ from pathlib import Path
 
 TYPES = ["feat", "fix", "refactor", "ci", "perf", "test", "chore", "docs"]
 
-IMPERATIVE_VIOLATIONS = (
-    "added ",
-    "adds ",
-    "fixed ",
-    "fixes ",
-    "updated ",
-    "updates ",
-    "removed ",
-    "removes ",
-    "changed ",
-    "changes ",
-    "created ",
-    "creates ",
-)
+IMPERATIVE_BASE_FORMS = {
+    "added": "add",
+    "adds": "add",
+    "fixed": "fix",
+    "fixes": "fix",
+    "updated": "update",
+    "updates": "update",
+    "removed": "remove",
+    "removes": "remove",
+    "changed": "change",
+    "changes": "change",
+    "created": "create",
+    "creates": "create",
+    "resolved": "resolve",
+    "resolves": "resolve",
+    "renamed": "rename",
+    "renames": "rename",
+    "moved": "move",
+    "moves": "move",
+    "deleted": "delete",
+    "deletes": "delete",
+    "improved": "improve",
+    "improves": "improve",
+    "enhanced": "enhance",
+    "enhances": "enhance",
+    "implemented": "implement",
+    "implements": "implement",
+    "refactored": "refactor",
+    "refactors": "refactor",
+    "supported": "support",
+    "supports": "support",
+}
 
 EXEMPT_PREFIXES = ("Merge ", "Revert ", "fixup! ", "squash! ")
 
@@ -127,10 +145,13 @@ def main() -> None:
     written_scope = full_match.group(3)
     description = full_match.group(4)
 
-    if description.startswith(IMPERATIVE_VIOLATIONS):
+    first_word = description.split(" ", 1)[0]
+    base_form = IMPERATIVE_BASE_FORMS.get(first_word)
+    if base_form:
         fail(
             header,
-            "Use imperative mood: 'add' not 'added'/'adds', 'fix' not 'fixed'/'fixes', etc.",
+            f"Use imperative mood: '{first_word}' should be '{base_form}' "
+            f"(write what the commit does, not what it did).",
         )
 
     changed_files = changed_files_for(sha)
