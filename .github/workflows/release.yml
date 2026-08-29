@@ -25,6 +25,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          fetch-depth: 0
 
       - name: Verify tag matches Cargo version
         shell: pwsh
@@ -68,6 +69,13 @@ jobs:
           $hash = (Get-FileHash winsp.msix -Algorithm SHA256).Hash.ToLower()
           "$hash  winsp.msix" | Out-File -Encoding ascii -NoNewline winsp.msix.sha256
 
+      - uses: taiki-e/install-action@742a3317eac7bd62f91cd888b4eead5e784ba833 # v2
+        with:
+          tool: git-cliff
+
+      - name: Generate release notes
+        run: git-cliff --config cliff.toml --latest --strip header -o target/release/release-notes.md
+
       - name: Create GitHub release
         working-directory: target/release
         shell: bash
@@ -77,7 +85,7 @@ jobs:
           gh release create "$GITHUB_REF_NAME" \
             --repo "$GITHUB_REPOSITORY" \
             --title "winsp $GITHUB_REF_NAME" \
-            --generate-notes \
+            --notes-file release-notes.md \
             winsp.msix winsp.msix.sha256
 
       - name: Check for Store credentials
