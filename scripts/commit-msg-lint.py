@@ -125,9 +125,9 @@ def main() -> None:
 
     scopes = valid_scopes(repo_root())
     types_re = "|".join(TYPES)
-    scope_re = "|".join(re.escape(s) for s in scopes)
-    scope_part = f"(\\(({scope_re})\\))?" if scopes else ""
-    pattern = rf"^(?:{types_re}){scope_part}: [a-z0-9].*[^.]$"
+    scope_re = "|".join(re.escape(s) for s in scopes) if scopes else "(?!)"
+    scope_part = rf"(?:\((?P<scope>{scope_re})\))?"
+    pattern = rf"^(?P<type>{types_re}){scope_part}: [a-z0-9].*[^.]$"
 
     if not re.match(pattern, header):
         fail(
@@ -140,10 +140,10 @@ def main() -> None:
             "  example: fix(indexer): handle null pointer dereference in shell enumeration",
         )
 
-    full_match = re.match(rf"^({types_re}){scope_part}: (.*)$", header)
-    commit_type = full_match.group(1)
-    written_scope = full_match.group(3)
-    description = full_match.group(4)
+    full_match = re.match(rf"^(?P<type>{types_re}){scope_part}: (?P<desc>.*)$", header)
+    commit_type = full_match.group("type")
+    written_scope = full_match.group("scope")
+    description = full_match.group("desc")
 
     first_word = description.split(" ", 1)[0]
     base_form = IMPERATIVE_BASE_FORMS.get(first_word)
