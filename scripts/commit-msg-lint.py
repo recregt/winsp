@@ -90,9 +90,13 @@ def valid_scopes(root: Path) -> list:
 
 
 def touched_dirs(changed_files):
+    filtered = [path for path in changed_files if path != "Cargo.lock"]
+    if not filtered:
+        filtered = changed_files
+
     touched = set()
     all_crate_scoped = True
-    for path in changed_files:
+    for path in filtered:
         first, _, rest = path.partition("/")
         if first == "crates" and "/" in rest:
             touched.add(rest.split("/", 1)[0])
