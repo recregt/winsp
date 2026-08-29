@@ -3,7 +3,7 @@
 All notable changes to WinSP are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
-## [Unreleased]
+## [0.2.0] - 2026-08-29
 
 ### Added
 - Hide console window and add system tray icon (#25)
@@ -20,6 +20,7 @@ All notable changes to WinSP are documented here. Format follows
 - Refresh taiki-e/install-action pins to their current commits (#70)
 - Surface msstore stderr output in store-auth-check (#72)
 - Surface verbose output for msstore submission get (#73)
+- Use an obvious placeholder for AppxManifest.xml version (#77)
 
 ## [nightly] - 2026-08-26
 
