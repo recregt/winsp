@@ -55,6 +55,7 @@ def comment_char() -> str:
         ["git", "config", "--get", "core.commentChar"],
         capture_output=True,
         text=True,
+        encoding="utf-8",
         check=False,
     )
     value = out.stdout.strip()
@@ -66,6 +67,7 @@ def repo_root() -> Path:
         ["git", "rev-parse", "--show-toplevel"],
         capture_output=True,
         text=True,
+        encoding="utf-8",
         check=True,
     )
     return Path(out.stdout.strip())
@@ -103,7 +105,9 @@ def changed_files_for(sha):
         cmd = ["git", "diff-tree", "--no-commit-id", "--name-only", "-r", sha]
     else:
         cmd = ["git", "diff", "--cached", "--name-only"]
-    out = subprocess.run(cmd, capture_output=True, text=True, check=True)
+    out = subprocess.run(
+        cmd, capture_output=True, text=True, encoding="utf-8", check=True
+    )
     return [line for line in out.stdout.splitlines() if line]
 
 
@@ -114,7 +118,7 @@ def main() -> None:
     char = comment_char()
     lines = [
         line
-        for line in Path(msg_file).read_text().splitlines()
+        for line in Path(msg_file).read_text(encoding="utf-8").splitlines()
         if not line.startswith(char)
     ]
     header = lines[0] if lines else ""
