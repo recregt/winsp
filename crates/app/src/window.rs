@@ -76,7 +76,7 @@ pub mod win32_window {
                 WS_EX_TOOLWINDOW | WS_EX_TOPMOST,
                 class_name.as_ptr(),
                 window_title.as_ptr(),
-                WS_POPUP | WS_VISIBLE,
+                WS_POPUP,
                 100,
                 100,
                 WINDOW_WIDTH,
@@ -115,9 +115,6 @@ pub mod win32_window {
             let _ = RegisterHotKey(hwnd, 1, MOD_ALT, VK_SPACE as u32);
 
             add_tray_icon(hwnd);
-
-            ShowWindow(hwnd, SW_SHOW);
-            SetForegroundWindow(hwnd);
 
             // Win32 Message Loop
             let mut msg = std::mem::zeroed::<MSG>();
