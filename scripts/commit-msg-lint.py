@@ -50,6 +50,17 @@ def fail(header: str, reason: str) -> None:
     sys.exit(1)
 
 
+def comment_char() -> str:
+    out = subprocess.run(
+        ["git", "config", "--get", "core.commentChar"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    value = out.stdout.strip()
+    return value if value else "#"
+
+
 def repo_root() -> Path:
     out = subprocess.run(
         ["git", "rev-parse", "--show-toplevel"],
@@ -100,7 +111,12 @@ def main() -> None:
     msg_file = sys.argv[1]
     sha = sys.argv[2] if len(sys.argv) > 2 else None
 
-    lines = Path(msg_file).read_text().splitlines()
+    char = comment_char()
+    lines = [
+        line
+        for line in Path(msg_file).read_text().splitlines()
+        if not line.startswith(char)
+    ]
     header = lines[0] if lines else ""
 
     if header.startswith(EXEMPT_PREFIXES):
@@ -110,6 +126,13 @@ def main() -> None:
         fail(
             header,
             f"Subject line is {len(header)} characters, must be 50 or fewer.",
+        )
+
+    if len(lines) > 1 and lines[1] != "":
+        fail(
+            header,
+            "Missing blank line: leave an empty line between the subject "
+            "and the body.",
         )
 
     for line in lines[2:]:
