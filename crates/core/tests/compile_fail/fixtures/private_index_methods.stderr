@@ -1,0 +1,10 @@
+error[E0624]: method `find` is private
+ --> tests/compile_fail/fixtures/private_index_methods.rs:3:19
+  |
+3 |     let _ = index.find("test", 5);
+  |                   ^^^^ private method
+  |
+ ::: src/search/index.rs
+  |
+  |     pub(super) fn find(&self, query: &str, limit: usize) -> Vec<SearchResult> {
+  |     ------------------------------------------------------------------------- private method defined here

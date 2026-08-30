@@ -315,6 +315,39 @@ mod tests {
     }
 
     #[test]
+    fn test_frecency_applies_to_keyword_matches_too() {
+        let mut popular = AppItem::new("a", "Aardvark Tool", AppTarget::Path("a.exe".into()))
+            .with_keywords(vec!["zzzmatch".into()]);
+        popular.launch_count = 10;
+        let rare = AppItem::new("b", "Yak Tool", AppTarget::Path("b.exe".into()))
+            .with_keywords(vec!["zzzmatch".into()]);
+
+        let mut index = SearchIndex::new();
+        index.set_items(vec![rare, popular]);
+
+        let results = index.find("zzzmatch", 5);
+        assert_eq!(results.len(), 2);
+        assert_eq!(results[0].title.as_ref(), "Aardvark Tool");
+    }
+
+    #[test]
+    fn test_keyword_matching_normalizes_case_at_construction_time() {
+        let mut index = SearchIndex::new();
+        index.set_items(vec![
+            AppItem::new(
+                "chrome",
+                "Google Chrome",
+                AppTarget::Path("chrome.exe".into()),
+            )
+            .with_keywords(vec!["BROWSER".into()]),
+        ]);
+
+        let results = index.find("browser", 5);
+        assert!(!results.is_empty());
+        assert_eq!(results[0].title.as_ref(), "Google Chrome");
+    }
+
+    #[test]
     fn test_unicode_names_match_case_insensitively_with_correct_indices() {
         let mut index = SearchIndex::new();
         index.set_items(vec![
