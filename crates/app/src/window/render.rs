@@ -11,7 +11,6 @@ use super::{APP_STATE, ITEM_ROW_HEIGHT, SEARCH_BAR_HEIGHT, WINDOW_WIDTH, to_wide
 
 const HIGHLIGHT_COLOR: COLORREF = 0x00FFB74D;
 
-/// `matched_indices` are zero-based Unicode scalar (`char`) indices into `text`, not byte offsets.
 fn highlight_segments(text: &str, matched_indices: &[usize]) -> Vec<(bool, String)> {
     let char_count = text.chars().count();
     let mut is_match = vec![false; char_count];
@@ -35,16 +34,13 @@ unsafe fn draw_highlighted_title(
     hdc: HDC,
     title: &str,
     matched_indices: &[usize],
-    left: i32,
-    right: i32,
-    top: i32,
-    bottom: i32,
+    bounds: RECT,
     base_color: COLORREF,
 ) {
     unsafe {
-        let mut seg_left = left;
+        let mut seg_left = bounds.left;
         for (highlighted, segment) in highlight_segments(title, matched_indices) {
-            if seg_left >= right {
+            if seg_left >= bounds.right {
                 break;
             }
             SetTextColor(
@@ -58,9 +54,9 @@ unsafe fn draw_highlighted_title(
             let mut seg_wide = to_wide(&segment);
             let mut seg_rect = RECT {
                 left: seg_left,
-                top,
-                right,
-                bottom,
+                top: bounds.top,
+                right: bounds.right,
+                bottom: bounds.bottom,
             };
             DrawTextW(
                 hdc,
@@ -209,10 +205,12 @@ pub(super) unsafe fn render_ui(hwnd: HWND, hdc: HDC) {
                         mem_dc,
                         &result.title,
                         &result.matched_indices,
-                        32,
-                        WINDOW_WIDTH - 32,
-                        current_y + 4,
-                        current_y + 26,
+                        RECT {
+                            left: 32,
+                            top: current_y + 4,
+                            right: WINDOW_WIDTH - 32,
+                            bottom: current_y + 26,
+                        },
                         base_color,
                     );
 
@@ -282,9 +280,6 @@ mod tests {
     impl OffscreenSurface {
         fn new() -> Self {
             unsafe {
-                // A DC compatible with NULL defaults to monochrome; use a real
-                // screen DC as the reference so the bitmap is full color, same
-                // as render_ui does with the window's own paint HDC.
                 let screen_dc = GetDC(std::ptr::null_mut());
                 let hdc = CreateCompatibleDC(screen_dc);
                 let bitmap = CreateCompatibleBitmap(screen_dc, BITMAP_WIDTH, BITMAP_HEIGHT);
@@ -336,20 +331,18 @@ mod tests {
 
     const BASE_COLOR: COLORREF = 0x00E0E0E0;
 
+    const TEST_BOUNDS: RECT = RECT {
+        left: 4,
+        top: 4,
+        right: BITMAP_WIDTH - 4,
+        bottom: BITMAP_HEIGHT - 4,
+    };
+
     #[test]
     fn test_highlighted_title_paints_the_highlight_color() {
         let surface = OffscreenSurface::new();
         unsafe {
-            draw_highlighted_title(
-                surface.hdc,
-                "Notepad",
-                &[0, 1, 2],
-                4,
-                BITMAP_WIDTH - 4,
-                4,
-                BITMAP_HEIGHT - 4,
-                BASE_COLOR,
-            );
+            draw_highlighted_title(surface.hdc, "Notepad", &[0, 1, 2], TEST_BOUNDS, BASE_COLOR);
         }
         assert!(
             surface.contains_pixel(HIGHLIGHT_COLOR),
@@ -361,16 +354,7 @@ mod tests {
     fn test_unhighlighted_title_never_paints_the_highlight_color() {
         let surface = OffscreenSurface::new();
         unsafe {
-            draw_highlighted_title(
-                surface.hdc,
-                "Notepad",
-                &[],
-                4,
-                BITMAP_WIDTH - 4,
-                4,
-                BITMAP_HEIGHT - 4,
-                BASE_COLOR,
-            );
+            draw_highlighted_title(surface.hdc, "Notepad", &[], TEST_BOUNDS, BASE_COLOR);
         }
         assert!(
             !surface.contains_pixel(HIGHLIGHT_COLOR),
