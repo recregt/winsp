@@ -405,8 +405,8 @@ mod tests {
 
     #[test]
     fn test_tan_domain_check_cosine_threshold_boundary() {
-        assert!(try_eval("tan(pi/2 + 1e-8)").is_some());
-        assert_eq!(try_eval("tan(pi/2 + 1e-10)"), None);
+        assert!(try_eval("tan(pi/2 + 1.1e-9)").is_some());
+        assert_eq!(try_eval("tan(pi/2 + 0.9e-9)"), None);
     }
 
     #[test]
