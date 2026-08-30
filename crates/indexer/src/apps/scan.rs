@@ -231,7 +231,7 @@ mod tests {
         scan_directory_for_shortcuts(system_wide.path(), &mut apps, &mut seen_ids);
 
         assert_eq!(apps.len(), 1);
-        assert_eq!(apps[0].name, "Chrome");
+        assert_eq!(apps[0].name.as_ref(), "Chrome");
     }
 
     #[test]
