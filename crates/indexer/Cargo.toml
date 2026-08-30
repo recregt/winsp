@@ -23,7 +23,7 @@ windows-sys = { version = "0.61", features = [
     "Win32_Storage_FileSystem",
     "Win32_UI_WindowsAndMessaging",
 ] }
-windows = { version = "0.61", features = [
+windows = { version = "0.62", features = [
     "Win32_System_Com",
     "Win32_System_Environment",
     "Win32_UI_Shell",
