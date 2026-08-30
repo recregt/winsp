@@ -1,13 +1,34 @@
-use windows_sys::Win32::Foundation::{COLORREF, HWND, RECT};
+use windows_sys::Win32::Foundation::{COLORREF, HWND, RECT, SIZE};
 use windows_sys::Win32::Graphics::Gdi::{
     BitBlt, CreateCompatibleBitmap, CreateCompatibleDC, CreateFontW, CreatePen, CreateSolidBrush,
     DT_LEFT, DT_SINGLELINE, DT_VCENTER, DeleteDC, DeleteObject, DrawTextW, FW_NORMAL, FW_SEMIBOLD,
-    FillRect, HDC, LineTo, MoveToEx, PS_SOLID, SRCCOPY, SelectObject, SetBkMode, SetTextColor,
-    TRANSPARENT,
+    FillRect, GetTextExtentPoint32W, HDC, LineTo, MoveToEx, PS_SOLID, SRCCOPY, SelectObject,
+    SetBkMode, SetTextColor, TRANSPARENT,
 };
 use windows_sys::Win32::UI::WindowsAndMessaging::GetClientRect;
 
 use super::{APP_STATE, ITEM_ROW_HEIGHT, SEARCH_BAR_HEIGHT, WINDOW_WIDTH, to_wide};
+
+const HIGHLIGHT_COLOR: COLORREF = 0x00FFB74D;
+
+fn highlight_segments(text: &str, matched_indices: &[usize]) -> Vec<(bool, String)> {
+    let char_count = text.chars().count();
+    let mut is_match = vec![false; char_count];
+    for &i in matched_indices {
+        if let Some(flag) = is_match.get_mut(i) {
+            *flag = true;
+        }
+    }
+
+    let mut segments: Vec<(bool, String)> = Vec::new();
+    for (ch, &highlighted) in text.chars().zip(is_match.iter()) {
+        match segments.last_mut() {
+            Some((last_highlighted, run)) if *last_highlighted == highlighted => run.push(ch),
+            _ => segments.push((highlighted, ch.to_string())),
+        }
+    }
+    segments
+}
 
 pub(super) unsafe fn render_ui(hwnd: HWND, hdc: HDC) {
     unsafe {
@@ -131,21 +152,43 @@ pub(super) unsafe fn render_ui(hwnd: HWND, hdc: HDC) {
                     }
 
                     SelectObject(mem_dc, font_item_title);
-                    SetTextColor(mem_dc, if is_selected { 0x00FFFFFF } else { 0x00E0E0E0 });
-                    let mut title_wide = to_wide(&result.title);
-                    let mut title_rect = RECT {
-                        left: 32,
-                        top: current_y + 4,
-                        right: WINDOW_WIDTH - 32,
-                        bottom: current_y + 26,
-                    };
-                    DrawTextW(
-                        mem_dc,
-                        title_wide.as_mut_ptr(),
-                        title_wide.len() as i32 - 1,
-                        &mut title_rect,
-                        DT_LEFT | DT_SINGLELINE | DT_VCENTER,
-                    );
+                    let base_color = if is_selected { 0x00FFFFFF } else { 0x00E0E0E0 };
+                    let mut seg_left = 32;
+                    for (highlighted, segment) in
+                        highlight_segments(&result.title, &result.matched_indices)
+                    {
+                        SetTextColor(
+                            mem_dc,
+                            if highlighted {
+                                HIGHLIGHT_COLOR
+                            } else {
+                                base_color
+                            },
+                        );
+                        let mut seg_wide = to_wide(&segment);
+                        let mut seg_rect = RECT {
+                            left: seg_left,
+                            top: current_y + 4,
+                            right: WINDOW_WIDTH - 32,
+                            bottom: current_y + 26,
+                        };
+                        DrawTextW(
+                            mem_dc,
+                            seg_wide.as_mut_ptr(),
+                            seg_wide.len() as i32 - 1,
+                            &mut seg_rect,
+                            DT_LEFT | DT_SINGLELINE | DT_VCENTER,
+                        );
+
+                        let mut extent = std::mem::zeroed::<SIZE>();
+                        GetTextExtentPoint32W(
+                            mem_dc,
+                            seg_wide.as_ptr(),
+                            seg_wide.len() as i32 - 1,
+                            &mut extent,
+                        );
+                        seg_left += extent.cx;
+                    }
 
                     if let Some(sub) = &result.subtitle {
                         SelectObject(mem_dc, font_item_sub);
@@ -191,5 +234,63 @@ pub(super) unsafe fn render_ui(hwnd: HWND, hdc: HDC) {
         SelectObject(mem_dc, old_bmp);
         DeleteObject(mem_bmp);
         DeleteDC(mem_dc);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_no_matches_yields_single_unhighlighted_segment() {
+        assert_eq!(
+            highlight_segments("Notepad", &[]),
+            vec![(false, "Notepad".to_string())]
+        );
+    }
+
+    #[test]
+    fn test_contiguous_prefix_match_yields_two_segments() {
+        assert_eq!(
+            highlight_segments("Notepad", &[0, 1, 2]),
+            vec![(true, "Not".to_string()), (false, "epad".to_string())]
+        );
+    }
+
+    #[test]
+    fn test_scattered_acronym_match_yields_alternating_segments() {
+        assert_eq!(
+            highlight_segments("Visual Studio", &[0, 7]),
+            vec![
+                (true, "V".to_string()),
+                (false, "isual ".to_string()),
+                (true, "S".to_string()),
+                (false, "tudio".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn test_full_match_yields_single_highlighted_segment() {
+        assert_eq!(
+            highlight_segments("cmd", &[0, 1, 2]),
+            vec![(true, "cmd".to_string())]
+        );
+    }
+
+    #[test]
+    fn test_out_of_range_indices_are_ignored_without_panicking() {
+        assert_eq!(
+            highlight_segments("cmd", &[0, 99]),
+            vec![(true, "c".to_string()), (false, "md".to_string())]
+        );
+    }
+
+    #[test]
+    fn test_multibyte_characters_split_on_char_boundaries_not_bytes() {
+        assert_eq!(
+            highlight_segments("日本語アプリ", &[3, 4, 5]),
+            vec![(false, "日本語".to_string()), (true, "アプリ".to_string()),]
+        );
     }
 }
