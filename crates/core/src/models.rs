@@ -3,7 +3,8 @@ use std::sync::Arc;
 /// The target type for an executable application item.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AppTarget {
-    /// Traditional Win32 binary or shortcut (.exe, .lnk, .bat, etc.)
+    /// A path or bare command executed via ShellExecuteW (.exe, .lnk, .url, .bat, etc.).
+    /// The Start Menu indexer currently only discovers `.lnk` and `.url` shortcuts.
     Path(String),
     /// Modern Windows Store / UWP App User Model ID (AUMID)
     Aumid(String),
