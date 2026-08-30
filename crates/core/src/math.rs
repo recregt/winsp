@@ -12,157 +12,155 @@ enum Token {
     Identifier(String),
 }
 
-pub struct Evaluator;
+const MAX_INPUT_LEN: usize = 100;
 
-impl Evaluator {
-    pub fn try_eval(input: &str) -> Option<String> {
-        let trimmed = input.trim();
-        if trimmed.is_empty() {
-            return None;
-        }
-
-        if let Some(res) = Self::try_eval_percentage(trimmed) {
-            return Some(Self::format_result(res));
-        }
-
-        let tokens = Self::tokenize(trimmed)?;
-        if tokens.is_empty() {
-            return None;
-        }
-
-        let has_op_or_func = tokens.iter().any(|t| {
-            matches!(
-                t,
-                Token::Plus
-                    | Token::Minus
-                    | Token::Multiply
-                    | Token::Divide
-                    | Token::Modulo
-                    | Token::Power
-                    | Token::Identifier(_)
-            )
-        });
-
-        if !has_op_or_func {
-            return None;
-        }
-
-        let mut parser = Parser::new(tokens);
-        let val = parser.parse_expression()?;
-
-        if parser.has_more() {
-            return None;
-        }
-
-        if val.is_nan() || val.is_infinite() {
-            return None;
-        }
-
-        Some(Self::format_result(val))
+pub fn try_eval(input: &str) -> Option<String> {
+    let trimmed = input.trim();
+    if trimmed.is_empty() || trimmed.len() > MAX_INPUT_LEN {
+        return None;
     }
 
-    fn try_eval_percentage(input: &str) -> Option<f64> {
-        let lower = input.to_lowercase();
-        let parts: Vec<&str> = lower.split_whitespace().collect();
-        if parts.len() == 3 && parts[1] == "of" {
-            let pct_str = parts[0].trim_end_matches('%');
-            let pct: f64 = pct_str.parse().ok()?;
-            let total: f64 = parts[2].parse().ok()?;
-            return Some((pct / 100.0) * total);
-        }
-        None
+    if let Some(res) = try_eval_percentage(trimmed) {
+        return Some(format_result(res));
     }
 
-    fn format_result(val: f64) -> String {
-        if (val.fract() == 0.0) && (val.abs() < 1e15) {
-            format!("{}", val as i64)
-        } else {
-            let s = format!("{:.6}", val);
-            let trimmed = s.trim_end_matches('0').trim_end_matches('.');
-            trimmed.to_string()
-        }
+    let tokens = tokenize(trimmed)?;
+    if tokens.is_empty() {
+        return None;
     }
 
-    fn tokenize(input: &str) -> Option<Vec<Token>> {
-        let mut tokens = Vec::new();
-        let chars: Vec<char> = input.chars().collect();
-        let mut i = 0;
+    let has_op_or_func = tokens.iter().any(|t| {
+        matches!(
+            t,
+            Token::Plus
+                | Token::Minus
+                | Token::Multiply
+                | Token::Divide
+                | Token::Modulo
+                | Token::Power
+                | Token::Identifier(_)
+        )
+    });
 
-        while i < chars.len() {
-            let c = chars[i];
-            if c.is_whitespace() {
+    if !has_op_or_func {
+        return None;
+    }
+
+    let mut parser = Parser::new(tokens);
+    let val = parser.parse_expression()?;
+
+    if parser.has_more() {
+        return None;
+    }
+
+    if val.is_nan() || val.is_infinite() {
+        return None;
+    }
+
+    Some(format_result(val))
+}
+
+fn try_eval_percentage(input: &str) -> Option<f64> {
+    let lower = input.to_lowercase();
+    let parts: Vec<&str> = lower.split_whitespace().collect();
+    if parts.len() == 3 && parts[1] == "of" {
+        let pct_str = parts[0].trim_end_matches('%');
+        let pct: f64 = pct_str.parse().ok()?;
+        let total: f64 = parts[2].parse().ok()?;
+        return Some((pct / 100.0) * total);
+    }
+    None
+}
+
+fn format_result(val: f64) -> String {
+    if (val.fract() == 0.0) && (val.abs() < 1e15) {
+        format!("{}", val as i64)
+    } else {
+        let s = format!("{:.6}", val);
+        let trimmed = s.trim_end_matches('0').trim_end_matches('.');
+        trimmed.to_string()
+    }
+}
+
+fn tokenize(input: &str) -> Option<Vec<Token>> {
+    let mut tokens = Vec::new();
+    let chars: Vec<char> = input.chars().collect();
+    let mut i = 0;
+
+    while i < chars.len() {
+        let c = chars[i];
+        if c.is_whitespace() {
+            i += 1;
+            continue;
+        }
+
+        match c {
+            '+' => {
+                tokens.push(Token::Plus);
                 i += 1;
-                continue;
             }
-
-            match c {
-                '+' => {
-                    tokens.push(Token::Plus);
-                    i += 1;
-                }
-                '-' => {
-                    tokens.push(Token::Minus);
-                    i += 1;
-                }
-                '*' | 'x' | '×' => {
-                    tokens.push(Token::Multiply);
-                    i += 1;
-                }
-                '/' | '÷' => {
-                    tokens.push(Token::Divide);
-                    i += 1;
-                }
-                '%' => {
-                    tokens.push(Token::Modulo);
-                    i += 1;
-                }
-                '^' => {
-                    tokens.push(Token::Power);
-                    i += 1;
-                }
-                '(' => {
-                    tokens.push(Token::LParen);
-                    i += 1;
-                }
-                ')' => {
-                    tokens.push(Token::RParen);
-                    i += 1;
-                }
-                '0'..='9' | '.' => {
-                    let start = i;
-                    let mut has_dot = c == '.';
-                    i += 1;
-                    while i < chars.len() {
-                        if chars[i] == '.' {
-                            if has_dot {
-                                break;
-                            }
-                            has_dot = true;
-                            i += 1;
-                        } else if chars[i].is_ascii_digit() {
-                            i += 1;
-                        } else {
+            '-' => {
+                tokens.push(Token::Minus);
+                i += 1;
+            }
+            '*' | 'x' | '×' => {
+                tokens.push(Token::Multiply);
+                i += 1;
+            }
+            '/' | '÷' => {
+                tokens.push(Token::Divide);
+                i += 1;
+            }
+            '%' => {
+                tokens.push(Token::Modulo);
+                i += 1;
+            }
+            '^' => {
+                tokens.push(Token::Power);
+                i += 1;
+            }
+            '(' => {
+                tokens.push(Token::LParen);
+                i += 1;
+            }
+            ')' => {
+                tokens.push(Token::RParen);
+                i += 1;
+            }
+            '0'..='9' | '.' => {
+                let start = i;
+                let mut has_dot = c == '.';
+                i += 1;
+                while i < chars.len() {
+                    if chars[i] == '.' {
+                        if has_dot {
                             break;
                         }
-                    }
-                    let num_str: String = chars[start..i].iter().collect();
-                    let num = num_str.parse::<f64>().ok()?;
-                    tokens.push(Token::Number(num));
-                }
-                'a'..='z' | 'A'..='Z' => {
-                    let start = i;
-                    while i < chars.len() && chars[i].is_alphabetic() {
+                        has_dot = true;
                         i += 1;
+                    } else if chars[i].is_ascii_digit() {
+                        i += 1;
+                    } else {
+                        break;
                     }
-                    let id: String = chars[start..i].iter().collect();
-                    tokens.push(Token::Identifier(id.to_lowercase()));
                 }
-                _ => return None,
+                let num_str: String = chars[start..i].iter().collect();
+                let num = num_str.parse::<f64>().ok()?;
+                tokens.push(Token::Number(num));
             }
+            'a'..='z' | 'A'..='Z' => {
+                let start = i;
+                while i < chars.len() && chars[i].is_alphabetic() {
+                    i += 1;
+                }
+                let id: String = chars[start..i].iter().collect();
+                tokens.push(Token::Identifier(id.to_lowercase()));
+            }
+            _ => return None,
         }
-
-        Some(tokens)
     }
+
+    Some(tokens)
 }
 
 struct Parser {
@@ -348,30 +346,39 @@ mod tests {
 
     #[test]
     fn test_basic_arithmetic() {
-        assert_eq!(Evaluator::try_eval("2 + 2"), Some("4".to_string()));
-        assert_eq!(Evaluator::try_eval("10 - 3 * 2"), Some("4".to_string()));
-        assert_eq!(Evaluator::try_eval("(10 - 3) * 2"), Some("14".to_string()));
-        assert_eq!(Evaluator::try_eval("10 / 4"), Some("2.5".to_string()));
-        assert_eq!(Evaluator::try_eval("2 ^ 8"), Some("256".to_string()));
+        assert_eq!(try_eval("2 + 2"), Some("4".to_string()));
+        assert_eq!(try_eval("10 - 3 * 2"), Some("4".to_string()));
+        assert_eq!(try_eval("(10 - 3) * 2"), Some("14".to_string()));
+        assert_eq!(try_eval("10 / 4"), Some("2.5".to_string()));
+        assert_eq!(try_eval("2 ^ 8"), Some("256".to_string()));
     }
 
     #[test]
     fn test_math_functions() {
-        assert_eq!(Evaluator::try_eval("sqrt(144)"), Some("12".to_string()));
-        assert_eq!(Evaluator::try_eval("abs(-42)"), Some("42".to_string()));
+        assert_eq!(try_eval("sqrt(144)"), Some("12".to_string()));
+        assert_eq!(try_eval("abs(-42)"), Some("42".to_string()));
     }
 
     #[test]
     fn test_percentage() {
-        assert_eq!(Evaluator::try_eval("15% of 200"), Some("30".to_string()));
-        assert_eq!(Evaluator::try_eval("25% of 80"), Some("20".to_string()));
+        assert_eq!(try_eval("15% of 200"), Some("30".to_string()));
+        assert_eq!(try_eval("25% of 80"), Some("20".to_string()));
     }
 
     #[test]
     fn test_invalid_expressions() {
-        assert_eq!(Evaluator::try_eval("hello"), None);
-        assert_eq!(Evaluator::try_eval("123"), None);
-        assert_eq!(Evaluator::try_eval(""), None);
-        assert_eq!(Evaluator::try_eval("2 +"), None);
+        assert_eq!(try_eval("hello"), None);
+        assert_eq!(try_eval("123"), None);
+        assert_eq!(try_eval(""), None);
+        assert_eq!(try_eval("2 +"), None);
+    }
+
+    #[test]
+    fn test_pathologically_long_input_does_not_recurse() {
+        let power_chain: String = "2".to_string() + &"^2".repeat(200_000);
+        assert_eq!(try_eval(&power_chain), None);
+
+        let deep_parens: String = "(".repeat(200_000) + "1" + &")".repeat(200_000);
+        assert_eq!(try_eval(&deep_parens), None);
     }
 }

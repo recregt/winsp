@@ -1,4 +1,4 @@
-use crate::evaluator::Evaluator;
+use crate::math;
 use crate::models::{AppItem, SearchResult};
 use nucleo_matcher::{Config, Matcher, Utf32Str};
 use std::cell::RefCell;
@@ -69,7 +69,7 @@ impl SearchIndex {
                 .collect();
         }
 
-        let calc_result = Evaluator::try_eval(trimmed_query)
+        let calc_result = math::try_eval(trimmed_query)
             .map(|calc_res| SearchResult::calculation(trimmed_query.to_string(), calc_res));
 
         let mut candidates = match_all_items(&self.items, &self.matcher, trimmed_query);
