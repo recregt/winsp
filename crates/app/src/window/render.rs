@@ -31,6 +31,57 @@ fn highlight_segments(text: &str, matched_indices: &[usize]) -> Vec<(bool, Strin
     segments
 }
 
+unsafe fn draw_highlighted_title(
+    hdc: HDC,
+    title: &str,
+    matched_indices: &[usize],
+    left: i32,
+    right: i32,
+    top: i32,
+    bottom: i32,
+    base_color: COLORREF,
+) {
+    unsafe {
+        let mut seg_left = left;
+        for (highlighted, segment) in highlight_segments(title, matched_indices) {
+            if seg_left >= right {
+                break;
+            }
+            SetTextColor(
+                hdc,
+                if highlighted {
+                    HIGHLIGHT_COLOR
+                } else {
+                    base_color
+                },
+            );
+            let mut seg_wide = to_wide(&segment);
+            let mut seg_rect = RECT {
+                left: seg_left,
+                top,
+                right,
+                bottom,
+            };
+            DrawTextW(
+                hdc,
+                seg_wide.as_mut_ptr(),
+                seg_wide.len() as i32 - 1,
+                &mut seg_rect,
+                DT_LEFT | DT_SINGLELINE | DT_VCENTER,
+            );
+
+            let mut extent = std::mem::zeroed::<SIZE>();
+            GetTextExtentPoint32W(
+                hdc,
+                seg_wide.as_ptr(),
+                seg_wide.len() as i32 - 1,
+                &mut extent,
+            );
+            seg_left += extent.cx;
+        }
+    }
+}
+
 pub(super) unsafe fn render_ui(hwnd: HWND, hdc: HDC) {
     unsafe {
         let mut client_rect = std::mem::zeroed::<RECT>();
@@ -154,46 +205,16 @@ pub(super) unsafe fn render_ui(hwnd: HWND, hdc: HDC) {
 
                     SelectObject(mem_dc, font_item_title);
                     let base_color = if is_selected { 0x00FFFFFF } else { 0x00E0E0E0 };
-                    let mut seg_left = 32;
-                    let title_right = WINDOW_WIDTH - 32;
-                    for (highlighted, segment) in
-                        highlight_segments(&result.title, &result.matched_indices)
-                    {
-                        if seg_left >= title_right {
-                            break;
-                        }
-                        SetTextColor(
-                            mem_dc,
-                            if highlighted {
-                                HIGHLIGHT_COLOR
-                            } else {
-                                base_color
-                            },
-                        );
-                        let mut seg_wide = to_wide(&segment);
-                        let mut seg_rect = RECT {
-                            left: seg_left,
-                            top: current_y + 4,
-                            right: title_right,
-                            bottom: current_y + 26,
-                        };
-                        DrawTextW(
-                            mem_dc,
-                            seg_wide.as_mut_ptr(),
-                            seg_wide.len() as i32 - 1,
-                            &mut seg_rect,
-                            DT_LEFT | DT_SINGLELINE | DT_VCENTER,
-                        );
-
-                        let mut extent = std::mem::zeroed::<SIZE>();
-                        GetTextExtentPoint32W(
-                            mem_dc,
-                            seg_wide.as_ptr(),
-                            seg_wide.len() as i32 - 1,
-                            &mut extent,
-                        );
-                        seg_left += extent.cx;
-                    }
+                    draw_highlighted_title(
+                        mem_dc,
+                        &result.title,
+                        &result.matched_indices,
+                        32,
+                        WINDOW_WIDTH - 32,
+                        current_y + 4,
+                        current_y + 26,
+                        base_color,
+                    );
 
                     if let Some(sub) = &result.subtitle {
                         SelectObject(mem_dc, font_item_sub);
@@ -245,6 +266,124 @@ pub(super) unsafe fn render_ui(hwnd: HWND, hdc: HDC) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use windows_sys::Win32::Graphics::Gdi::{
+        DeleteObject as GdiDeleteObject, GetDC, GetPixel, ReleaseDC,
+    };
+
+    const BITMAP_WIDTH: i32 = 300;
+    const BITMAP_HEIGHT: i32 = 40;
+
+    struct OffscreenSurface {
+        hdc: HDC,
+        bitmap: windows_sys::Win32::Graphics::Gdi::HBITMAP,
+        old_bitmap: windows_sys::Win32::Graphics::Gdi::HGDIOBJ,
+    }
+
+    impl OffscreenSurface {
+        fn new() -> Self {
+            unsafe {
+                // A DC compatible with NULL defaults to monochrome; use a real
+                // screen DC as the reference so the bitmap is full color, same
+                // as render_ui does with the window's own paint HDC.
+                let screen_dc = GetDC(std::ptr::null_mut());
+                let hdc = CreateCompatibleDC(screen_dc);
+                let bitmap = CreateCompatibleBitmap(screen_dc, BITMAP_WIDTH, BITMAP_HEIGHT);
+                ReleaseDC(std::ptr::null_mut(), screen_dc);
+                let old_bitmap = SelectObject(hdc, bitmap);
+
+                let fill_rect = RECT {
+                    left: 0,
+                    top: 0,
+                    right: BITMAP_WIDTH,
+                    bottom: BITMAP_HEIGHT,
+                };
+                let bg_brush = CreateSolidBrush(0x00000000);
+                FillRect(hdc, &fill_rect, bg_brush);
+                GdiDeleteObject(bg_brush);
+                SetBkMode(hdc, TRANSPARENT as i32);
+
+                Self {
+                    hdc,
+                    bitmap,
+                    old_bitmap,
+                }
+            }
+        }
+
+        fn contains_pixel(&self, color: COLORREF) -> bool {
+            unsafe {
+                for y in 0..BITMAP_HEIGHT {
+                    for x in 0..BITMAP_WIDTH {
+                        if GetPixel(self.hdc, x, y) == color {
+                            return true;
+                        }
+                    }
+                }
+            }
+            false
+        }
+    }
+
+    impl Drop for OffscreenSurface {
+        fn drop(&mut self) {
+            unsafe {
+                SelectObject(self.hdc, self.old_bitmap);
+                GdiDeleteObject(self.bitmap);
+                DeleteDC(self.hdc);
+            }
+        }
+    }
+
+    const BASE_COLOR: COLORREF = 0x00E0E0E0;
+
+    #[test]
+    fn test_highlighted_title_paints_the_highlight_color() {
+        let surface = OffscreenSurface::new();
+        unsafe {
+            draw_highlighted_title(
+                surface.hdc,
+                "Notepad",
+                &[0, 1, 2],
+                4,
+                BITMAP_WIDTH - 4,
+                4,
+                BITMAP_HEIGHT - 4,
+                BASE_COLOR,
+            );
+        }
+        assert!(
+            surface.contains_pixel(HIGHLIGHT_COLOR),
+            "expected at least one pixel painted in the highlight color"
+        );
+    }
+
+    #[test]
+    fn test_unhighlighted_title_never_paints_the_highlight_color() {
+        let surface = OffscreenSurface::new();
+        unsafe {
+            draw_highlighted_title(
+                surface.hdc,
+                "Notepad",
+                &[],
+                4,
+                BITMAP_WIDTH - 4,
+                4,
+                BITMAP_HEIGHT - 4,
+                BASE_COLOR,
+            );
+        }
+        assert!(
+            !surface.contains_pixel(HIGHLIGHT_COLOR),
+            "no pixel should be the highlight color when nothing matched"
+        );
+    }
+
+    #[test]
+    fn test_highlight_color_constant_is_distinct_from_base_and_background() {
+        const BACKGROUND_COLOR: COLORREF = 0x00000000;
+        assert_ne!(HIGHLIGHT_COLOR, BASE_COLOR);
+        assert_ne!(HIGHLIGHT_COLOR, BACKGROUND_COLOR);
+    }
 
     #[test]
     fn test_no_matches_yields_single_unhighlighted_segment() {
