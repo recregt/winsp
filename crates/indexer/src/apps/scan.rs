@@ -8,11 +8,8 @@ use super::url::resolve_url_target;
 pub fn enumerate_installed_apps() -> Vec<AppItem> {
     let mut apps = Vec::new();
     let mut seen_ids = std::collections::HashSet::new();
-    let _com_guard = ComGuard::new();
 
-    for dir_path in start_menu_dirs() {
-        scan_directory_for_shortcuts(&dir_path, &mut apps, &mut seen_ids);
-    }
+    scan_start_menu(&start_menu_dirs(), &mut apps, &mut seen_ids);
 
     let default_tools = vec![
         ("Calculator", "calc.exe", "Microsoft Calculator"),
@@ -47,6 +44,20 @@ pub fn enumerate_installed_apps() -> Vec<AppItem> {
     }
 
     apps
+}
+
+fn scan_start_menu(
+    dirs: &[std::path::PathBuf],
+    apps: &mut Vec<AppItem>,
+    seen_ids: &mut std::collections::HashSet<String>,
+) {
+    let Some(_com_guard) = ComGuard::new() else {
+        return;
+    };
+
+    for dir_path in dirs {
+        scan_directory_for_shortcuts(dir_path, apps, seen_ids);
+    }
 }
 
 fn scan_directory_for_shortcuts(
@@ -101,9 +112,22 @@ mod tests {
     use super::*;
     use std::fs;
     use std::os::windows::ffi::OsStrExt;
-    use windows::Win32::System::Com::{CLSCTX_INPROC_SERVER, CoCreateInstance, IPersistFile};
+    use windows::Win32::System::Com::{
+        CLSCTX_INPROC_SERVER, COINIT_MULTITHREADED, CoCreateInstance, CoInitializeEx,
+        CoUninitialize, IPersistFile,
+    };
     use windows::Win32::UI::Shell::{IShellLinkW, ShellLink};
     use windows::core::{Interface, PCWSTR};
+
+    struct ConflictingApartmentGuard;
+
+    impl Drop for ConflictingApartmentGuard {
+        fn drop(&mut self) {
+            unsafe {
+                CoUninitialize();
+            }
+        }
+    }
 
     fn wide(s: &str) -> Vec<u16> {
         std::ffi::OsStr::new(s)
@@ -113,7 +137,6 @@ mod tests {
     }
 
     fn create_test_lnk(dir: &std::path::Path, name: &str, target: &str, args: &str) {
-        let _guard = ComGuard::new();
         unsafe {
             let shell_link: IShellLinkW =
                 CoCreateInstance(&ShellLink, None, CLSCTX_INPROC_SERVER).unwrap();
@@ -290,5 +313,54 @@ mod tests {
         scan_directory_for_shortcuts(system_wide.path(), &mut apps, &mut seen_ids);
 
         assert_eq!(apps.len(), 1);
+    }
+
+    #[test]
+    fn keeps_urls_with_different_casing_distinct() {
+        let per_user = tempfile::tempdir().unwrap();
+        let system_wide = tempfile::tempdir().unwrap();
+
+        fs::write(
+            per_user.path().join("App.url"),
+            "[InternetShortcut]\nURL=https://example.com/App\n",
+        )
+        .unwrap();
+        fs::write(
+            system_wide.path().join("App.url"),
+            "[InternetShortcut]\nURL=https://example.com/app\n",
+        )
+        .unwrap();
+
+        let mut apps = Vec::new();
+        let mut seen_ids = std::collections::HashSet::new();
+        scan_directory_for_shortcuts(per_user.path(), &mut apps, &mut seen_ids);
+        scan_directory_for_shortcuts(system_wide.path(), &mut apps, &mut seen_ids);
+
+        assert_eq!(apps.len(), 2);
+    }
+
+    #[test]
+    fn skips_shortcut_scan_when_com_apartment_conflicts() {
+        let dir = tempfile::tempdir().unwrap();
+        {
+            let _guard = ComGuard::new();
+            create_test_lnk(
+                dir.path(),
+                "Chrome",
+                r"C:\Program Files\Chrome\chrome.exe",
+                "",
+            );
+        }
+
+        unsafe {
+            CoInitializeEx(None, COINIT_MULTITHREADED).ok().unwrap();
+        }
+        let _cleanup = ConflictingApartmentGuard;
+
+        let mut apps = Vec::new();
+        let mut seen_ids = std::collections::HashSet::new();
+        scan_start_menu(&[dir.path().to_path_buf()], &mut apps, &mut seen_ids);
+
+        assert!(apps.is_empty());
     }
 }
