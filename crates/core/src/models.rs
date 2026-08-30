@@ -49,7 +49,7 @@ impl AppItem {
     }
 
     pub fn with_keywords(mut self, keywords: Vec<String>) -> Self {
-        self.keywords = keywords;
+        self.keywords = keywords.into_iter().map(|kw| kw.to_lowercase()).collect();
         self
     }
 }

@@ -91,19 +91,15 @@ impl SearchIndex {
     }
 }
 
-/// Fuzzy-matches every item's name against the query via nucleo, falling back
-/// to a plain keyword check when the name itself doesn't match at all.
-/// Returns lightweight (item, score, matched_indices) candidates - no
-/// SearchResult (and its string clones) is built until after truncation.
 fn match_all_items(
     items: &[Arc<AppItem>],
     matcher: &RefCell<Matcher>,
     query: &str,
 ) -> Vec<(Arc<AppItem>, i32, Vec<usize>)> {
     let mut matcher = matcher.borrow_mut();
-    let mut needle_buf = Vec::new();
-    let needle = Utf32Str::new(query, &mut needle_buf);
     let query_lower = query.to_lowercase();
+    let mut needle_buf = Vec::new();
+    let needle = Utf32Str::new(&query_lower, &mut needle_buf);
 
     let mut candidates = Vec::new();
     let mut hay_buf = Vec::new();
@@ -114,33 +110,30 @@ fn match_all_items(
         let haystack = Utf32Str::new(&item.name, &mut hay_buf);
         raw_indices.clear();
 
+        let frecency_boost = (item.launch_count as i32) * 50;
+
         if let Some(score) = matcher.fuzzy_indices(haystack, needle, &mut raw_indices) {
-            let frecency_boost = (item.launch_count as i32) * 50;
             let indices = raw_indices.iter().map(|&i| i as usize).collect();
             candidates.push((Arc::clone(item), score as i32 + frecency_boost, indices));
         } else if let Some(kw_score) = match_keywords(&item.keywords, &query_lower) {
-            candidates.push((Arc::clone(item), kw_score, Vec::new()));
+            candidates.push((Arc::clone(item), kw_score + frecency_boost, Vec::new()));
         }
     }
 
     candidates
 }
 
-/// Matches query against keywords as a fallback when the name itself doesn't match.
 fn match_keywords(keywords: &[String], query_lower: &str) -> Option<i32> {
     keywords
         .iter()
-        .any(|kw| {
-            let kw_lower = kw.to_lowercase();
-            kw_lower.starts_with(query_lower) || kw_lower.contains(query_lower)
-        })
+        .any(|kw| kw.starts_with(query_lower) || kw.contains(query_lower))
         .then_some(5_000)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::models::AppTarget;
+    use crate::models::{AppTarget, SearchResultKind};
 
     fn sample_index() -> SearchIndex {
         let mut index = SearchIndex::new();
@@ -220,5 +213,150 @@ mod tests {
         let results = index.search("25 * 4", 5);
         assert!(!results.is_empty());
         assert_eq!(results[0].title.as_ref(), "100");
+    }
+
+    fn titles(results: &[SearchResult]) -> Vec<&str> {
+        results.iter().map(|r| r.title.as_ref()).collect()
+    }
+
+    #[test]
+    fn test_no_match_is_excluded_even_with_partial_letters() {
+        let mut index = SearchIndex::new();
+        index.set_items(vec![
+            AppItem::new("chrome", "Chrome", AppTarget::Path("chrome.exe".into())),
+            AppItem::new(
+                "google-chrome",
+                "Google Chrome",
+                AppTarget::Path("chrome.exe".into()),
+            ),
+            AppItem::new(
+                "chromium",
+                "Chromium",
+                AppTarget::Path("chromium.exe".into()),
+            ),
+            AppItem::new(
+                "chrome-devtools",
+                "Chrome DevTools",
+                AppTarget::Path("chrome.exe".into()),
+            ),
+        ]);
+
+        let results = index.search("chrome", 10);
+        assert!(!titles(&results).contains(&"Chromium"));
+        assert!(titles(&results).contains(&"Chrome"));
+        assert!(titles(&results).contains(&"Google Chrome"));
+        assert!(titles(&results).contains(&"Chrome DevTools"));
+    }
+
+    #[test]
+    fn test_prefix_outranks_acronym() {
+        let mut index = SearchIndex::new();
+        index.set_items(vec![
+            AppItem::new("vscode", "VS Code", AppTarget::Path("code.exe".into())),
+            AppItem::new(
+                "vstudio",
+                "Visual Studio",
+                AppTarget::Path("devenv.exe".into()),
+            ),
+        ]);
+
+        let results = index.search("vs", 5);
+        assert_eq!(titles(&results), vec!["VS Code", "Visual Studio"]);
+    }
+
+    #[test]
+    fn test_acronym_outranks_substring() {
+        let mut index = SearchIndex::new();
+        index.set_items(vec![
+            AppItem::new(
+                "open-office-go",
+                "Open Office Go",
+                AppTarget::Path("oog.exe".into()),
+            ),
+            AppItem::new("google", "Google", AppTarget::Path("chrome.exe".into())),
+        ]);
+
+        let results = index.search("oog", 5);
+        assert_eq!(titles(&results), vec!["Open Office Go", "Google"]);
+    }
+
+    #[test]
+    fn test_word_start_bonus_can_outrank_a_midword_substring() {
+        let mut index = SearchIndex::new();
+        index.set_items(vec![
+            AppItem::new("notepad", "Notepad", AppTarget::Path("notepad.exe".into())),
+            AppItem::new(
+                "paint-design",
+                "Paint Design",
+                AppTarget::Path("paint.exe".into()),
+            ),
+        ]);
+
+        let results = index.search("pad", 5);
+        assert_eq!(titles(&results), vec!["Paint Design", "Notepad"]);
+    }
+
+    #[test]
+    fn test_keyword_match_outranks_a_weak_fuzzy_name_match() {
+        let mut index = SearchIndex::new();
+        index.set_items(vec![
+            AppItem::new(
+                "rand-setup",
+                "Random Windows Setup",
+                AppTarget::Path("setup.exe".into()),
+            ),
+            AppItem::new(
+                "chrome",
+                "Google Chrome",
+                AppTarget::Path("chrome.exe".into()),
+            )
+            .with_keywords(vec!["browser".into()]),
+        ]);
+
+        let results = index.search("rows", 5);
+        assert_eq!(
+            titles(&results),
+            vec!["Google Chrome", "Random Windows Setup"]
+        );
+    }
+
+    #[test]
+    fn test_frecency_breaks_ties_between_identical_names() {
+        let mut popular = AppItem::new("a", "Test App", AppTarget::Path("a.exe".into()));
+        popular.launch_count = 10;
+        let rare = AppItem::new("b", "Test App", AppTarget::Path("b.exe".into()));
+
+        let mut index = SearchIndex::new();
+        index.set_items(vec![rare, popular]);
+
+        let results = index.search("test app", 5);
+        assert_eq!(results.len(), 2);
+        let SearchResultKind::App(item) = &results[0].kind else {
+            panic!("expected an App result");
+        };
+        assert_eq!(item.id, "a");
+    }
+
+    #[test]
+    fn test_unicode_names_match_case_insensitively_with_correct_indices() {
+        let mut index = SearchIndex::new();
+        index.set_items(vec![
+            AppItem::new("cafe", "Café", AppTarget::Path("cafe.exe".into())),
+            AppItem::new(
+                "nihongo",
+                "日本語アプリ",
+                AppTarget::Path("nihongo.exe".into()),
+            ),
+        ]);
+
+        let results = index.search("CAF", 5);
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].title.as_ref(), "Café");
+        assert_eq!(results[0].matched_indices, vec![0, 1, 2]);
+
+        let results = index.search("アプリ", 5);
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].title.as_ref(), "日本語アプリ");
+        assert_eq!(results[0].matched_indices, vec![3, 4, 5]);
     }
 }
