@@ -4,7 +4,6 @@ use nucleo_matcher::{Config, Matcher, Utf32Str};
 use std::cell::RefCell;
 use std::sync::Arc;
 
-/// In-memory search index holding pre-indexed application items.
 pub struct SearchIndex {
     items: Vec<Arc<AppItem>>,
     matcher: RefCell<Matcher>,
@@ -54,8 +53,6 @@ impl SearchIndex {
         self.items.is_empty()
     }
 
-    /// Searches the index with the given query.
-    /// Returns sorted search results (highest score first).
     pub fn search(&self, query: &str, limit: usize) -> Vec<SearchResult> {
         let trimmed_query = query.trim();
         if trimmed_query.is_empty() {
@@ -186,12 +183,10 @@ mod tests {
     fn test_acronym_search() {
         let index = sample_index();
 
-        // "vsc" -> Visual Studio Code
         let results = index.search("vsc", 5);
         assert!(!results.is_empty());
         assert_eq!(results[0].title.as_ref(), "Visual Studio Code");
 
-        // "gc" -> Google Chrome
         let results = index.search("gc", 5);
         assert!(!results.is_empty());
         assert_eq!(results[0].title.as_ref(), "Google Chrome");

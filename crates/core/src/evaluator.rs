@@ -1,5 +1,3 @@
-/// Instant calculation evaluator for queries like "12 * 45", "sqrt(144)", "15% of 200".
-
 #[derive(Debug, PartialEq, Clone)]
 enum Token {
     Number(f64),
@@ -17,15 +15,12 @@ enum Token {
 pub struct Evaluator;
 
 impl Evaluator {
-    /// Attempts to evaluate a mathematical query string.
-    /// Returns `Some(formatted_result)` if valid expression, otherwise `None`.
     pub fn try_eval(input: &str) -> Option<String> {
         let trimmed = input.trim();
         if trimmed.is_empty() {
             return None;
         }
 
-        // Check for "X% of Y" pattern
         if let Some(res) = Self::try_eval_percentage(trimmed) {
             return Some(Self::format_result(res));
         }
@@ -35,7 +30,6 @@ impl Evaluator {
             return None;
         }
 
-        // Must contain at least one operator or function to avoid treating single numbers as calculations
         let has_op_or_func = tokens.iter().any(|t| {
             matches!(
                 t,
@@ -56,7 +50,6 @@ impl Evaluator {
         let mut parser = Parser::new(tokens);
         let val = parser.parse_expression()?;
 
-        // Ensure parser consumed all tokens
         if parser.has_more() {
             return None;
         }
@@ -84,7 +77,6 @@ impl Evaluator {
         if (val.fract() == 0.0) && (val.abs() < 1e15) {
             format!("{}", val as i64)
         } else {
-            // Trim unnecessary trailing zeros
             let s = format!("{:.6}", val);
             let trimmed = s.trim_end_matches('0').trim_end_matches('.');
             trimmed.to_string()
@@ -263,7 +255,7 @@ impl Parser {
 
         if let Some(Token::Power) = self.peek() {
             self.advance();
-            let right = self.parse_power()?; // right-associative
+            let right = self.parse_power()?;
             return Some(left.powf(right));
         }
         Some(left)
@@ -292,55 +284,52 @@ impl Parser {
         let tok = self.advance()?;
         match tok {
             Token::Number(n) => Some(n),
-            Token::Identifier(id) => {
-                match id.as_str() {
-                    "pi" => Some(std::f64::consts::PI),
-                    "e" => Some(std::f64::consts::E),
-                    func => {
-                        // Must be followed by ( expr )
-                        if let Some(Token::LParen) = self.peek() {
-                            self.advance();
-                            let arg = self.parse_expression()?;
-                            if self.advance() != Some(Token::RParen) {
-                                return None;
-                            }
-                            match func {
-                                "sqrt" => {
-                                    if arg >= 0.0 {
-                                        Some(arg.sqrt())
-                                    } else {
-                                        None
-                                    }
-                                }
-                                "abs" => Some(arg.abs()),
-                                "sin" => Some(arg.sin()),
-                                "cos" => Some(arg.cos()),
-                                "tan" => Some(arg.tan()),
-                                "ln" => {
-                                    if arg > 0.0 {
-                                        Some(arg.ln())
-                                    } else {
-                                        None
-                                    }
-                                }
-                                "log" | "log10" => {
-                                    if arg > 0.0 {
-                                        Some(arg.log10())
-                                    } else {
-                                        None
-                                    }
-                                }
-                                "floor" => Some(arg.floor()),
-                                "ceil" => Some(arg.ceil()),
-                                "round" => Some(arg.round()),
-                                _ => None,
-                            }
-                        } else {
-                            None
+            Token::Identifier(id) => match id.as_str() {
+                "pi" => Some(std::f64::consts::PI),
+                "e" => Some(std::f64::consts::E),
+                func => {
+                    if let Some(Token::LParen) = self.peek() {
+                        self.advance();
+                        let arg = self.parse_expression()?;
+                        if self.advance() != Some(Token::RParen) {
+                            return None;
                         }
+                        match func {
+                            "sqrt" => {
+                                if arg >= 0.0 {
+                                    Some(arg.sqrt())
+                                } else {
+                                    None
+                                }
+                            }
+                            "abs" => Some(arg.abs()),
+                            "sin" => Some(arg.sin()),
+                            "cos" => Some(arg.cos()),
+                            "tan" => Some(arg.tan()),
+                            "ln" => {
+                                if arg > 0.0 {
+                                    Some(arg.ln())
+                                } else {
+                                    None
+                                }
+                            }
+                            "log" | "log10" => {
+                                if arg > 0.0 {
+                                    Some(arg.log10())
+                                } else {
+                                    None
+                                }
+                            }
+                            "floor" => Some(arg.floor()),
+                            "ceil" => Some(arg.ceil()),
+                            "round" => Some(arg.round()),
+                            _ => None,
+                        }
+                    } else {
+                        None
                     }
                 }
-            }
+            },
             Token::LParen => {
                 let val = self.parse_expression()?;
                 if self.advance() != Some(Token::RParen) {
@@ -381,7 +370,7 @@ mod tests {
     #[test]
     fn test_invalid_expressions() {
         assert_eq!(Evaluator::try_eval("hello"), None);
-        assert_eq!(Evaluator::try_eval("123"), None); // Single number is not an expression
+        assert_eq!(Evaluator::try_eval("123"), None);
         assert_eq!(Evaluator::try_eval(""), None);
         assert_eq!(Evaluator::try_eval("2 +"), None);
     }

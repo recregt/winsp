@@ -2,12 +2,8 @@ use std::sync::Arc;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AppTarget {
-    /// A path or bare command executed via ShellExecuteW (.exe, .lnk, .url, .bat, etc.).
-    /// The Start Menu indexer currently only discovers `.lnk` and `.url` shortcuts.
     Path(String),
-    /// Modern Windows Store / UWP App User Model ID (AUMID)
     Aumid(String),
-    /// Windows Settings URI (e.g., `ms-settings:display`)
     SettingUri(String),
     SystemCommand(String),
 }
