@@ -11,6 +11,7 @@ use super::{APP_STATE, ITEM_ROW_HEIGHT, SEARCH_BAR_HEIGHT, WINDOW_WIDTH, to_wide
 
 const HIGHLIGHT_COLOR: COLORREF = 0x00FFB74D;
 
+/// `matched_indices` are zero-based Unicode scalar (`char`) indices into `text`, not byte offsets.
 fn highlight_segments(text: &str, matched_indices: &[usize]) -> Vec<(bool, String)> {
     let char_count = text.chars().count();
     let mut is_match = vec![false; char_count];
@@ -154,9 +155,13 @@ pub(super) unsafe fn render_ui(hwnd: HWND, hdc: HDC) {
                     SelectObject(mem_dc, font_item_title);
                     let base_color = if is_selected { 0x00FFFFFF } else { 0x00E0E0E0 };
                     let mut seg_left = 32;
+                    let title_right = WINDOW_WIDTH - 32;
                     for (highlighted, segment) in
                         highlight_segments(&result.title, &result.matched_indices)
                     {
+                        if seg_left >= title_right {
+                            break;
+                        }
                         SetTextColor(
                             mem_dc,
                             if highlighted {
@@ -169,7 +174,7 @@ pub(super) unsafe fn render_ui(hwnd: HWND, hdc: HDC) {
                         let mut seg_rect = RECT {
                             left: seg_left,
                             top: current_y + 4,
-                            right: WINDOW_WIDTH - 32,
+                            right: title_right,
                             bottom: current_y + 26,
                         };
                         DrawTextW(
@@ -292,5 +297,49 @@ mod tests {
             highlight_segments("日本語アプリ", &[3, 4, 5]),
             vec![(false, "日本語".to_string()), (true, "アプリ".to_string()),]
         );
+    }
+
+    #[test]
+    fn test_match_at_end_of_title() {
+        assert_eq!(
+            highlight_segments("Notepad", &[4, 5, 6]),
+            vec![(false, "Note".to_string()), (true, "pad".to_string())]
+        );
+    }
+
+    #[test]
+    fn test_match_in_middle_of_long_title() {
+        assert_eq!(
+            highlight_segments("Adobe Photoshop Express", &[6, 7, 8, 9, 10]),
+            vec![
+                (false, "Adobe ".to_string()),
+                (true, "Photo".to_string()),
+                (false, "shop Express".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn test_empty_title_yields_no_segments() {
+        assert_eq!(highlight_segments("", &[]), Vec::<(bool, String)>::new());
+    }
+
+    #[test]
+    fn test_all_indices_out_of_range_yields_unhighlighted_segment() {
+        assert_eq!(
+            highlight_segments("cmd", &[10, 20, 30]),
+            vec![(false, "cmd".to_string())]
+        );
+    }
+
+    #[test]
+    fn test_supplementary_plane_character_stays_one_segment_and_encodes_as_surrogate_pair() {
+        assert_eq!(
+            highlight_segments("😀 Settings", &[0]),
+            vec![(true, "😀".to_string()), (false, " Settings".to_string())]
+        );
+
+        let wide = to_wide("😀");
+        assert_eq!(wide.len(), 3, "expected a UTF-16 surrogate pair plus NUL");
     }
 }
