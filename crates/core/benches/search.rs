@@ -1,5 +1,5 @@
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
-use winsp_core::{AppItem, AppTarget, SearchIndex, search};
+use winsp_core::{AppItem, AppTarget, SearchIndex};
 
 const WORDS: &[&str] = &[
     "Advanced",
@@ -60,22 +60,22 @@ fn bench_search(c: &mut Criterion) {
         let index = synthetic_index(size);
 
         group.bench_with_input(BenchmarkId::new("empty_query", size), &index, |b, idx| {
-            b.iter(|| search(idx, "", 6));
+            b.iter(|| idx.search("", 6));
         });
 
         group.bench_with_input(BenchmarkId::new("prefix_match", size), &index, |b, idx| {
-            b.iter(|| search(idx, "Visual Studio", 6));
+            b.iter(|| idx.search("Visual Studio", 6));
         });
 
         group.bench_with_input(BenchmarkId::new("acronym_match", size), &index, |b, idx| {
-            b.iter(|| search(idx, "as", 6));
+            b.iter(|| idx.search("as", 6));
         });
 
         group.bench_with_input(
             BenchmarkId::new("guaranteed_no_match", size),
             &index,
             |b, idx| {
-                b.iter(|| search(idx, "jj", 6));
+                b.iter(|| idx.search("jj", 6));
             },
         );
     }

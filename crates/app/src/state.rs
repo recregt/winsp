@@ -13,7 +13,7 @@ pub struct AppState {
 
 impl AppState {
     pub fn new(index: SearchIndex) -> Self {
-        let initial_results = winsp_core::search(&index, "", 6);
+        let initial_results = index.search("", 6);
         Self {
             index,
             query: String::new(),
@@ -66,7 +66,7 @@ impl AppState {
     }
 
     pub fn refresh_results(&mut self) {
-        self.results = winsp_core::search(&self.index, &self.query, 6);
+        self.results = self.index.search(&self.query, 6);
         self.selected_index = 0;
     }
 

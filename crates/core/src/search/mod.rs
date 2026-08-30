@@ -5,21 +5,23 @@ use crate::models::SearchResult;
 
 pub use index::SearchIndex;
 
-pub fn search(index: &SearchIndex, query: &str, limit: usize) -> Vec<SearchResult> {
-    let trimmed = query.trim();
-    if trimmed.is_empty() {
-        return index.top_items(limit);
+impl SearchIndex {
+    pub fn search(&self, query: &str, limit: usize) -> Vec<SearchResult> {
+        let trimmed = query.trim();
+        if trimmed.is_empty() {
+            return self.top_items(limit);
+        }
+
+        let calc_result =
+            math::try_eval(trimmed).map(|res| SearchResult::calculation(trimmed.to_string(), res));
+
+        let mut results = self.find(trimmed, limit);
+        results.extend(calc_result);
+
+        results.sort_by_key(|r| std::cmp::Reverse(r.score));
+        results.truncate(limit);
+        results
     }
-
-    let calc_result =
-        math::try_eval(trimmed).map(|res| SearchResult::calculation(trimmed.to_string(), res));
-
-    let mut results = index.find(trimmed, limit);
-    results.extend(calc_result);
-
-    results.sort_by_key(|r| std::cmp::Reverse(r.score));
-    results.truncate(limit);
-    results
 }
 
 #[cfg(test)]
@@ -31,7 +33,7 @@ mod tests {
     fn test_math_expression_is_merged_into_results() {
         let index = SearchIndex::new();
 
-        let results = search(&index, "25 * 4", 5);
+        let results = index.search("25 * 4", 5);
         assert!(!results.is_empty());
         assert_eq!(results[0].title.as_ref(), "100");
     }
@@ -45,7 +47,7 @@ mod tests {
             AppTarget::Aumid("Microsoft.WindowsCalculator".into()),
         )]);
 
-        let results = search(&index, "2 + 2", 5);
+        let results = index.search("2 + 2", 5);
         assert_eq!(results[0].title.as_ref(), "4");
     }
 
@@ -56,7 +58,7 @@ mod tests {
         popular.launch_count = 10;
         index.set_items(vec![popular]);
 
-        let results = search(&index, "", 5);
+        let results = index.search("", 5);
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].title.as_ref(), "Popular App");
     }
