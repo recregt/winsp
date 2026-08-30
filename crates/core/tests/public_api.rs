@@ -1,8 +1,9 @@
-use winsp_core::{AppItem, AppTarget, SearchIndex, SearchResultKind};
+use winsp_core::models::{AppItem, AppTarget, SearchResultKind};
+use winsp_core::search::Engine;
 
 #[test]
 fn test_full_flow_from_construction_to_search_result() {
-    let mut index = SearchIndex::new();
+    let mut index = Engine::new();
     index.set_items(vec![
         AppItem::new("notepad", "Notepad", AppTarget::Path("notepad.exe".into())),
         AppItem::new(
@@ -54,7 +55,7 @@ fn test_full_flow_from_construction_to_search_result() {
 
 #[test]
 fn test_math_calculation_reachable_through_public_search() {
-    let index = SearchIndex::new();
+    let index = Engine::new();
 
     let results = index.search("12 * 12", 5);
     assert!(!results.is_empty());
@@ -68,7 +69,7 @@ fn test_math_calculation_reachable_through_public_search() {
 
 #[test]
 fn test_search_result_kind_is_exhaustively_matchable() {
-    let index = SearchIndex::new();
+    let index = Engine::new();
     let results = index.search("2+2", 5);
     let kind = &results[0].kind;
 

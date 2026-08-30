@@ -1,4 +1,4 @@
-use winsp_core::{AppItem, AppTarget};
+use winsp_core::models::{AppItem, AppTarget};
 
 use super::com::ComGuard;
 use super::lnk::resolve_lnk_target;

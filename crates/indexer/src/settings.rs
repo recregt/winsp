@@ -1,4 +1,4 @@
-use winsp_core::{AppItem, AppTarget};
+use winsp_core::models::{AppItem, AppTarget};
 
 /// Returns a curated collection of standard Windows Settings shortcuts.
 pub fn get_windows_settings_items() -> Vec<AppItem> {
