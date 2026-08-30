@@ -2,12 +2,8 @@ use std::sync::Arc;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AppTarget {
-    /// A path or bare command executed via ShellExecuteW (.exe, .lnk, .url, .bat, etc.).
-    /// The Start Menu indexer currently only discovers `.lnk` and `.url` shortcuts.
     Path(String),
-    /// Modern Windows Store / UWP App User Model ID (AUMID)
     Aumid(String),
-    /// Windows Settings URI (e.g., `ms-settings:display`)
     SettingUri(String),
     SystemCommand(String),
 }
@@ -15,8 +11,8 @@ pub enum AppTarget {
 #[derive(Debug, Clone, PartialEq)]
 pub struct AppItem {
     pub id: String,
-    pub name: String,
-    pub description: Option<String>,
+    pub name: Arc<str>,
+    pub description: Option<Arc<str>>,
     pub target: AppTarget,
     pub icon_path: Option<String>,
     pub keywords: Vec<String>,
@@ -25,7 +21,7 @@ pub struct AppItem {
 }
 
 impl AppItem {
-    pub fn new(id: impl Into<String>, name: impl Into<String>, target: AppTarget) -> Self {
+    pub fn new(id: impl Into<String>, name: impl Into<Arc<str>>, target: AppTarget) -> Self {
         Self {
             id: id.into(),
             name: name.into(),
@@ -38,7 +34,7 @@ impl AppItem {
         }
     }
 
-    pub fn with_description(mut self, desc: impl Into<String>) -> Self {
+    pub fn with_description(mut self, desc: impl Into<Arc<str>>) -> Self {
         self.description = Some(desc.into());
         self
     }
@@ -49,7 +45,7 @@ impl AppItem {
     }
 
     pub fn with_keywords(mut self, keywords: Vec<String>) -> Self {
-        self.keywords = keywords;
+        self.keywords = keywords.into_iter().map(|kw| kw.to_lowercase()).collect();
         self
     }
 }
@@ -73,8 +69,8 @@ pub enum SearchResultKind {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct SearchResult {
-    pub title: String,
-    pub subtitle: Option<String>,
+    pub title: Arc<str>,
+    pub subtitle: Option<Arc<str>>,
     pub score: i32,
     pub matched_indices: Vec<usize>,
     pub kind: SearchResultKind,
@@ -83,14 +79,14 @@ pub struct SearchResult {
 impl SearchResult {
     pub fn from_app(item: Arc<AppItem>, score: i32, matched_indices: Vec<usize>) -> Self {
         let subtitle = item.description.clone().or_else(|| match &item.target {
-            AppTarget::Path(p) => Some(p.clone()),
-            AppTarget::Aumid(a) => Some(format!("Store App: {a}")),
-            AppTarget::SettingUri(u) => Some(format!("Settings: {u}")),
-            AppTarget::SystemCommand(c) => Some(format!("System: {c}")),
+            AppTarget::Path(p) => Some(p.clone().into()),
+            AppTarget::Aumid(a) => Some(format!("Store App: {a}").into()),
+            AppTarget::SettingUri(u) => Some(format!("Settings: {u}").into()),
+            AppTarget::SystemCommand(c) => Some(format!("System: {c}").into()),
         });
 
         Self {
-            title: item.name.clone(),
+            title: Arc::clone(&item.name),
             subtitle,
             score,
             matched_indices,
@@ -100,8 +96,8 @@ impl SearchResult {
 
     pub fn calculation(expression: String, result: String) -> Self {
         Self {
-            title: result.clone(),
-            subtitle: Some(format!("= {expression}")),
+            title: Arc::from(result.as_str()),
+            subtitle: Some(format!("= {expression}").into()),
             score: 100_000,
             matched_indices: Vec::new(),
             kind: SearchResultKind::Calculation { expression, result },

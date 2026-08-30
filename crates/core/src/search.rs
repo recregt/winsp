@@ -1,16 +1,36 @@
-use crate::evaluator::Evaluator;
+use crate::math;
 use crate::models::{AppItem, SearchResult};
+use nucleo_matcher::{Config, Matcher, Utf32Str};
+use std::cell::RefCell;
 use std::sync::Arc;
 
-/// In-memory search index holding pre-indexed application items.
-#[derive(Debug, Default, Clone)]
 pub struct SearchIndex {
     items: Vec<Arc<AppItem>>,
+    matcher: RefCell<Matcher>,
+}
+
+impl std::fmt::Debug for SearchIndex {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SearchIndex")
+            .field("items", &self.items.len())
+            .finish()
+    }
+}
+
+impl Default for SearchIndex {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl SearchIndex {
     pub fn new() -> Self {
-        Self { items: Vec::new() }
+        let mut config = Config::DEFAULT;
+        config.ignore_case = true;
+        Self {
+            items: Vec::new(),
+            matcher: RefCell::new(Matcher::new(config)),
+        }
     }
 
     pub fn set_items(&mut self, items: Vec<AppItem>) {
@@ -33,197 +53,84 @@ impl SearchIndex {
         self.items.is_empty()
     }
 
-    /// Searches the index with the given query.
-    /// Returns sorted search results (highest score first).
     pub fn search(&self, query: &str, limit: usize) -> Vec<SearchResult> {
         let trimmed_query = query.trim();
         if trimmed_query.is_empty() {
-            // Return top items by frecency / launch count
-            let mut top_results: Vec<SearchResult> = self
+            let mut top: Vec<(Arc<AppItem>, i32)> = self
                 .items
                 .iter()
-                .map(|item| {
-                    let score = (item.launch_count as i32) * 10;
-                    SearchResult::from_app(Arc::clone(item), score, Vec::new())
-                })
+                .map(|item| (Arc::clone(item), (item.launch_count as i32) * 10))
                 .collect();
-            top_results.sort_by_key(|b| std::cmp::Reverse(b.score));
-            top_results.truncate(limit);
-            return top_results;
+            top.sort_by_key(|(_, score)| std::cmp::Reverse(*score));
+            top.truncate(limit);
+            return top
+                .into_iter()
+                .map(|(item, score)| SearchResult::from_app(item, score, Vec::new()))
+                .collect();
         }
 
-        let mut results = Vec::new();
+        let calc_result = math::try_eval(trimmed_query)
+            .map(|calc_res| SearchResult::calculation(trimmed_query.to_string(), calc_res));
 
-        // 1. Check if the query is an instant mathematical expression
-        if let Some(calc_res) = Evaluator::try_eval(trimmed_query) {
-            results.push(SearchResult::calculation(
-                trimmed_query.to_string(),
-                calc_res,
-            ));
-        }
+        let mut candidates = match_all_items(&self.items, &self.matcher, trimmed_query);
+        candidates.sort_by_key(|(_, score, _)| std::cmp::Reverse(*score));
+        candidates.truncate(limit);
 
-        // 2. Fuzzy match across all indexed items
-        let query_lower = trimmed_query.to_lowercase();
-        let query_chars: Vec<char> = query_lower.chars().collect();
+        let mut results: Vec<SearchResult> = candidates
+            .into_iter()
+            .map(|(item, score, indices)| SearchResult::from_app(item, score, indices))
+            .collect();
+        results.extend(calc_result);
 
-        for item in &self.items {
-            if let Some((score, indices)) = match_item(item, &query_lower, &query_chars) {
-                // Apply frecency boost
-                let frecency_boost = (item.launch_count as i32) * 50;
-                let total_score = score + frecency_boost;
-                results.push(SearchResult::from_app(
-                    Arc::clone(item),
-                    total_score,
-                    indices,
-                ));
-            }
-        }
-
-        // Sort descending by score
-        results.sort_by_key(|b| std::cmp::Reverse(b.score));
+        results.sort_by_key(|r| std::cmp::Reverse(r.score));
         results.truncate(limit);
         results
     }
 }
 
-/// Matches a query against an AppItem's name and keywords.
-/// Returns Some((score, matched_indices_in_name)) on match.
-fn match_item(
-    item: &AppItem,
-    query_lower: &str,
-    query_chars: &[char],
-) -> Option<(i32, Vec<usize>)> {
-    let name_lower = item.name.to_lowercase();
-    let name_chars: Vec<char> = name_lower.chars().collect();
+fn match_all_items(
+    items: &[Arc<AppItem>],
+    matcher: &RefCell<Matcher>,
+    query: &str,
+) -> Vec<(Arc<AppItem>, i32, Vec<usize>)> {
+    let mut matcher = matcher.borrow_mut();
+    let query_lower = query.to_lowercase();
+    let mut needle_buf = Vec::new();
+    let needle = Utf32Str::new(&query_lower, &mut needle_buf);
 
-    // 1. Exact Match
-    if name_lower == query_lower {
-        let indices = (0..name_chars.len()).collect();
-        return Some((100_000, indices));
-    }
+    let mut candidates = Vec::new();
+    let mut hay_buf = Vec::new();
+    let mut raw_indices = Vec::new();
 
-    // 2. Exact Prefix Match
-    if name_lower.starts_with(query_lower) {
-        let indices = (0..query_chars.len()).collect();
-        let score = 50_000 - (name_chars.len() as i32 * 10);
-        return Some((score, indices));
-    }
+    for item in items {
+        hay_buf.clear();
+        let haystack = Utf32Str::new(&item.name, &mut hay_buf);
+        raw_indices.clear();
 
-    // 3. Word Boundary / Acronym Match (e.g. "vs" -> "Visual Studio Code")
-    if let Some((acronym_score, indices)) = match_acronym(&name_chars, query_chars) {
-        return Some((acronym_score, indices));
-    }
+        let frecency_boost = (item.launch_count as i32) * 50;
 
-    // 4. Exact Substring Match
-    if let Some(pos) = name_lower.find(query_lower) {
-        let char_pos = name_lower[..pos].chars().count();
-        let indices = (char_pos..char_pos + query_chars.len()).collect();
-        let score = 20_000 - (char_pos as i32 * 50) - (name_chars.len() as i32 * 10);
-        return Some((score, indices));
-    }
-
-    // 5. Fuzzy Subsequence Match
-    if let Some((fuzzy_score, indices)) = fuzzy_match(&name_chars, query_chars) {
-        return Some((fuzzy_score, indices));
-    }
-
-    // 6. Match against keywords as fallback
-    for kw in &item.keywords {
-        let kw_lower = kw.to_lowercase();
-        if kw_lower.starts_with(query_lower) || kw_lower.contains(query_lower) {
-            return Some((5_000, Vec::new()));
+        if let Some(score) = matcher.fuzzy_indices(haystack, needle, &mut raw_indices) {
+            let indices = raw_indices.iter().map(|&i| i as usize).collect();
+            candidates.push((Arc::clone(item), score as i32 + frecency_boost, indices));
+        } else if let Some(kw_score) = match_keywords(&item.keywords, &query_lower) {
+            candidates.push((Arc::clone(item), kw_score + frecency_boost, Vec::new()));
         }
     }
 
-    None
+    candidates
 }
 
-/// Matches query against word boundaries / camelCase initials.
-fn match_acronym(name_chars: &[char], query_chars: &[char]) -> Option<(i32, Vec<usize>)> {
-    let mut q_idx = 0;
-    let mut matched_indices = Vec::new();
-
-    let mut is_boundary = true;
-    for (i, &c) in name_chars.iter().enumerate() {
-        if c.is_whitespace() || c == '-' || c == '_' || c == '.' {
-            is_boundary = true;
-            continue;
-        }
-
-        if is_boundary {
-            if q_idx < query_chars.len() && c == query_chars[q_idx] {
-                matched_indices.push(i);
-                q_idx += 1;
-                if q_idx == query_chars.len() {
-                    let score = 30_000 - (i as i32 * 20);
-                    return Some((score, matched_indices));
-                }
-            }
-            is_boundary = false;
-        }
-    }
-
-    None
-}
-
-/// Computes fuzzy subsequence match with distance penalty and consecutive match bonuses.
-fn fuzzy_match(name_chars: &[char], query_chars: &[char]) -> Option<(i32, Vec<usize>)> {
-    if query_chars.is_empty() || name_chars.is_empty() {
-        return None;
-    }
-
-    let mut matched_indices = Vec::with_capacity(query_chars.len());
-    let mut name_idx = 0;
-    let mut score = 1_000;
-    let mut prev_matched_idx: Option<usize> = None;
-
-    for &q_char in query_chars {
-        let mut found = false;
-        while name_idx < name_chars.len() {
-            let n_char = name_chars[name_idx];
-            if n_char == q_char {
-                matched_indices.push(name_idx);
-
-                // Consecutive match bonus
-                if let Some(prev) = prev_matched_idx {
-                    if name_idx == prev + 1 {
-                        score += 200; // Consecutive bonus
-                    } else {
-                        score -= ((name_idx - prev) as i32) * 20; // Distance penalty
-                    }
-                }
-
-                // Word start bonus
-                if name_idx == 0
-                    || name_chars[name_idx - 1].is_whitespace()
-                    || name_chars[name_idx - 1] == '-'
-                {
-                    score += 150;
-                }
-
-                prev_matched_idx = Some(name_idx);
-                name_idx += 1;
-                found = true;
-                break;
-            }
-            name_idx += 1;
-        }
-
-        if !found {
-            return None;
-        }
-    }
-
-    // Penalize longer names for identical matches
-    score -= (name_chars.len() as i32) * 5;
-
-    Some((score.max(10), matched_indices))
+fn match_keywords(keywords: &[String], query_lower: &str) -> Option<i32> {
+    keywords
+        .iter()
+        .any(|kw| kw.starts_with(query_lower) || kw.contains(query_lower))
+        .then_some(5_000)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::models::AppTarget;
+    use crate::models::{AppTarget, SearchResultKind};
 
     fn sample_index() -> SearchIndex {
         let mut index = SearchIndex::new();
@@ -265,26 +172,24 @@ mod tests {
 
         let results = index.search("calc", 5);
         assert!(!results.is_empty());
-        assert_eq!(results[0].title, "Calculator");
+        assert_eq!(results[0].title.as_ref(), "Calculator");
 
         let results = index.search("not", 5);
         assert!(!results.is_empty());
-        assert_eq!(results[0].title, "Notepad");
+        assert_eq!(results[0].title.as_ref(), "Notepad");
     }
 
     #[test]
     fn test_acronym_search() {
         let index = sample_index();
 
-        // "vsc" -> Visual Studio Code
         let results = index.search("vsc", 5);
         assert!(!results.is_empty());
-        assert_eq!(results[0].title, "Visual Studio Code");
+        assert_eq!(results[0].title.as_ref(), "Visual Studio Code");
 
-        // "gc" -> Google Chrome
         let results = index.search("gc", 5);
         assert!(!results.is_empty());
-        assert_eq!(results[0].title, "Google Chrome");
+        assert_eq!(results[0].title.as_ref(), "Google Chrome");
     }
 
     #[test]
@@ -293,7 +198,7 @@ mod tests {
 
         let results = index.search("browser", 5);
         assert!(!results.is_empty());
-        assert_eq!(results[0].title, "Google Chrome");
+        assert_eq!(results[0].title.as_ref(), "Google Chrome");
     }
 
     #[test]
@@ -302,6 +207,151 @@ mod tests {
 
         let results = index.search("25 * 4", 5);
         assert!(!results.is_empty());
-        assert_eq!(results[0].title, "100");
+        assert_eq!(results[0].title.as_ref(), "100");
+    }
+
+    fn titles(results: &[SearchResult]) -> Vec<&str> {
+        results.iter().map(|r| r.title.as_ref()).collect()
+    }
+
+    #[test]
+    fn test_no_match_is_excluded_even_with_partial_letters() {
+        let mut index = SearchIndex::new();
+        index.set_items(vec![
+            AppItem::new("chrome", "Chrome", AppTarget::Path("chrome.exe".into())),
+            AppItem::new(
+                "google-chrome",
+                "Google Chrome",
+                AppTarget::Path("chrome.exe".into()),
+            ),
+            AppItem::new(
+                "chromium",
+                "Chromium",
+                AppTarget::Path("chromium.exe".into()),
+            ),
+            AppItem::new(
+                "chrome-devtools",
+                "Chrome DevTools",
+                AppTarget::Path("chrome.exe".into()),
+            ),
+        ]);
+
+        let results = index.search("chrome", 10);
+        assert!(!titles(&results).contains(&"Chromium"));
+        assert!(titles(&results).contains(&"Chrome"));
+        assert!(titles(&results).contains(&"Google Chrome"));
+        assert!(titles(&results).contains(&"Chrome DevTools"));
+    }
+
+    #[test]
+    fn test_prefix_outranks_acronym() {
+        let mut index = SearchIndex::new();
+        index.set_items(vec![
+            AppItem::new("vscode", "VS Code", AppTarget::Path("code.exe".into())),
+            AppItem::new(
+                "vstudio",
+                "Visual Studio",
+                AppTarget::Path("devenv.exe".into()),
+            ),
+        ]);
+
+        let results = index.search("vs", 5);
+        assert_eq!(titles(&results), vec!["VS Code", "Visual Studio"]);
+    }
+
+    #[test]
+    fn test_acronym_outranks_substring() {
+        let mut index = SearchIndex::new();
+        index.set_items(vec![
+            AppItem::new(
+                "open-office-go",
+                "Open Office Go",
+                AppTarget::Path("oog.exe".into()),
+            ),
+            AppItem::new("google", "Google", AppTarget::Path("chrome.exe".into())),
+        ]);
+
+        let results = index.search("oog", 5);
+        assert_eq!(titles(&results), vec!["Open Office Go", "Google"]);
+    }
+
+    #[test]
+    fn test_word_start_bonus_can_outrank_a_midword_substring() {
+        let mut index = SearchIndex::new();
+        index.set_items(vec![
+            AppItem::new("notepad", "Notepad", AppTarget::Path("notepad.exe".into())),
+            AppItem::new(
+                "paint-design",
+                "Paint Design",
+                AppTarget::Path("paint.exe".into()),
+            ),
+        ]);
+
+        let results = index.search("pad", 5);
+        assert_eq!(titles(&results), vec!["Paint Design", "Notepad"]);
+    }
+
+    #[test]
+    fn test_keyword_match_outranks_a_weak_fuzzy_name_match() {
+        let mut index = SearchIndex::new();
+        index.set_items(vec![
+            AppItem::new(
+                "rand-setup",
+                "Random Windows Setup",
+                AppTarget::Path("setup.exe".into()),
+            ),
+            AppItem::new(
+                "chrome",
+                "Google Chrome",
+                AppTarget::Path("chrome.exe".into()),
+            )
+            .with_keywords(vec!["browser".into()]),
+        ]);
+
+        let results = index.search("rows", 5);
+        assert_eq!(
+            titles(&results),
+            vec!["Google Chrome", "Random Windows Setup"]
+        );
+    }
+
+    #[test]
+    fn test_frecency_breaks_ties_between_identical_names() {
+        let mut popular = AppItem::new("a", "Test App", AppTarget::Path("a.exe".into()));
+        popular.launch_count = 10;
+        let rare = AppItem::new("b", "Test App", AppTarget::Path("b.exe".into()));
+
+        let mut index = SearchIndex::new();
+        index.set_items(vec![rare, popular]);
+
+        let results = index.search("test app", 5);
+        assert_eq!(results.len(), 2);
+        let SearchResultKind::App(item) = &results[0].kind else {
+            panic!("expected an App result");
+        };
+        assert_eq!(item.id, "a");
+    }
+
+    #[test]
+    fn test_unicode_names_match_case_insensitively_with_correct_indices() {
+        let mut index = SearchIndex::new();
+        index.set_items(vec![
+            AppItem::new("cafe", "Café", AppTarget::Path("cafe.exe".into())),
+            AppItem::new(
+                "nihongo",
+                "日本語アプリ",
+                AppTarget::Path("nihongo.exe".into()),
+            ),
+        ]);
+
+        let results = index.search("CAF", 5);
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].title.as_ref(), "Café");
+        assert_eq!(results[0].matched_indices, vec![0, 1, 2]);
+
+        let results = index.search("アプリ", 5);
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].title.as_ref(), "日本語アプリ");
+        assert_eq!(results[0].matched_indices, vec![3, 4, 5]);
     }
 }

@@ -71,9 +71,6 @@ fn bench_search(c: &mut Criterion) {
             b.iter(|| idx.search("as", 6));
         });
 
-        // Worst case: 'j' never appears in the synthetic vocabulary, so every
-        // match strategy (exact, prefix, acronym, substring, fuzzy) runs to
-        // completion and fails, for every single item, before this returns.
         group.bench_with_input(
             BenchmarkId::new("guaranteed_no_match", size),
             &index,

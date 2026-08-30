@@ -7,7 +7,7 @@ license.workspace = true
 authors.workspace = true
 
 [dependencies]
-# No mandatory external dependencies for core to ensure maximum compilation speed and zero bloat
+nucleo-matcher = "0.3"
 
 [dev-dependencies]
 criterion = { version = "0.8.0", features = ["html_reports"] }
