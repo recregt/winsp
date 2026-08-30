@@ -404,6 +404,12 @@ mod tests {
     }
 
     #[test]
+    fn test_tan_domain_check_cosine_threshold_boundary() {
+        assert!(try_eval("tan(pi/2 + 1e-8)").is_some());
+        assert_eq!(try_eval("tan(pi/2 + 1e-10)"), None);
+    }
+
+    #[test]
     fn test_unary_minus_binds_looser_than_power() {
         assert_eq!(try_eval("-2^2"), Some("-4".to_string()));
         assert_eq!(try_eval("-3^2"), Some("-9".to_string()));
