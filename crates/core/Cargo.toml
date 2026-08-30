@@ -11,7 +11,9 @@ logos = "0.16"
 nucleo-matcher = "0.3"
 
 [dev-dependencies]
-criterion = { version = "0.8.0", features = ["html_reports"] }
+criterion = { package = "codspeed-criterion-compat", version = "5.0.1", features = [
+    "html_reports",
+] }
 trybuild = "1"
 
 [[bench]]
