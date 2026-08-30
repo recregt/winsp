@@ -3,11 +3,12 @@ pub mod launcher;
 pub mod settings;
 pub mod watcher;
 
-use winsp_core::{AppItem, SearchIndex};
+use winsp_core::models::AppItem;
+use winsp_core::search::Engine;
 
 /// Loads all installed apps and Windows Settings shortcuts into the search index.
-pub fn populate_search_index() -> SearchIndex {
-    let mut index = SearchIndex::new();
+pub fn populate_search_index() -> Engine {
+    let mut index = Engine::new();
     let mut all_items: Vec<AppItem> = Vec::new();
 
     // 1. Enumerate Windows apps (Shell / UWP / Win32)

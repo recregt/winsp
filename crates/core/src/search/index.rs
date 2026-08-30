@@ -3,26 +3,26 @@ use nucleo_matcher::{Config, Matcher, Utf32Str};
 use std::cell::RefCell;
 use std::sync::Arc;
 
-pub struct SearchIndex {
+pub struct Engine {
     items: Vec<Arc<AppItem>>,
     matcher: RefCell<Matcher>,
 }
 
-impl std::fmt::Debug for SearchIndex {
+impl std::fmt::Debug for Engine {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("SearchIndex")
+        f.debug_struct("Engine")
             .field("items", &self.items.len())
             .finish()
     }
 }
 
-impl Default for SearchIndex {
+impl Default for Engine {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl SearchIndex {
+impl Engine {
     pub fn new() -> Self {
         let mut config = Config::DEFAULT;
         config.ignore_case = true;
@@ -121,8 +121,8 @@ mod tests {
     use super::*;
     use crate::models::AppTarget;
 
-    fn sample_index() -> SearchIndex {
-        let mut index = SearchIndex::new();
+    fn sample_index() -> Engine {
+        let mut index = Engine::new();
         index.set_items(vec![
             AppItem::new("notepad", "Notepad", AppTarget::Path("notepad.exe".into())),
             AppItem::new(
@@ -196,7 +196,7 @@ mod tests {
 
     #[test]
     fn test_no_match_is_excluded_even_with_partial_letters() {
-        let mut index = SearchIndex::new();
+        let mut index = Engine::new();
         index.set_items(vec![
             AppItem::new("chrome", "Chrome", AppTarget::Path("chrome.exe".into())),
             AppItem::new(
@@ -225,7 +225,7 @@ mod tests {
 
     #[test]
     fn test_prefix_outranks_acronym() {
-        let mut index = SearchIndex::new();
+        let mut index = Engine::new();
         index.set_items(vec![
             AppItem::new("vscode", "VS Code", AppTarget::Path("code.exe".into())),
             AppItem::new(
@@ -241,7 +241,7 @@ mod tests {
 
     #[test]
     fn test_acronym_outranks_substring() {
-        let mut index = SearchIndex::new();
+        let mut index = Engine::new();
         index.set_items(vec![
             AppItem::new(
                 "open-office-go",
@@ -257,7 +257,7 @@ mod tests {
 
     #[test]
     fn test_word_start_bonus_can_outrank_a_midword_substring() {
-        let mut index = SearchIndex::new();
+        let mut index = Engine::new();
         index.set_items(vec![
             AppItem::new("notepad", "Notepad", AppTarget::Path("notepad.exe".into())),
             AppItem::new(
@@ -273,7 +273,7 @@ mod tests {
 
     #[test]
     fn test_keyword_match_outranks_a_weak_fuzzy_name_match() {
-        let mut index = SearchIndex::new();
+        let mut index = Engine::new();
         index.set_items(vec![
             AppItem::new(
                 "rand-setup",
@@ -303,7 +303,7 @@ mod tests {
         popular.launch_count = 10;
         let rare = AppItem::new("b", "Test App", AppTarget::Path("b.exe".into()));
 
-        let mut index = SearchIndex::new();
+        let mut index = Engine::new();
         index.set_items(vec![rare, popular]);
 
         let results = index.find("test app", 5);
@@ -322,7 +322,7 @@ mod tests {
         let rare = AppItem::new("b", "Yak Tool", AppTarget::Path("b.exe".into()))
             .with_keywords(vec!["zzzmatch".into()]);
 
-        let mut index = SearchIndex::new();
+        let mut index = Engine::new();
         index.set_items(vec![rare, popular]);
 
         let results = index.find("zzzmatch", 5);
@@ -332,7 +332,7 @@ mod tests {
 
     #[test]
     fn test_keyword_matching_normalizes_case_at_construction_time() {
-        let mut index = SearchIndex::new();
+        let mut index = Engine::new();
         index.set_items(vec![
             AppItem::new(
                 "chrome",
@@ -349,7 +349,7 @@ mod tests {
 
     #[test]
     fn test_unicode_names_match_case_insensitively_with_correct_indices() {
-        let mut index = SearchIndex::new();
+        let mut index = Engine::new();
         index.set_items(vec![
             AppItem::new("cafe", "Café", AppTarget::Path("cafe.exe".into())),
             AppItem::new(

@@ -3,9 +3,9 @@ mod math;
 
 use crate::models::SearchResult;
 
-pub use index::SearchIndex;
+pub use index::Engine;
 
-impl SearchIndex {
+impl Engine {
     pub fn search(&self, query: &str, limit: usize) -> Vec<SearchResult> {
         let trimmed = query.trim();
         if trimmed.is_empty() {
@@ -31,7 +31,7 @@ mod tests {
 
     #[test]
     fn test_math_expression_is_merged_into_results() {
-        let index = SearchIndex::new();
+        let index = Engine::new();
 
         let results = index.search("25 * 4", 5);
         assert!(!results.is_empty());
@@ -40,7 +40,7 @@ mod tests {
 
     #[test]
     fn test_math_result_ranks_above_app_matches() {
-        let mut index = SearchIndex::new();
+        let mut index = Engine::new();
         index.set_items(vec![AppItem::new(
             "calc",
             "2 Calculators",
@@ -53,7 +53,7 @@ mod tests {
 
     #[test]
     fn test_empty_query_lists_top_items_without_touching_math() {
-        let mut index = SearchIndex::new();
+        let mut index = Engine::new();
         let mut popular = AppItem::new("a", "Popular App", AppTarget::Path("a.exe".into()));
         popular.launch_count = 10;
         index.set_items(vec![popular]);

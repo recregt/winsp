@@ -1,9 +1,10 @@
-use winsp_core::{SearchIndex, SearchResult, SearchResultKind};
+use winsp_core::models::{SearchResult, SearchResultKind};
+use winsp_core::search::Engine;
 use winsp_indexer::launcher::launch_target;
 
 #[derive(Debug)]
 pub struct AppState {
-    pub index: SearchIndex,
+    pub index: Engine,
     pub query: String,
     pub results: Vec<SearchResult>,
     pub selected_index: usize,
@@ -12,7 +13,7 @@ pub struct AppState {
 }
 
 impl AppState {
-    pub fn new(index: SearchIndex) -> Self {
+    pub fn new(index: Engine) -> Self {
         let initial_results = index.search("", 6);
         Self {
             index,
@@ -81,10 +82,12 @@ impl AppState {
                     println!("[WinSP] Calculation result: {}", result);
                 }
                 SearchResultKind::WebSearch { url, .. } => {
-                    launch_target(&winsp_core::AppTarget::Path(url.clone()))?;
+                    launch_target(&winsp_core::models::AppTarget::Path(url.clone()))?;
                 }
                 SearchResultKind::SystemCommand { command, .. } => {
-                    launch_target(&winsp_core::AppTarget::SystemCommand(command.clone()))?;
+                    launch_target(&winsp_core::models::AppTarget::SystemCommand(
+                        command.clone(),
+                    ))?;
                 }
             }
         }

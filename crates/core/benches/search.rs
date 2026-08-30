@@ -1,5 +1,6 @@
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
-use winsp_core::{AppItem, AppTarget, SearchIndex};
+use winsp_core::models::{AppItem, AppTarget};
+use winsp_core::search::Engine;
 
 const WORDS: &[&str] = &[
     "Advanced",
@@ -34,8 +35,8 @@ const WORDS: &[&str] = &[
     "Inspector",
 ];
 
-fn synthetic_index(size: usize) -> SearchIndex {
-    let mut index = SearchIndex::new();
+fn synthetic_index(size: usize) -> Engine {
+    let mut index = Engine::new();
     let items: Vec<AppItem> = (0..size)
         .map(|i| {
             let name = format!(

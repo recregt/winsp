@@ -1,4 +1,4 @@
-use winsp_core::AppTarget;
+use winsp_core::models::AppTarget;
 
 /// Executes an application target.
 pub fn launch_target(target: &AppTarget) -> Result<(), String> {
