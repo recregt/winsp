@@ -1,0 +1,13 @@
+error[E0603]: module `math` is private
+ --> tests/compile_fail/fixtures/private_math.rs:2:33
+  |
+2 |     let _ = winsp_core::search::math::try_eval("2+2");
+  |                                 ^^^^  -------- function `try_eval` is not publicly re-exported
+  |                                 |
+  |                                 private module
+  |
+note: the module `math` is defined here
+ --> src/search/mod.rs
+  |
+  | mod math;
+  | ^^^^^^^^

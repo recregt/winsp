@@ -1,4 +1,3 @@
-use crate::math;
 use crate::models::{AppItem, SearchResult};
 use nucleo_matcher::{Config, Matcher, Utf32Str};
 use std::cell::RefCell;
@@ -53,38 +52,28 @@ impl SearchIndex {
         self.items.is_empty()
     }
 
-    pub fn search(&self, query: &str, limit: usize) -> Vec<SearchResult> {
-        let trimmed_query = query.trim();
-        if trimmed_query.is_empty() {
-            let mut top: Vec<(Arc<AppItem>, i32)> = self
-                .items
-                .iter()
-                .map(|item| (Arc::clone(item), (item.launch_count as i32) * 10))
-                .collect();
-            top.sort_by_key(|(_, score)| std::cmp::Reverse(*score));
-            top.truncate(limit);
-            return top
-                .into_iter()
-                .map(|(item, score)| SearchResult::from_app(item, score, Vec::new()))
-                .collect();
-        }
+    pub(super) fn top_items(&self, limit: usize) -> Vec<SearchResult> {
+        let mut top: Vec<(Arc<AppItem>, i32)> = self
+            .items
+            .iter()
+            .map(|item| (Arc::clone(item), (item.launch_count as i32) * 10))
+            .collect();
+        top.sort_by_key(|(_, score)| std::cmp::Reverse(*score));
+        top.truncate(limit);
+        top.into_iter()
+            .map(|(item, score)| SearchResult::from_app(item, score, Vec::new()))
+            .collect()
+    }
 
-        let calc_result = math::try_eval(trimmed_query)
-            .map(|calc_res| SearchResult::calculation(trimmed_query.to_string(), calc_res));
-
-        let mut candidates = match_all_items(&self.items, &self.matcher, trimmed_query);
+    pub(super) fn find(&self, query: &str, limit: usize) -> Vec<SearchResult> {
+        let mut candidates = match_all_items(&self.items, &self.matcher, query);
         candidates.sort_by_key(|(_, score, _)| std::cmp::Reverse(*score));
         candidates.truncate(limit);
 
-        let mut results: Vec<SearchResult> = candidates
+        candidates
             .into_iter()
             .map(|(item, score, indices)| SearchResult::from_app(item, score, indices))
-            .collect();
-        results.extend(calc_result);
-
-        results.sort_by_key(|r| std::cmp::Reverse(r.score));
-        results.truncate(limit);
-        results
+            .collect()
     }
 }
 
@@ -130,7 +119,7 @@ fn match_keywords(keywords: &[String], query_lower: &str) -> Option<i32> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::models::{AppTarget, SearchResultKind};
+    use crate::models::AppTarget;
 
     fn sample_index() -> SearchIndex {
         let mut index = SearchIndex::new();
@@ -166,15 +155,19 @@ mod tests {
         index
     }
 
+    fn titles(results: &[SearchResult]) -> Vec<&str> {
+        results.iter().map(|r| r.title.as_ref()).collect()
+    }
+
     #[test]
     fn test_exact_and_prefix_search() {
         let index = sample_index();
 
-        let results = index.search("calc", 5);
+        let results = index.find("calc", 5);
         assert!(!results.is_empty());
         assert_eq!(results[0].title.as_ref(), "Calculator");
 
-        let results = index.search("not", 5);
+        let results = index.find("not", 5);
         assert!(!results.is_empty());
         assert_eq!(results[0].title.as_ref(), "Notepad");
     }
@@ -183,11 +176,11 @@ mod tests {
     fn test_acronym_search() {
         let index = sample_index();
 
-        let results = index.search("vsc", 5);
+        let results = index.find("vsc", 5);
         assert!(!results.is_empty());
         assert_eq!(results[0].title.as_ref(), "Visual Studio Code");
 
-        let results = index.search("gc", 5);
+        let results = index.find("gc", 5);
         assert!(!results.is_empty());
         assert_eq!(results[0].title.as_ref(), "Google Chrome");
     }
@@ -196,22 +189,9 @@ mod tests {
     fn test_keyword_search() {
         let index = sample_index();
 
-        let results = index.search("browser", 5);
+        let results = index.find("browser", 5);
         assert!(!results.is_empty());
         assert_eq!(results[0].title.as_ref(), "Google Chrome");
-    }
-
-    #[test]
-    fn test_math_in_search() {
-        let index = sample_index();
-
-        let results = index.search("25 * 4", 5);
-        assert!(!results.is_empty());
-        assert_eq!(results[0].title.as_ref(), "100");
-    }
-
-    fn titles(results: &[SearchResult]) -> Vec<&str> {
-        results.iter().map(|r| r.title.as_ref()).collect()
     }
 
     #[test]
@@ -236,7 +216,7 @@ mod tests {
             ),
         ]);
 
-        let results = index.search("chrome", 10);
+        let results = index.find("chrome", 10);
         assert!(!titles(&results).contains(&"Chromium"));
         assert!(titles(&results).contains(&"Chrome"));
         assert!(titles(&results).contains(&"Google Chrome"));
@@ -255,7 +235,7 @@ mod tests {
             ),
         ]);
 
-        let results = index.search("vs", 5);
+        let results = index.find("vs", 5);
         assert_eq!(titles(&results), vec!["VS Code", "Visual Studio"]);
     }
 
@@ -271,7 +251,7 @@ mod tests {
             AppItem::new("google", "Google", AppTarget::Path("chrome.exe".into())),
         ]);
 
-        let results = index.search("oog", 5);
+        let results = index.find("oog", 5);
         assert_eq!(titles(&results), vec!["Open Office Go", "Google"]);
     }
 
@@ -287,7 +267,7 @@ mod tests {
             ),
         ]);
 
-        let results = index.search("pad", 5);
+        let results = index.find("pad", 5);
         assert_eq!(titles(&results), vec!["Paint Design", "Notepad"]);
     }
 
@@ -308,7 +288,7 @@ mod tests {
             .with_keywords(vec!["browser".into()]),
         ]);
 
-        let results = index.search("rows", 5);
+        let results = index.find("rows", 5);
         assert_eq!(
             titles(&results),
             vec!["Google Chrome", "Random Windows Setup"]
@@ -317,6 +297,8 @@ mod tests {
 
     #[test]
     fn test_frecency_breaks_ties_between_identical_names() {
+        use crate::models::SearchResultKind;
+
         let mut popular = AppItem::new("a", "Test App", AppTarget::Path("a.exe".into()));
         popular.launch_count = 10;
         let rare = AppItem::new("b", "Test App", AppTarget::Path("b.exe".into()));
@@ -324,12 +306,45 @@ mod tests {
         let mut index = SearchIndex::new();
         index.set_items(vec![rare, popular]);
 
-        let results = index.search("test app", 5);
+        let results = index.find("test app", 5);
         assert_eq!(results.len(), 2);
         let SearchResultKind::App(item) = &results[0].kind else {
             panic!("expected an App result");
         };
         assert_eq!(item.id, "a");
+    }
+
+    #[test]
+    fn test_frecency_applies_to_keyword_matches_too() {
+        let mut popular = AppItem::new("a", "Aardvark Tool", AppTarget::Path("a.exe".into()))
+            .with_keywords(vec!["zzzmatch".into()]);
+        popular.launch_count = 10;
+        let rare = AppItem::new("b", "Yak Tool", AppTarget::Path("b.exe".into()))
+            .with_keywords(vec!["zzzmatch".into()]);
+
+        let mut index = SearchIndex::new();
+        index.set_items(vec![rare, popular]);
+
+        let results = index.find("zzzmatch", 5);
+        assert_eq!(results.len(), 2);
+        assert_eq!(results[0].title.as_ref(), "Aardvark Tool");
+    }
+
+    #[test]
+    fn test_keyword_matching_normalizes_case_at_construction_time() {
+        let mut index = SearchIndex::new();
+        index.set_items(vec![
+            AppItem::new(
+                "chrome",
+                "Google Chrome",
+                AppTarget::Path("chrome.exe".into()),
+            )
+            .with_keywords(vec!["BROWSER".into()]),
+        ]);
+
+        let results = index.find("browser", 5);
+        assert!(!results.is_empty());
+        assert_eq!(results[0].title.as_ref(), "Google Chrome");
     }
 
     #[test]
@@ -344,12 +359,12 @@ mod tests {
             ),
         ]);
 
-        let results = index.search("CAF", 5);
+        let results = index.find("CAF", 5);
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].title.as_ref(), "Café");
         assert_eq!(results[0].matched_indices, vec![0, 1, 2]);
 
-        let results = index.search("アプリ", 5);
+        let results = index.find("アプリ", 5);
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].title.as_ref(), "日本語アプリ");
         assert_eq!(results[0].matched_indices, vec![3, 4, 5]);

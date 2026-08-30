@@ -7,11 +7,17 @@ license.workspace = true
 authors.workspace = true
 
 [dependencies]
+logos = "0.16"
 nucleo-matcher = "0.3"
 
 [dev-dependencies]
 criterion = { version = "0.8.0", features = ["html_reports"] }
+trybuild = "1"
 
 [[bench]]
 name = "search"
 harness = false
+
+[[test]]
+name = "compile_fail"
+path = "tests/compile_fail/mod.rs"
