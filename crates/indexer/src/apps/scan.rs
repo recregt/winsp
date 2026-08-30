@@ -1,53 +1,10 @@
 use winsp_core::{AppItem, AppTarget};
 
-#[cfg(windows)]
-pub fn start_menu_dirs() -> Vec<std::path::PathBuf> {
-    let mut dirs = Vec::new();
+use super::com::ComGuard;
+use super::lnk::resolve_lnk_target;
+use super::paths::start_menu_dirs;
+use super::url::resolve_url_target;
 
-    if let Ok(app_data) = std::env::var("APPDATA") {
-        dirs.push(format!(
-            "{}\\Microsoft\\Windows\\Start Menu\\Programs",
-            app_data
-        ));
-    }
-    if let Ok(program_data) = std::env::var("ProgramData") {
-        dirs.push(format!(
-            "{}\\Microsoft\\Windows\\Start Menu\\Programs",
-            program_data
-        ));
-    }
-
-    dirs.into_iter()
-        .map(std::path::PathBuf::from)
-        .filter(|p| p.exists())
-        .collect()
-}
-
-#[cfg(windows)]
-struct ComGuard;
-
-#[cfg(windows)]
-impl ComGuard {
-    fn new() -> Option<Self> {
-        use windows::Win32::System::Com::{COINIT_APARTMENTTHREADED, CoInitializeEx};
-        unsafe {
-            CoInitializeEx(None, COINIT_APARTMENTTHREADED).ok().ok()?;
-        }
-        Some(Self)
-    }
-}
-
-#[cfg(windows)]
-impl Drop for ComGuard {
-    fn drop(&mut self) {
-        use windows::Win32::System::Com::CoUninitialize;
-        unsafe {
-            CoUninitialize();
-        }
-    }
-}
-
-#[cfg(windows)]
 pub fn enumerate_installed_apps() -> Vec<AppItem> {
     let mut apps = Vec::new();
     let mut seen_ids = std::collections::HashSet::new();
@@ -57,7 +14,6 @@ pub fn enumerate_installed_apps() -> Vec<AppItem> {
         scan_directory_for_shortcuts(&dir_path, &mut apps, &mut seen_ids);
     }
 
-    // 2. Add Essential Windows Built-in Tools
     let default_tools = vec![
         ("Calculator", "calc.exe", "Microsoft Calculator"),
         ("Notepad", "notepad.exe", "Fast text editor"),
@@ -93,7 +49,6 @@ pub fn enumerate_installed_apps() -> Vec<AppItem> {
     apps
 }
 
-#[cfg(windows)]
 fn scan_directory_for_shortcuts(
     dir: &std::path::Path,
     apps: &mut Vec<AppItem>,
@@ -133,7 +88,6 @@ fn scan_directory_for_shortcuts(
     }
 }
 
-#[cfg(windows)]
 fn resolve_shortcut_target(path: &std::path::Path, ext_lower: &str) -> Option<String> {
     match ext_lower {
         "lnk" => resolve_lnk_target(path),
@@ -142,131 +96,7 @@ fn resolve_shortcut_target(path: &std::path::Path, ext_lower: &str) -> Option<St
     }
 }
 
-#[cfg(windows)]
-fn resolve_url_target(path: &std::path::Path) -> Option<String> {
-    let contents = std::fs::read_to_string(path).ok()?;
-    contents.lines().find_map(|line| {
-        let (key, value) = line.split_once('=')?;
-        if key.trim().eq_ignore_ascii_case("URL") {
-            Some(value.trim().to_lowercase())
-        } else {
-            None
-        }
-    })
-}
-
-#[cfg(windows)]
-fn wide_str_from_buf(buf: &[u16]) -> String {
-    let end = buf.iter().position(|&c| c == 0).unwrap_or(buf.len());
-    String::from_utf16_lossy(&buf[..end])
-}
-
-#[cfg(windows)]
-fn expand_env_vars(raw: &[u16]) -> String {
-    use windows::Win32::System::Environment::ExpandEnvironmentStringsW;
-    use windows::core::PCWSTR;
-
-    let mut expanded = [0u16; 260];
-    let written = unsafe { ExpandEnvironmentStringsW(PCWSTR(raw.as_ptr()), Some(&mut expanded)) };
-    if written == 0 || written as usize > expanded.len() {
-        wide_str_from_buf(raw)
-    } else {
-        wide_str_from_buf(&expanded)
-    }
-}
-
-#[cfg(windows)]
-fn resolve_lnk_target(path: &std::path::Path) -> Option<String> {
-    use std::os::windows::ffi::OsStrExt;
-    use windows::Win32::System::Com::{
-        CLSCTX_INPROC_SERVER, CoCreateInstance, IPersistFile, STGM_READ,
-    };
-    use windows::Win32::UI::Shell::{IShellLinkW, SLGP_RAWPATH, ShellLink};
-    use windows::core::{Interface, PCWSTR};
-
-    unsafe {
-        let shell_link: IShellLinkW =
-            CoCreateInstance(&ShellLink, None, CLSCTX_INPROC_SERVER).ok()?;
-        let persist_file: IPersistFile = shell_link.cast().ok()?;
-
-        let wide_path: Vec<u16> = path.as_os_str().encode_wide().chain(Some(0)).collect();
-        persist_file
-            .Load(PCWSTR(wide_path.as_ptr()), STGM_READ)
-            .ok()?;
-
-        let mut raw_path = [0u16; 260];
-        shell_link
-            .GetPath(&mut raw_path, std::ptr::null_mut(), SLGP_RAWPATH.0 as u32)
-            .ok()?;
-
-        let target = expand_env_vars(&raw_path);
-        if target.is_empty() {
-            return None;
-        }
-
-        let mut args_buf = [0u16; 1024];
-        let arguments = shell_link
-            .GetArguments(&mut args_buf)
-            .ok()
-            .map(|()| wide_str_from_buf(&args_buf))
-            .unwrap_or_default();
-
-        Some(format!(
-            "{}|{}",
-            target.to_lowercase(),
-            arguments.to_lowercase()
-        ))
-    }
-}
-
-#[cfg(not(windows))]
-pub fn enumerate_installed_apps() -> Vec<AppItem> {
-    vec![
-        AppItem::new(
-            "calc",
-            "Calculator",
-            AppTarget::Aumid("Microsoft.WindowsCalculator".into()),
-        )
-        .with_description("Standard & Scientific Calculator"),
-        AppItem::new("notepad", "Notepad", AppTarget::Path("notepad.exe".into()))
-            .with_description("Text Editor"),
-        AppItem::new(
-            "code",
-            "Visual Studio Code",
-            AppTarget::Path("code.exe".into()),
-        )
-        .with_description("Code Editing. Redefined.")
-        .with_keywords(vec!["vsc".into(), "ide".into(), "editor".into()]),
-        AppItem::new(
-            "terminal",
-            "Windows Terminal",
-            AppTarget::Path("wt.exe".into()),
-        )
-        .with_description("PowerShell, CMD, WSL command line")
-        .with_keywords(vec![
-            "cmd".into(),
-            "powershell".into(),
-            "console".into(),
-            "bash".into(),
-        ]),
-        AppItem::new(
-            "chrome",
-            "Google Chrome",
-            AppTarget::Path("chrome.exe".into()),
-        )
-        .with_description("Fast, secure web browser")
-        .with_keywords(vec!["browser".into(), "internet".into(), "google".into()]),
-        AppItem::new(
-            "spotify",
-            "Spotify",
-            AppTarget::Aumid("SpotifyAB.SpotifyMusic".into()),
-        )
-        .with_description("Music and podcasts")
-        .with_keywords(vec!["music".into(), "audio".into(), "songs".into()]),
-    ]
-}
-
-#[cfg(all(test, windows))]
+#[cfg(test)]
 mod tests {
     use super::*;
     use std::fs;
@@ -362,19 +192,6 @@ mod tests {
         scan_directory_for_shortcuts(system_wide.path(), &mut apps, &mut seen_ids);
 
         assert_eq!(apps.len(), 2);
-    }
-
-    #[test]
-    fn expands_environment_variables_in_lnk_target() {
-        let program_files = std::env::var("ProgramFiles").unwrap();
-        let raw = wide(r"%ProgramFiles%\App\app.exe");
-
-        let expanded = expand_env_vars(&raw);
-
-        assert_eq!(
-            expanded.to_lowercase(),
-            format!(r"{program_files}\App\app.exe").to_lowercase()
-        );
     }
 
     #[test]

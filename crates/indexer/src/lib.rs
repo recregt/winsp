@@ -1,6 +1,6 @@
+pub mod apps;
 pub mod launcher;
 pub mod settings;
-pub mod shell_apps;
 pub mod watcher;
 
 use winsp_core::{AppItem, SearchIndex};
@@ -11,7 +11,7 @@ pub fn populate_search_index() -> SearchIndex {
     let mut all_items: Vec<AppItem> = Vec::new();
 
     // 1. Enumerate Windows apps (Shell / UWP / Win32)
-    let installed_apps = shell_apps::enumerate_installed_apps();
+    let installed_apps = apps::enumerate_installed_apps();
     all_items.extend(installed_apps);
 
     // 2. Add Windows Settings quick items

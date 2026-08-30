@@ -30,7 +30,7 @@ pub fn watch_start_menu<F>(on_change: F) -> notify::Result<Debouncer<Recommended
 where
     F: Fn() + Send + 'static,
 {
-    watch_dirs(&crate::shell_apps::start_menu_dirs(), on_change)
+    watch_dirs(&crate::apps::start_menu_dirs(), on_change)
 }
 
 pub fn test_watch_dir() -> Option<std::path::PathBuf> {
