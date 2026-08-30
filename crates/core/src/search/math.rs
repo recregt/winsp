@@ -9,7 +9,7 @@ const KNOWN_IDENTIFIERS: &[&str] = &[
 #[derive(Logos, Debug, Clone, PartialEq)]
 #[logos(skip r"[ \t]+")]
 enum Token {
-    #[regex(r"[0-9]+\.?[0-9]*(E[+-]?[0-9]+)?|\.[0-9]+(E[+-]?[0-9]+)?", |lex| lex.slice().parse().ok())]
+    #[regex(r"[0-9]+\.?[0-9]*([eE][+-]?[0-9]+)?|\.[0-9]+([eE][+-]?[0-9]+)?", |lex| lex.slice().parse().ok())]
     Number(f64),
     #[token("+")]
     Plus,
@@ -249,7 +249,7 @@ fn eval_rpn(rpn: &[RpnItem]) -> Option<f64> {
                     "abs" => v.abs(),
                     "sin" => v.sin(),
                     "cos" => v.cos(),
-                    "tan" => v.tan(),
+                    "tan" if v.cos().abs() > 1e-9 => v.tan(),
                     "ln" if v > 0.0 => v.ln(),
                     "log" | "log10" if v > 0.0 => v.log10(),
                     "floor" => v.floor(),
@@ -320,6 +320,7 @@ pub fn try_eval(input: &str) -> Option<String> {
     let tokens = insert_implicit_multiplication(tokens);
 
     let has_op_or_func = trimmed.contains('E')
+        || trimmed.contains('e')
         || tokens.iter().any(|t| {
             matches!(
                 t,
@@ -396,6 +397,10 @@ mod tests {
         assert_eq!(try_eval("sqrt(-1)"), None);
         assert_eq!(try_eval("ln(-1)"), None);
         assert_eq!(try_eval("log(-1)"), None);
+        assert_eq!(try_eval("tan(pi/2)"), None);
+        assert_eq!(try_eval("tan(3*pi/2)"), None);
+        assert_eq!(try_eval("tan(-pi/2)"), None);
+        assert_eq!(try_eval("tan(pi/4)"), Some("1".to_string()));
     }
 
     #[test]
@@ -447,6 +452,9 @@ mod tests {
         assert_eq!(try_eval("1.2E2"), Some("120".to_string()));
         assert_eq!(try_eval("2E-2"), Some("0.02".to_string()));
         assert_eq!(try_eval("-1.0E-2"), Some("-0.01".to_string()));
+        assert_eq!(try_eval("1e3"), Some("1000".to_string()));
+        assert_eq!(try_eval("2e-2"), Some("0.02".to_string()));
+        assert_eq!(try_eval("-1.0e-2"), Some("-0.01".to_string()));
         assert_eq!(
             try_eval("2e"),
             Some(format_result(2.0 * std::f64::consts::E))
