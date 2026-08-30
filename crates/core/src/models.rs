@@ -1,6 +1,5 @@
 use std::sync::Arc;
 
-/// The target type for an executable application item.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AppTarget {
     /// A path or bare command executed via ShellExecuteW (.exe, .lnk, .url, .bat, etc.).
@@ -10,11 +9,9 @@ pub enum AppTarget {
     Aumid(String),
     /// Windows Settings URI (e.g., `ms-settings:display`)
     SettingUri(String),
-    /// Built-in system command
     SystemCommand(String),
 }
 
-/// Metadata representation of an indexed application or tool.
 #[derive(Debug, Clone, PartialEq)]
 pub struct AppItem {
     pub id: String,
@@ -57,7 +54,6 @@ impl AppItem {
     }
 }
 
-/// The category of a search result item.
 #[derive(Debug, Clone, PartialEq)]
 pub enum SearchResultKind {
     App(Arc<AppItem>),
@@ -75,7 +71,6 @@ pub enum SearchResultKind {
     },
 }
 
-/// A matched search result with calculated score and highlighted character indices.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SearchResult {
     pub title: String,
@@ -107,7 +102,7 @@ impl SearchResult {
         Self {
             title: result.clone(),
             subtitle: Some(format!("= {expression}")),
-            score: 100_000, // Top priority when valid calculation
+            score: 100_000,
             matched_indices: Vec::new(),
             kind: SearchResultKind::Calculation { expression, result },
         }
