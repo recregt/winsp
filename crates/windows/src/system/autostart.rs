@@ -11,9 +11,12 @@ pub fn set_enabled(enabled: bool) {
     let _ = startup_task_set_enabled(enabled);
 }
 
+fn startup_task() -> windows::core::Result<StartupTask> {
+    StartupTask::GetAsync(&HSTRING::from(STARTUP_TASK_ID))?.join()
+}
+
 fn startup_task_is_enabled() -> windows::core::Result<bool> {
-    let task = StartupTask::GetAsync(&HSTRING::from(STARTUP_TASK_ID))?.get()?;
-    let state = task.State()?;
+    let state = startup_task()?.State()?;
     Ok(matches!(
         state,
         StartupTaskState::Enabled | StartupTaskState::EnabledByPolicy
@@ -21,11 +24,21 @@ fn startup_task_is_enabled() -> windows::core::Result<bool> {
 }
 
 fn startup_task_set_enabled(enabled: bool) -> windows::core::Result<()> {
-    let task = StartupTask::GetAsync(&HSTRING::from(STARTUP_TASK_ID))?.get()?;
+    let task = startup_task()?;
     if enabled {
-        task.RequestEnableAsync()?.get()?;
+        task.RequestEnableAsync()?.join()?;
     } else {
         task.Disable()?;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn is_enabled_degrades_gracefully_without_package_identity() {
+        assert!(!is_enabled());
+    }
 }

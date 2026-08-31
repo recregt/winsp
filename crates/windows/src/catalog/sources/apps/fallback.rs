@@ -1,6 +1,6 @@
 use winsp_core::models::{AppItem, AppTarget};
 
-pub fn enumerate_installed_apps() -> Vec<AppItem> {
+pub fn list_installed_apps() -> Vec<AppItem> {
     vec![
         AppItem::new(
             "calc",
