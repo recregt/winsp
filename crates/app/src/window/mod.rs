@@ -8,15 +8,6 @@ mod wndproc;
 use std::ffi::OsStr;
 use std::os::windows::ffi::OsStrExt;
 use std::sync::{Arc, Mutex, OnceLock};
-use windows_sys::Win32::Graphics::Dwm::{
-    DWMSBT_TRANSIENTWINDOW, DWMWA_SYSTEMBACKDROP_TYPE, DWMWA_WINDOW_CORNER_PREFERENCE,
-    DWMWCP_ROUND, DwmSetWindowAttribute,
-};
-use windows_sys::Win32::Graphics::Gdi::{GetStockObject, WHITE_BRUSH};
-use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
-use windows_sys::Win32::UI::HiDpi::{
-    DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2, SetProcessDpiAwarenessContext,
-};
 use windows_sys::Win32::UI::Input::KeyboardAndMouse::*;
 use windows_sys::Win32::UI::WindowsAndMessaging::*;
 
@@ -39,69 +30,21 @@ fn to_wide(s: &str) -> Vec<u16> {
 pub fn run_app(state: Arc<Mutex<AppState>>) -> Result<(), String> {
     let _ = APP_STATE.set(state);
 
+    winsp_windows::system::theme::allow_dark_mode_for_app();
+
+    let window_handle = winsp_windows::system::WindowHandle::create(
+        WINDOW_CLASS_NAME,
+        "WinSP",
+        WINDOW_WIDTH,
+        SEARCH_BAR_HEIGHT,
+        Some(wnd_proc),
+    )
+    .map_err(|e| format!("failed to create window: {e}"))?;
+    window_handle.enable_dark_mode();
+
+    let hwnd = window_handle.hwnd();
+
     unsafe {
-        SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
-        winsp_windows::system::theme::allow_dark_mode_for_app();
-
-        let instance = GetModuleHandleW(std::ptr::null());
-        let class_name = to_wide(WINDOW_CLASS_NAME);
-        let window_title = to_wide("WinSP");
-
-        let wnd_class = WNDCLASSEXW {
-            cbSize: std::mem::size_of::<WNDCLASSEXW>() as u32,
-            style: CS_HREDRAW | CS_VREDRAW,
-            lpfnWndProc: Some(wnd_proc),
-            cbClsExtra: 0,
-            cbWndExtra: 0,
-            hInstance: instance,
-            hIcon: LoadIconW(instance, 1u16 as _),
-            hCursor: LoadCursorW(std::ptr::null_mut(), IDC_ARROW),
-            hbrBackground: GetStockObject(WHITE_BRUSH) as _,
-            lpszMenuName: std::ptr::null(),
-            lpszClassName: class_name.as_ptr(),
-            hIconSm: LoadIconW(instance, 1u16 as _),
-        };
-
-        RegisterClassExW(&wnd_class);
-
-        let hwnd = CreateWindowExW(
-            WS_EX_TOOLWINDOW | WS_EX_TOPMOST,
-            class_name.as_ptr(),
-            window_title.as_ptr(),
-            WS_POPUP,
-            100,
-            100,
-            WINDOW_WIDTH,
-            SEARCH_BAR_HEIGHT,
-            std::ptr::null_mut(),
-            std::ptr::null_mut(),
-            instance,
-            std::ptr::null(),
-        );
-
-        if hwnd.is_null() {
-            return Err("Failed to create WinSP window".into());
-        }
-
-        let window_handle = winsp_windows::system::WindowHandle::new(hwnd);
-        window_handle.enable_dark_mode();
-
-        let backdrop = DWMSBT_TRANSIENTWINDOW;
-        let _ = DwmSetWindowAttribute(
-            hwnd,
-            DWMWA_SYSTEMBACKDROP_TYPE as u32,
-            &backdrop as *const _ as *const _,
-            std::mem::size_of_val(&backdrop) as u32,
-        );
-
-        let corner_pref = DWMWCP_ROUND;
-        let _ = DwmSetWindowAttribute(
-            hwnd,
-            DWMWA_WINDOW_CORNER_PREFERENCE as u32,
-            &corner_pref as *const _ as *const _,
-            std::mem::size_of_val(&corner_pref) as u32,
-        );
-
         center_window(hwnd);
 
         let _ = RegisterHotKey(hwnd, 1, MOD_ALT, VK_SPACE as u32);
@@ -115,6 +58,6 @@ pub fn run_app(state: Arc<Mutex<AppState>>) -> Result<(), String> {
         }
 
         let _ = UnregisterHotKey(hwnd, 1);
-        Ok(())
     }
+    Ok(())
 }
