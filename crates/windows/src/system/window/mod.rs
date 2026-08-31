@@ -1,6 +1,7 @@
 mod tray;
 
 use windows_sys::Win32::Foundation::HWND;
+use windows_sys::Win32::Graphics::Dwm::{DWMWA_USE_IMMERSIVE_DARK_MODE, DwmSetWindowAttribute};
 
 pub use tray::{TrayCommand, WM_TRAYICON};
 
@@ -17,6 +18,16 @@ impl WindowHandle {
 
     pub fn enable_dark_mode(&self) {
         super::theme::allow_dark_mode_for_window(self.hwnd);
+
+        let dark_mode: i32 = super::theme::system_uses_dark_mode() as i32;
+        unsafe {
+            let _ = DwmSetWindowAttribute(
+                self.hwnd,
+                DWMWA_USE_IMMERSIVE_DARK_MODE as u32,
+                &dark_mode as *const _ as *const _,
+                std::mem::size_of_val(&dark_mode) as u32,
+            );
+        }
     }
 
     pub fn add_tray_icon(&self) {

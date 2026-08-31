@@ -9,8 +9,8 @@ use std::ffi::OsStr;
 use std::os::windows::ffi::OsStrExt;
 use std::sync::{Arc, Mutex, OnceLock};
 use windows_sys::Win32::Graphics::Dwm::{
-    DWMSBT_TRANSIENTWINDOW, DWMWA_SYSTEMBACKDROP_TYPE, DWMWA_USE_IMMERSIVE_DARK_MODE,
-    DWMWA_WINDOW_CORNER_PREFERENCE, DWMWCP_ROUND, DwmSetWindowAttribute,
+    DWMSBT_TRANSIENTWINDOW, DWMWA_SYSTEMBACKDROP_TYPE, DWMWA_WINDOW_CORNER_PREFERENCE,
+    DWMWCP_ROUND, DwmSetWindowAttribute,
 };
 use windows_sys::Win32::Graphics::Gdi::{GetStockObject, WHITE_BRUSH};
 use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
@@ -85,14 +85,6 @@ pub fn run_app(state: Arc<Mutex<AppState>>) -> Result<(), String> {
 
         let window_handle = winsp_windows::system::WindowHandle::new(hwnd);
         window_handle.enable_dark_mode();
-
-        let dark_mode: i32 = winsp_windows::system::theme::system_uses_dark_mode() as i32;
-        let _ = DwmSetWindowAttribute(
-            hwnd,
-            DWMWA_USE_IMMERSIVE_DARK_MODE as u32,
-            &dark_mode as *const _ as *const _,
-            std::mem::size_of_val(&dark_mode) as u32,
-        );
 
         let backdrop = DWMSBT_TRANSIENTWINDOW;
         let _ = DwmSetWindowAttribute(

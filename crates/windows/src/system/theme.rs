@@ -6,7 +6,7 @@ use windows_sys::Win32::System::Registry::HKEY_CURRENT_USER;
 use windows_sys::Win32::UI::WindowsAndMessaging::IsWindow;
 
 /// Reports whether Windows is currently configured to use dark mode.
-pub fn system_uses_dark_mode() -> bool {
+pub(crate) fn system_uses_dark_mode() -> bool {
     read_dword(
         HKEY_CURRENT_USER,
         r"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize",
