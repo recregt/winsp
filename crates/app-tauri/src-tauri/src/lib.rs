@@ -190,6 +190,22 @@ pub fn run() {
                 setup_tray(app.handle())?;
             }
 
+            #[cfg(windows)]
+            {
+                let app_handle = app.handle().clone();
+                let watcher = winsp_windows::catalog::sources::watcher::for_start_menu(move || {
+                    let index = populate_search_index();
+                    if let Some(state) = app_handle.try_state::<Mutex<AppTauriState>>() {
+                        if let Ok(mut state) = state.lock() {
+                            state.index = index;
+                        }
+                    }
+                });
+                if let Ok(watcher) = watcher {
+                    app.manage(watcher);
+                }
+            }
+
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![search, launch])

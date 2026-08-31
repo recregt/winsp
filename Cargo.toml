@@ -2,7 +2,6 @@
 members = [
     "crates/core",
     "crates/windows",
-    "crates/app",
     "crates/app-tauri/src-tauri",
 ]
 resolver = "3"

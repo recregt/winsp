@@ -54,19 +54,21 @@ Alternatively, download the latest `winsp.msix` from the [Releases](https://gith
 
 ### Build from Source
 
-Ensure you have the Rust toolchain installed:
+Ensure you have the Rust and Node.js toolchains installed:
 
 ```bash
 # Clone the repository
 git clone https://github.com/recregt/winsp.git
 cd winsp
 
-# Build the release binary
-cargo build -p winsp-app --release --locked
+# Install frontend dependencies and build the release binary
+cd crates/app-tauri
+npm ci
+npx tauri build --no-bundle
 
 ```
 
-The compiled binary will be located at `target/release/winsp.exe`.
+The compiled binary will be located at `target/release/winsp-tauri.exe`.
 
 ## Contributing
 

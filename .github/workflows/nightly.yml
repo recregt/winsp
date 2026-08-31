@@ -78,8 +78,13 @@ jobs:
       - name: Test
         run: cargo test --workspace --locked
 
+      - name: Install frontend dependencies
+        working-directory: crates/app-tauri
+        run: npm ci
+
       - name: Build release binary
-        run: cargo build -p winsp-app --release --locked
+        working-directory: crates/app-tauri
+        run: npx tauri build --no-bundle -- --locked
 
       - uses: ./.github/actions/package-msix
 

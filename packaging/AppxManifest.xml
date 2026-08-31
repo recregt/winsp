@@ -31,7 +31,7 @@
   </Capabilities>
 
   <Applications>
-    <Application Id="WinSP" Executable="winsp.exe" EntryPoint="Windows.FullTrustApplication">
+    <Application Id="WinSP" Executable="winsp-tauri.exe" EntryPoint="Windows.FullTrustApplication">
       <uap:VisualElements
         DisplayName="WinSP"
         Description="Lightning-fast Windows Spotlight-style app launcher"
@@ -39,7 +39,7 @@
         Square150x150Logo="Assets\Square150x150Logo.png"
         Square44x44Logo="Assets\Square44x44Logo.png" />
       <Extensions>
-        <desktop:Extension Category="windows.startupTask" Executable="winsp.exe" EntryPoint="Windows.FullTrustApplication">
+        <desktop:Extension Category="windows.startupTask" Executable="winsp-tauri.exe" EntryPoint="Windows.FullTrustApplication">
           <desktop:StartupTask TaskId="WinSPStartup" Enabled="false" DisplayName="WinSP" />
         </desktop:Extension>
       </Extensions>

@@ -19,7 +19,8 @@ runs:
         Set-Content -Path "$stagingDir\AppxManifest.xml" -Value $manifest -NoNewline
 
         Copy-Item packaging\Assets\* "$stagingDir\Assets\"
-        Copy-Item target\release\winsp.exe "$stagingDir\winsp.exe"
+        Copy-Item target\release\winsp-tauri.exe "$stagingDir\winsp-tauri.exe"
+        Copy-Item target\release\WebView2Loader.dll "$stagingDir\WebView2Loader.dll"
 
         $makeappx = Get-ChildItem "C:\Program Files (x86)\Windows Kits\10\bin" -Recurse -Filter makeappx.exe |
           Where-Object { $_.FullName -like "*x64*" } |

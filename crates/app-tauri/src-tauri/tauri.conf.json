@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "WinSP (Tauri)",
-  "version": "0.1.0",
-  "identifier": "com.recregt.winsp-tauri",
+  "productName": "WinSP",
+  "version": "0.2.1",
+  "identifier": "com.recregt.winsp",
   "build": {
     "beforeDevCommand": "npm run dev",
     "devUrl": "http://localhost:1420",
