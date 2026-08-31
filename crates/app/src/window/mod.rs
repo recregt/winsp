@@ -5,8 +5,6 @@ mod input;
 mod render;
 mod wndproc;
 
-use std::ffi::OsStr;
-use std::os::windows::ffi::OsStrExt;
 use std::sync::{Arc, Mutex, OnceLock};
 use windows_sys::Win32::UI::Input::KeyboardAndMouse::*;
 
@@ -20,10 +18,6 @@ pub const PADDING: i32 = 12;
 pub(crate) const WINDOW_CLASS_NAME: &str = "WinSP_Spotlight_Window";
 
 static APP_STATE: OnceLock<Arc<Mutex<AppState>>> = OnceLock::new();
-
-fn to_wide(s: &str) -> Vec<u16> {
-    OsStr::new(s).encode_wide().chain(Some(0)).collect()
-}
 
 pub fn run_app(state: Arc<Mutex<AppState>>) -> Result<(), String> {
     let _ = APP_STATE.set(state);

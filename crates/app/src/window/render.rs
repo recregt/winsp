@@ -1,15 +1,8 @@
-use windows_sys::Win32::Foundation::{COLORREF, HWND, RECT, SIZE};
-use windows_sys::Win32::Graphics::Gdi::{
-    BitBlt, CreateCompatibleBitmap, CreateCompatibleDC, CreateFontW, CreatePen, CreateSolidBrush,
-    DT_LEFT, DT_SINGLELINE, DT_VCENTER, DeleteDC, DeleteObject, DrawTextW, FW_NORMAL, FW_SEMIBOLD,
-    FillRect, GetTextExtentPoint32W, HDC, LineTo, MoveToEx, PS_SOLID, SRCCOPY, SelectObject,
-    SetBkMode, SetTextColor, TRANSPARENT,
-};
-use windows_sys::Win32::UI::WindowsAndMessaging::GetClientRect;
+use winsp_windows::system::{Canvas, Color, FontWeight, Rect};
 
-use super::{APP_STATE, ITEM_ROW_HEIGHT, SEARCH_BAR_HEIGHT, WINDOW_WIDTH, to_wide};
+use super::{APP_STATE, ITEM_ROW_HEIGHT, SEARCH_BAR_HEIGHT, WINDOW_WIDTH};
 
-const HIGHLIGHT_COLOR: COLORREF = 0x00FFB74D;
+const HIGHLIGHT_COLOR: Color = Color(0x00FFB74D);
 
 fn highlight_segments(text: &str, matched_indices: &[usize]) -> Vec<(bool, String)> {
     let char_count = text.chars().count();
@@ -30,242 +23,142 @@ fn highlight_segments(text: &str, matched_indices: &[usize]) -> Vec<(bool, Strin
     segments
 }
 
-unsafe fn draw_highlighted_title(
-    hdc: HDC,
+fn draw_highlighted_title(
+    canvas: &Canvas,
     title: &str,
     matched_indices: &[usize],
-    bounds: RECT,
-    base_color: COLORREF,
+    bounds: Rect,
+    base_color: Color,
 ) {
-    unsafe {
-        let mut seg_left = bounds.left;
-        for (highlighted, segment) in highlight_segments(title, matched_indices) {
-            if seg_left >= bounds.right {
-                break;
-            }
-            SetTextColor(
-                hdc,
-                if highlighted {
-                    HIGHLIGHT_COLOR
-                } else {
-                    base_color
-                },
-            );
-            let mut seg_wide = to_wide(&segment);
-            let mut seg_rect = RECT {
-                left: seg_left,
-                top: bounds.top,
-                right: bounds.right,
-                bottom: bounds.bottom,
-            };
-            DrawTextW(
-                hdc,
-                seg_wide.as_mut_ptr(),
-                seg_wide.len() as i32 - 1,
-                &mut seg_rect,
-                DT_LEFT | DT_SINGLELINE | DT_VCENTER,
-            );
-
-            let mut extent = std::mem::zeroed::<SIZE>();
-            GetTextExtentPoint32W(
-                hdc,
-                seg_wide.as_ptr(),
-                seg_wide.len() as i32 - 1,
-                &mut extent,
-            );
-            seg_left += extent.cx;
+    let mut seg_left = bounds.left;
+    for (highlighted, segment) in highlight_segments(title, matched_indices) {
+        if seg_left >= bounds.right {
+            break;
         }
+        canvas.set_text_color(if highlighted {
+            HIGHLIGHT_COLOR
+        } else {
+            base_color
+        });
+        let seg_rect = Rect {
+            left: seg_left,
+            top: bounds.top,
+            right: bounds.right,
+            bottom: bounds.bottom,
+        };
+        canvas.draw_text(&segment, seg_rect);
+        seg_left += canvas.text_width(&segment);
     }
 }
 
-pub(super) unsafe fn render_ui(hwnd: HWND, hdc: HDC) {
-    unsafe {
-        let mut client_rect = std::mem::zeroed::<RECT>();
-        let _ = GetClientRect(hwnd, &mut client_rect);
+pub(super) fn render_ui(canvas: &Canvas, client_rect: Rect) {
+    canvas.fill_rect(client_rect, Color(0x001E1E1E));
 
-        let mem_dc = CreateCompatibleDC(hdc);
-        let mem_bmp = CreateCompatibleBitmap(hdc, client_rect.right, client_rect.bottom);
-        let old_bmp = SelectObject(mem_dc, mem_bmp);
+    let Some(state_arc) = APP_STATE.get() else {
+        return;
+    };
+    let Ok(state) = state_arc.lock() else {
+        return;
+    };
 
-        let bg_brush = CreateSolidBrush(0x001E1E1E as COLORREF);
-        FillRect(mem_dc, &client_rect, bg_brush);
-        DeleteObject(bg_brush);
+    canvas.with_font(
+        "Segoe UI Variable Display",
+        26,
+        FontWeight::Normal,
+        |canvas| {
+            let display_text = if state.query.is_empty() {
+                canvas.set_text_color(Color(0x00888888));
+                "Search apps, settings, math...".to_string()
+            } else {
+                canvas.set_text_color(Color(0x00FFFFFF));
+                state.query.clone()
+            };
+            let search_rect = Rect {
+                left: 24,
+                top: 14,
+                right: WINDOW_WIDTH - 24,
+                bottom: SEARCH_BAR_HEIGHT - 10,
+            };
+            canvas.draw_text(&display_text, search_rect);
+        },
+    );
 
-        SetBkMode(mem_dc, TRANSPARENT as i32);
+    let mut current_y = SEARCH_BAR_HEIGHT;
 
-        if let Some(state_arc) = APP_STATE.get() {
-            if let Ok(state) = state_arc.lock() {
-                let font_name = to_wide("Segoe UI Variable Display");
-                let font_title = CreateFontW(
-                    26,
-                    0,
-                    0,
-                    0,
-                    FW_NORMAL as i32,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    font_name.as_ptr(),
-                );
-                let old_font = SelectObject(mem_dc, font_title);
+    if !state.results.is_empty() {
+        canvas.draw_line(
+            (16, current_y),
+            (WINDOW_WIDTH - 16, current_y),
+            Color(0x00333333),
+        );
+        current_y += 8;
+    }
 
-                let display_text = if state.query.is_empty() {
-                    SetTextColor(mem_dc, 0x00888888);
-                    "Search apps, settings, math...".to_string()
-                } else {
-                    SetTextColor(mem_dc, 0x00FFFFFF);
-                    state.query.clone()
-                };
+    for (idx, result) in state.results.iter().enumerate() {
+        let is_selected = idx == state.selected_index;
 
-                let mut text_wide = to_wide(&display_text);
-                let mut search_rect = RECT {
-                    left: 24,
-                    top: 14,
-                    right: WINDOW_WIDTH - 24,
-                    bottom: SEARCH_BAR_HEIGHT - 10,
-                };
-                DrawTextW(
-                    mem_dc,
-                    text_wide.as_mut_ptr(),
-                    text_wide.len() as i32 - 1,
-                    &mut search_rect,
-                    DT_LEFT | DT_SINGLELINE | DT_VCENTER,
-                );
+        let row_rect = Rect {
+            left: 12,
+            top: current_y,
+            right: WINDOW_WIDTH - 12,
+            bottom: current_y + ITEM_ROW_HEIGHT - 6,
+        };
 
-                let font_item_name = to_wide("Segoe UI Variable Text");
-                let font_item_title = CreateFontW(
-                    18,
-                    0,
-                    0,
-                    0,
-                    FW_SEMIBOLD as i32,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    font_item_name.as_ptr(),
-                );
-                let font_item_sub = CreateFontW(
-                    14,
-                    0,
-                    0,
-                    0,
-                    FW_NORMAL as i32,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    font_item_name.as_ptr(),
-                );
-
-                let mut current_y = SEARCH_BAR_HEIGHT;
-
-                if !state.results.is_empty() {
-                    let sep_pen = CreatePen(PS_SOLID, 1, 0x00333333);
-                    let old_pen = SelectObject(mem_dc, sep_pen);
-                    MoveToEx(mem_dc, 16, current_y, std::ptr::null_mut());
-                    LineTo(mem_dc, WINDOW_WIDTH - 16, current_y);
-                    SelectObject(mem_dc, old_pen);
-                    DeleteObject(sep_pen);
-                    current_y += 8;
-                }
-
-                for (idx, result) in state.results.iter().enumerate() {
-                    let is_selected = idx == state.selected_index;
-
-                    let row_rect = RECT {
-                        left: 12,
-                        top: current_y,
-                        right: WINDOW_WIDTH - 12,
-                        bottom: current_y + ITEM_ROW_HEIGHT - 6,
-                    };
-
-                    if is_selected {
-                        let sel_brush = CreateSolidBrush(0x003A3A3A);
-                        FillRect(mem_dc, &row_rect, sel_brush);
-                        DeleteObject(sel_brush);
-                    }
-
-                    SelectObject(mem_dc, font_item_title);
-                    let base_color = if is_selected { 0x00FFFFFF } else { 0x00E0E0E0 };
-                    draw_highlighted_title(
-                        mem_dc,
-                        &result.title,
-                        &result.matched_indices,
-                        RECT {
-                            left: 32,
-                            top: current_y + 4,
-                            right: WINDOW_WIDTH - 32,
-                            bottom: current_y + 26,
-                        },
-                        base_color,
-                    );
-
-                    if let Some(sub) = &result.subtitle {
-                        SelectObject(mem_dc, font_item_sub);
-                        SetTextColor(mem_dc, 0x00999999);
-                        let mut sub_wide = to_wide(sub);
-                        let mut sub_rect = RECT {
-                            left: 32,
-                            top: current_y + 26,
-                            right: WINDOW_WIDTH - 32,
-                            bottom: current_y + ITEM_ROW_HEIGHT - 8,
-                        };
-                        DrawTextW(
-                            mem_dc,
-                            sub_wide.as_mut_ptr(),
-                            sub_wide.len() as i32 - 1,
-                            &mut sub_rect,
-                            DT_LEFT | DT_SINGLELINE | DT_VCENTER,
-                        );
-                    }
-
-                    current_y += ITEM_ROW_HEIGHT;
-                }
-
-                SelectObject(mem_dc, old_font);
-                DeleteObject(font_title);
-                DeleteObject(font_item_title);
-                DeleteObject(font_item_sub);
-            }
+        if is_selected {
+            canvas.fill_rect(row_rect, Color(0x003A3A3A));
         }
 
-        BitBlt(
-            hdc,
-            0,
-            0,
-            client_rect.right,
-            client_rect.bottom,
-            mem_dc,
-            0,
-            0,
-            SRCCOPY,
+        let base_color = if is_selected {
+            Color(0x00FFFFFF)
+        } else {
+            Color(0x00E0E0E0)
+        };
+        canvas.with_font(
+            "Segoe UI Variable Text",
+            18,
+            FontWeight::SemiBold,
+            |canvas| {
+                draw_highlighted_title(
+                    canvas,
+                    &result.title,
+                    &result.matched_indices,
+                    Rect {
+                        left: 32,
+                        top: current_y + 4,
+                        right: WINDOW_WIDTH - 32,
+                        bottom: current_y + 26,
+                    },
+                    base_color,
+                );
+            },
         );
 
-        SelectObject(mem_dc, old_bmp);
-        DeleteObject(mem_bmp);
-        DeleteDC(mem_dc);
+        if let Some(sub) = &result.subtitle {
+            canvas.with_font("Segoe UI Variable Text", 14, FontWeight::Normal, |canvas| {
+                canvas.set_text_color(Color(0x00999999));
+                let sub_rect = Rect {
+                    left: 32,
+                    top: current_y + 26,
+                    right: WINDOW_WIDTH - 32,
+                    bottom: current_y + ITEM_ROW_HEIGHT - 8,
+                };
+                canvas.draw_text(sub, sub_rect);
+            });
+        }
+
+        current_y += ITEM_ROW_HEIGHT;
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use windows_sys::Win32::Foundation::COLORREF;
+    use windows_sys::Win32::Foundation::RECT;
     use windows_sys::Win32::Graphics::Gdi::{
-        DeleteObject as GdiDeleteObject, GetDC, GetPixel, ReleaseDC,
+        CreateCompatibleBitmap, CreateCompatibleDC, CreateSolidBrush, DeleteDC,
+        DeleteObject as GdiDeleteObject, FillRect, GetDC, GetPixel, HBITMAP, HDC, HGDIOBJ,
+        ReleaseDC, SelectObject, SetBkMode, TRANSPARENT,
     };
 
     const BITMAP_WIDTH: i32 = 300;
@@ -273,8 +166,8 @@ mod tests {
 
     struct OffscreenSurface {
         hdc: HDC,
-        bitmap: windows_sys::Win32::Graphics::Gdi::HBITMAP,
-        old_bitmap: windows_sys::Win32::Graphics::Gdi::HGDIOBJ,
+        bitmap: HBITMAP,
+        old_bitmap: HGDIOBJ,
     }
 
     impl OffscreenSurface {
@@ -305,6 +198,10 @@ mod tests {
             }
         }
 
+        fn canvas(&self) -> Canvas {
+            unsafe { Canvas::from_raw(self.hdc) }
+        }
+
         fn contains_pixel(&self, color: COLORREF) -> bool {
             unsafe {
                 for y in 0..BITMAP_HEIGHT {
@@ -329,9 +226,9 @@ mod tests {
         }
     }
 
-    const BASE_COLOR: COLORREF = 0x00E0E0E0;
+    const BASE_COLOR: Color = Color(0x00E0E0E0);
 
-    const TEST_BOUNDS: RECT = RECT {
+    const TEST_BOUNDS: Rect = Rect {
         left: 4,
         top: 4,
         right: BITMAP_WIDTH - 4,
@@ -341,11 +238,15 @@ mod tests {
     #[test]
     fn test_highlighted_title_paints_the_highlight_color() {
         let surface = OffscreenSurface::new();
-        unsafe {
-            draw_highlighted_title(surface.hdc, "Notepad", &[0, 1, 2], TEST_BOUNDS, BASE_COLOR);
-        }
+        draw_highlighted_title(
+            &surface.canvas(),
+            "Notepad",
+            &[0, 1, 2],
+            TEST_BOUNDS,
+            BASE_COLOR,
+        );
         assert!(
-            surface.contains_pixel(HIGHLIGHT_COLOR),
+            surface.contains_pixel(HIGHLIGHT_COLOR.0),
             "expected at least one pixel painted in the highlight color"
         );
     }
@@ -353,18 +254,16 @@ mod tests {
     #[test]
     fn test_unhighlighted_title_never_paints_the_highlight_color() {
         let surface = OffscreenSurface::new();
-        unsafe {
-            draw_highlighted_title(surface.hdc, "Notepad", &[], TEST_BOUNDS, BASE_COLOR);
-        }
+        draw_highlighted_title(&surface.canvas(), "Notepad", &[], TEST_BOUNDS, BASE_COLOR);
         assert!(
-            !surface.contains_pixel(HIGHLIGHT_COLOR),
+            !surface.contains_pixel(HIGHLIGHT_COLOR.0),
             "no pixel should be the highlight color when nothing matched"
         );
     }
 
     #[test]
     fn test_highlight_color_constant_is_distinct_from_base_and_background() {
-        const BACKGROUND_COLOR: COLORREF = 0x00000000;
+        const BACKGROUND_COLOR: Color = Color(0x00000000);
         assert_ne!(HIGHLIGHT_COLOR, BASE_COLOR);
         assert_ne!(HIGHLIGHT_COLOR, BACKGROUND_COLOR);
     }
@@ -461,8 +360,5 @@ mod tests {
             highlight_segments("😀 Settings", &[0]),
             vec![(true, "😀".to_string()), (false, " Settings".to_string())]
         );
-
-        let wide = to_wide("😀");
-        assert_eq!(wide.len(), 3, "expected a UTF-16 surrogate pair plus NUL");
     }
 }

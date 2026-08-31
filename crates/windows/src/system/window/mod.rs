@@ -1,3 +1,4 @@
+mod canvas;
 mod tray;
 
 use crate::system::registry::to_wide;
@@ -6,20 +7,25 @@ use windows_sys::Win32::Graphics::Dwm::{
     DWMSBT_TRANSIENTWINDOW, DWMWA_SYSTEMBACKDROP_TYPE, DWMWA_USE_IMMERSIVE_DARK_MODE,
     DWMWA_WINDOW_CORNER_PREFERENCE, DWMWCP_ROUND, DwmSetWindowAttribute,
 };
-use windows_sys::Win32::Graphics::Gdi::{GetStockObject, InvalidateRect, WHITE_BRUSH};
+use windows_sys::Win32::Graphics::Gdi::{
+    BeginPaint, BitBlt, CreateCompatibleBitmap, CreateCompatibleDC, DeleteDC, DeleteObject,
+    EndPaint, GetStockObject, InvalidateRect, PAINTSTRUCT, SRCCOPY, SelectObject, SetBkMode,
+    TRANSPARENT, WHITE_BRUSH,
+};
 use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows_sys::Win32::UI::HiDpi::{
     DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2, SetProcessDpiAwarenessContext,
 };
 use windows_sys::Win32::UI::Input::KeyboardAndMouse::{RegisterHotKey, UnregisterHotKey};
 use windows_sys::Win32::UI::WindowsAndMessaging::{
-    CS_HREDRAW, CS_VREDRAW, CreateWindowExW, DispatchMessageW, GetMessageW, GetSystemMetrics,
-    GetWindowRect, HWND_TOPMOST, IDC_ARROW, IsWindowVisible, LoadCursorW, LoadIconW, MSG,
-    RegisterClassExW, SM_CXSCREEN, SM_CYSCREEN, SW_HIDE, SW_SHOW, SWP_NOACTIVATE, SWP_NOMOVE,
-    SetForegroundWindow, SetWindowPos, ShowWindow, TranslateMessage, WNDCLASSEXW, WNDPROC,
-    WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP,
+    CS_HREDRAW, CS_VREDRAW, CreateWindowExW, DispatchMessageW, GetClientRect, GetMessageW,
+    GetSystemMetrics, GetWindowRect, HWND_TOPMOST, IDC_ARROW, IsWindowVisible, LoadCursorW,
+    LoadIconW, MSG, RegisterClassExW, SM_CXSCREEN, SM_CYSCREEN, SW_HIDE, SW_SHOW, SWP_NOACTIVATE,
+    SWP_NOMOVE, SetForegroundWindow, SetWindowPos, ShowWindow, TranslateMessage, WNDCLASSEXW,
+    WNDPROC, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP,
 };
 
+pub use canvas::{Canvas, Color, FontWeight, Rect};
 pub use tray::{TrayCommand, WM_TRAYICON};
 
 pub struct WindowHandle {
@@ -144,6 +150,50 @@ impl WindowHandle {
     pub fn invalidate(&self) {
         unsafe {
             InvalidateRect(self.hwnd, std::ptr::null(), 1);
+        }
+    }
+
+    pub fn paint(&self, draw: impl FnOnce(&Canvas, Rect)) {
+        unsafe {
+            let mut ps = std::mem::zeroed::<PAINTSTRUCT>();
+            let hdc = BeginPaint(self.hwnd, &mut ps);
+
+            let mut client_rect = std::mem::zeroed::<RECT>();
+            let _ = GetClientRect(self.hwnd, &mut client_rect);
+
+            let mem_dc = CreateCompatibleDC(hdc);
+            let mem_bmp = CreateCompatibleBitmap(hdc, client_rect.right, client_rect.bottom);
+            let old_bmp = SelectObject(mem_dc, mem_bmp);
+            SetBkMode(mem_dc, TRANSPARENT as i32);
+
+            let canvas = Canvas::new(mem_dc);
+            draw(
+                &canvas,
+                Rect {
+                    left: client_rect.left,
+                    top: client_rect.top,
+                    right: client_rect.right,
+                    bottom: client_rect.bottom,
+                },
+            );
+
+            BitBlt(
+                hdc,
+                0,
+                0,
+                client_rect.right,
+                client_rect.bottom,
+                mem_dc,
+                0,
+                0,
+                SRCCOPY,
+            );
+
+            SelectObject(mem_dc, old_bmp);
+            DeleteObject(mem_bmp);
+            DeleteDC(mem_dc);
+
+            EndPaint(self.hwnd, &ps);
         }
     }
 

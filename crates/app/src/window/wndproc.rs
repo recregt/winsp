@@ -1,5 +1,4 @@
 use windows_sys::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
-use windows_sys::Win32::Graphics::Gdi::{BeginPaint, EndPaint, PAINTSTRUCT};
 use windows_sys::Win32::UI::Input::KeyboardAndMouse::*;
 use windows_sys::Win32::UI::WindowsAndMessaging::*;
 
@@ -105,12 +104,7 @@ pub(super) unsafe extern "system" fn wnd_proc(
             0
         }
         WM_PAINT => {
-            unsafe {
-                let mut ps = std::mem::zeroed::<PAINTSTRUCT>();
-                let hdc = BeginPaint(hwnd, &mut ps);
-                render_ui(hwnd, hdc);
-                EndPaint(hwnd, &ps);
-            }
+            window.paint(render_ui);
             0
         }
         WM_DESTROY => {
