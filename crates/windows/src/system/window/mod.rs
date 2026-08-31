@@ -11,9 +11,11 @@ use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows_sys::Win32::UI::HiDpi::{
     DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2, SetProcessDpiAwarenessContext,
 };
+use windows_sys::Win32::UI::Input::KeyboardAndMouse::{RegisterHotKey, UnregisterHotKey};
 use windows_sys::Win32::UI::WindowsAndMessaging::{
-    CS_HREDRAW, CS_VREDRAW, CreateWindowExW, IDC_ARROW, LoadCursorW, LoadIconW, RegisterClassExW,
-    WNDCLASSEXW, WNDPROC, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP,
+    CS_HREDRAW, CS_VREDRAW, CreateWindowExW, DispatchMessageW, GetMessageW, IDC_ARROW, LoadCursorW,
+    LoadIconW, MSG, RegisterClassExW, TranslateMessage, WNDCLASSEXW, WNDPROC, WS_EX_TOOLWINDOW,
+    WS_EX_TOPMOST, WS_POPUP,
 };
 
 pub use tray::{TrayCommand, WM_TRAYICON};
@@ -109,6 +111,26 @@ impl WindowHandle {
     /// The raw window handle, for operations not yet wrapped by this type.
     pub fn hwnd(&self) -> HWND {
         self.hwnd
+    }
+
+    /// Registers the given global hotkey and runs the window's message
+    /// loop until it receives `WM_QUIT`, then unregisters the hotkey.
+    ///
+    /// A failure to register the hotkey is not treated as fatal; the
+    /// window still runs and remains reachable through its tray icon.
+    pub fn run_message_loop(&self, hotkey_modifiers: u32, hotkey_vk: u32) {
+        const HOTKEY_ID: i32 = 1;
+        unsafe {
+            let _ = RegisterHotKey(self.hwnd, HOTKEY_ID, hotkey_modifiers, hotkey_vk);
+
+            let mut msg = std::mem::zeroed::<MSG>();
+            while GetMessageW(&mut msg, std::ptr::null_mut(), 0, 0) > 0 {
+                TranslateMessage(&msg);
+                DispatchMessageW(&msg);
+            }
+
+            let _ = UnregisterHotKey(self.hwnd, HOTKEY_ID);
+        }
     }
 
     pub fn enable_dark_mode(&self) {

@@ -9,7 +9,6 @@ use std::ffi::OsStr;
 use std::os::windows::ffi::OsStrExt;
 use std::sync::{Arc, Mutex, OnceLock};
 use windows_sys::Win32::UI::Input::KeyboardAndMouse::*;
-use windows_sys::Win32::UI::WindowsAndMessaging::*;
 
 use crate::state::AppState;
 use geometry::center_window;
@@ -42,22 +41,9 @@ pub fn run_app(state: Arc<Mutex<AppState>>) -> Result<(), String> {
     .map_err(|e| format!("failed to create window: {e}"))?;
     window_handle.enable_dark_mode();
 
-    let hwnd = window_handle.hwnd();
+    center_window(window_handle.hwnd());
+    window_handle.add_tray_icon();
+    window_handle.run_message_loop(MOD_ALT, VK_SPACE as u32);
 
-    unsafe {
-        center_window(hwnd);
-
-        let _ = RegisterHotKey(hwnd, 1, MOD_ALT, VK_SPACE as u32);
-
-        window_handle.add_tray_icon();
-
-        let mut msg = std::mem::zeroed::<MSG>();
-        while GetMessageW(&mut msg, std::ptr::null_mut(), 0, 0) > 0 {
-            TranslateMessage(&msg);
-            DispatchMessageW(&msg);
-        }
-
-        let _ = UnregisterHotKey(hwnd, 1);
-    }
     Ok(())
 }
