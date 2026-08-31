@@ -2,8 +2,8 @@ use crate::system::registry::to_wide;
 use windows_sys::Win32::Foundation::{COLORREF, RECT, SIZE};
 use windows_sys::Win32::Graphics::Gdi::{
     CreateFontW, CreatePen, CreateSolidBrush, DT_LEFT, DT_SINGLELINE, DT_VCENTER, DeleteObject,
-    DrawTextW, FW_NORMAL, FW_SEMIBOLD, FillRect, GetTextExtentPoint32W, HDC, LineTo, MoveToEx,
-    PS_SOLID, SelectObject, SetTextColor,
+    DrawTextW, FW_NORMAL, FW_SEMIBOLD, FillRect, GetTextExtentPoint32W, HDC, HFONT, HGDIOBJ,
+    LineTo, MoveToEx, PS_SOLID, SelectObject, SetTextColor,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -86,9 +86,17 @@ impl Canvas {
         }
     }
 
-    pub fn text_width(&self, text: &str) -> i32 {
+    pub fn draw_text_measured(&self, text: &str, rect: Rect) -> i32 {
         unsafe {
-            let wide = to_wide(text);
+            let mut wide = to_wide(text);
+            let mut gdi_rect: RECT = rect.into();
+            DrawTextW(
+                self.hdc,
+                wide.as_mut_ptr(),
+                wide.len() as i32 - 1,
+                &mut gdi_rect,
+                DT_LEFT | DT_SINGLELINE | DT_VCENTER,
+            );
             let mut size = std::mem::zeroed::<SIZE>();
             GetTextExtentPoint32W(self.hdc, wide.as_ptr(), wide.len() as i32 - 1, &mut size);
             size.cx
@@ -106,10 +114,24 @@ impl Canvas {
         }
     }
 
-    pub fn with_font(&self, name: &str, size: i32, weight: FontWeight, f: impl FnOnce(&Canvas)) {
+    pub fn select_font(&self, font: &Font) -> FontGuard {
+        let old_font = unsafe { SelectObject(self.hdc, font.handle) };
+        FontGuard {
+            hdc: self.hdc,
+            old_font,
+        }
+    }
+}
+
+pub struct Font {
+    handle: HFONT,
+}
+
+impl Font {
+    pub fn new(name: &str, size: i32, weight: FontWeight) -> Self {
         unsafe {
             let font_name = to_wide(name);
-            let font = CreateFontW(
+            let handle = CreateFontW(
                 size,
                 0,
                 0,
@@ -125,10 +147,31 @@ impl Canvas {
                 0,
                 font_name.as_ptr(),
             );
-            let old_font = SelectObject(self.hdc, font);
-            f(self);
-            SelectObject(self.hdc, old_font);
-            DeleteObject(font);
+            Self { handle }
+        }
+    }
+}
+
+impl Drop for Font {
+    fn drop(&mut self) {
+        unsafe {
+            DeleteObject(self.handle);
+        }
+    }
+}
+
+unsafe impl Send for Font {}
+unsafe impl Sync for Font {}
+
+pub struct FontGuard {
+    hdc: HDC,
+    old_font: HGDIOBJ,
+}
+
+impl Drop for FontGuard {
+    fn drop(&mut self) {
+        unsafe {
+            SelectObject(self.hdc, self.old_font);
         }
     }
 }

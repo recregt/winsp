@@ -1,8 +1,25 @@
-use winsp_windows::system::{Canvas, Color, FontWeight, Rect};
+use std::sync::OnceLock;
+
+use winsp_windows::system::{Canvas, Color, Font, FontWeight, Rect};
 
 use super::{APP_STATE, ITEM_ROW_HEIGHT, SEARCH_BAR_HEIGHT, WINDOW_WIDTH};
 
 const HIGHLIGHT_COLOR: Color = Color(0x00FFB74D);
+
+struct Fonts {
+    search: Font,
+    item_title: Font,
+    item_sub: Font,
+}
+
+fn fonts() -> &'static Fonts {
+    static FONTS: OnceLock<Fonts> = OnceLock::new();
+    FONTS.get_or_init(|| Fonts {
+        search: Font::new("Segoe UI Variable Display", 26, FontWeight::Normal),
+        item_title: Font::new("Segoe UI Variable Text", 18, FontWeight::SemiBold),
+        item_sub: Font::new("Segoe UI Variable Text", 14, FontWeight::Normal),
+    })
+}
 
 fn highlight_segments(text: &str, matched_indices: &[usize]) -> Vec<(bool, String)> {
     let char_count = text.chars().count();
@@ -46,8 +63,7 @@ fn draw_highlighted_title(
             right: bounds.right,
             bottom: bounds.bottom,
         };
-        canvas.draw_text(&segment, seg_rect);
-        seg_left += canvas.text_width(&segment);
+        seg_left += canvas.draw_text_measured(&segment, seg_rect);
     }
 }
 
@@ -61,27 +77,23 @@ pub(super) fn render_ui(canvas: &Canvas, client_rect: Rect) {
         return;
     };
 
-    canvas.with_font(
-        "Segoe UI Variable Display",
-        26,
-        FontWeight::Normal,
-        |canvas| {
-            let display_text = if state.query.is_empty() {
-                canvas.set_text_color(Color(0x00888888));
-                "Search apps, settings, math...".to_string()
-            } else {
-                canvas.set_text_color(Color(0x00FFFFFF));
-                state.query.clone()
-            };
-            let search_rect = Rect {
-                left: 24,
-                top: 14,
-                right: WINDOW_WIDTH - 24,
-                bottom: SEARCH_BAR_HEIGHT - 10,
-            };
-            canvas.draw_text(&display_text, search_rect);
-        },
-    );
+    {
+        let _font = canvas.select_font(&fonts().search);
+        let display_text = if state.query.is_empty() {
+            canvas.set_text_color(Color(0x00888888));
+            "Search apps, settings, math...".to_string()
+        } else {
+            canvas.set_text_color(Color(0x00FFFFFF));
+            state.query.clone()
+        };
+        let search_rect = Rect {
+            left: 24,
+            top: 14,
+            right: WINDOW_WIDTH - 24,
+            bottom: SEARCH_BAR_HEIGHT - 10,
+        };
+        canvas.draw_text(&display_text, search_rect);
+    }
 
     let mut current_y = SEARCH_BAR_HEIGHT;
 
@@ -113,37 +125,32 @@ pub(super) fn render_ui(canvas: &Canvas, client_rect: Rect) {
         } else {
             Color(0x00E0E0E0)
         };
-        canvas.with_font(
-            "Segoe UI Variable Text",
-            18,
-            FontWeight::SemiBold,
-            |canvas| {
-                draw_highlighted_title(
-                    canvas,
-                    &result.title,
-                    &result.matched_indices,
-                    Rect {
-                        left: 32,
-                        top: current_y + 4,
-                        right: WINDOW_WIDTH - 32,
-                        bottom: current_y + 26,
-                    },
-                    base_color,
-                );
-            },
-        );
+        {
+            let _font = canvas.select_font(&fonts().item_title);
+            draw_highlighted_title(
+                canvas,
+                &result.title,
+                &result.matched_indices,
+                Rect {
+                    left: 32,
+                    top: current_y + 4,
+                    right: WINDOW_WIDTH - 32,
+                    bottom: current_y + 26,
+                },
+                base_color,
+            );
+        }
 
         if let Some(sub) = &result.subtitle {
-            canvas.with_font("Segoe UI Variable Text", 14, FontWeight::Normal, |canvas| {
-                canvas.set_text_color(Color(0x00999999));
-                let sub_rect = Rect {
-                    left: 32,
-                    top: current_y + 26,
-                    right: WINDOW_WIDTH - 32,
-                    bottom: current_y + ITEM_ROW_HEIGHT - 8,
-                };
-                canvas.draw_text(sub, sub_rect);
-            });
+            let _font = canvas.select_font(&fonts().item_sub);
+            canvas.set_text_color(Color(0x00999999));
+            let sub_rect = Rect {
+                left: 32,
+                top: current_y + 26,
+                right: WINDOW_WIDTH - 32,
+                bottom: current_y + ITEM_ROW_HEIGHT - 8,
+            };
+            canvas.draw_text(sub, sub_rect);
         }
 
         current_y += ITEM_ROW_HEIGHT;
