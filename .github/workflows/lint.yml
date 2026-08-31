@@ -53,4 +53,4 @@ jobs:
         with:
           tool: git-cliff
 
-      - run: python3 scripts/verify-cliff-config.py
+      - run: python3 scripts/verify/cliff-config.py
