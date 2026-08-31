@@ -25,9 +25,19 @@ Follow standard conventional commits: `type(scope): imperative description`
 # Tests
 cargo test --workspace --locked
 
-# Benchmarks
+# Benchmarks (local, criterion output)
 cargo bench -p winsp-core
+
+# Benchmarks (CodSpeed simulation mode, same as CI)
+cargo install cargo-codspeed --locked
+cargo codspeed build -p winsp-core -m simulation
+codspeed run --mode simulation -- cargo codspeed run -p winsp-core
 ```
+
+Benchmarks live in `crates/core/benches/` (`search`, `calculator`, `indexing`). They use
+`codspeed-criterion-compat`, a drop-in replacement for `criterion`: running `cargo bench`
+locally still produces the usual criterion report, while CI runs them through CodSpeed and
+tracks regressions on every pull request.
 
 **Keep PR descriptions brief: 1–2 sentences in `## Summary` and `Fixes #N`.**
 

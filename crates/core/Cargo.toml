@@ -11,11 +11,19 @@ logos = "0.16"
 nucleo-matcher = "0.3"
 
 [dev-dependencies]
-criterion = { version = "0.8.0", features = ["html_reports"] }
+criterion = { version = "5.0.1", package = "codspeed-criterion-compat", features = ["html_reports"] }
 trybuild = "1"
 
 [[bench]]
 name = "search"
+harness = false
+
+[[bench]]
+name = "calculator"
+harness = false
+
+[[bench]]
+name = "indexing"
 harness = false
 
 [[test]]

@@ -1,6 +1,7 @@
 [![CI](https://github.com/recregt/winsp/actions/workflows/ci.yml/badge.svg)](https://github.com/recregt/winsp/actions/workflows/ci.yml)
 [![Latest Release](https://img.shields.io/github/v/release/recregt/winsp)](https://github.com/recregt/winsp/releases/latest)
 [![License: MIT](https://img.shields.io/github/license/recregt/winsp)](LICENSE)
+[![CodSpeed](https://img.shields.io/endpoint?url=https://codspeed.io/badge.json)](https://app.codspeed.io/recregt/winsp?utm_source=badge)
 
 ## What is WinSP?
 
