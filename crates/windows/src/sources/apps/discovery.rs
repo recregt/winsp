@@ -5,7 +5,7 @@ use super::com::ComGuard;
 use super::resolve_shortcut_target;
 use super::start_menu::start_menu_dirs;
 
-pub fn enumerate_installed_apps() -> Vec<AppItem> {
+pub fn list_installed_apps() -> Vec<AppItem> {
     let mut apps = Vec::new();
     let mut seen_ids = std::collections::HashSet::new();
 

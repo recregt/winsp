@@ -7,7 +7,7 @@ cfg_if::cfg_if! {
         mod start_menu;
         mod url;
 
-        pub use discovery::enumerate_installed_apps;
+        pub use discovery::list_installed_apps;
         pub(crate) use start_menu::start_menu_dirs;
 
         fn resolve_shortcut_target(path: &std::path::Path, ext_lower: &str) -> Option<String> {
@@ -20,6 +20,6 @@ cfg_if::cfg_if! {
     } else {
         mod fallback;
 
-        pub use fallback::enumerate_installed_apps;
+        pub use fallback::list_installed_apps;
     }
 }

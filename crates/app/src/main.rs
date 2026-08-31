@@ -23,8 +23,8 @@ fn populate_search_index() -> Engine {
     let mut index = Engine::new();
     let mut all_items: Vec<AppItem> = Vec::new();
 
-    all_items.extend(winsp_windows::apps::enumerate_installed_apps());
-    all_items.extend(winsp_windows::settings::get_windows_settings_items());
+    all_items.extend(winsp_windows::sources::list_installed_apps());
+    all_items.extend(winsp_windows::sources::list_settings());
 
     index.set_items(all_items);
     index
@@ -76,11 +76,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let _reindex_watcher = if let Some(dir) = test_watch_dir() {
         println!("[WinSP] Test mode: watching {} for changes", dir.display());
-        winsp_windows::watcher::watch_dirs(&[dir], reindex_callback).ok()
+        winsp_windows::sources::watcher::for_dirs(&[dir], reindex_callback).ok()
     } else {
         #[cfg(windows)]
         {
-            winsp_windows::watcher::watch_start_menu(reindex_callback).ok()
+            winsp_windows::sources::watcher::for_start_menu(reindex_callback).ok()
         }
         #[cfg(not(windows))]
         {
