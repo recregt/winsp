@@ -9,8 +9,8 @@ use std::ffi::OsStr;
 use std::os::windows::ffi::OsStrExt;
 use std::sync::{Arc, Mutex, OnceLock};
 use windows_sys::Win32::Graphics::Dwm::{
-    DWMSBT_TRANSIENTWINDOW, DWMWA_SYSTEMBACKDROP_TYPE, DWMWA_WINDOW_CORNER_PREFERENCE,
-    DWMWCP_ROUND, DwmSetWindowAttribute,
+    DWMSBT_TRANSIENTWINDOW, DWMWA_SYSTEMBACKDROP_TYPE, DWMWA_USE_IMMERSIVE_DARK_MODE,
+    DWMWA_WINDOW_CORNER_PREFERENCE, DWMWCP_ROUND, DwmSetWindowAttribute,
 };
 use windows_sys::Win32::Graphics::Gdi::{GetStockObject, WHITE_BRUSH};
 use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
@@ -41,6 +41,7 @@ pub fn run_app(state: Arc<Mutex<AppState>>) -> Result<(), String> {
 
     unsafe {
         SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
+        winsp_windows::system::theme::allow_dark_mode_for_app();
 
         let instance = GetModuleHandleW(std::ptr::null());
         let class_name = to_wide(WINDOW_CLASS_NAME);
@@ -82,6 +83,17 @@ pub fn run_app(state: Arc<Mutex<AppState>>) -> Result<(), String> {
             return Err("Failed to create WinSP window".into());
         }
 
+        let window_handle = winsp_windows::system::WindowHandle::new(hwnd);
+        window_handle.enable_dark_mode();
+
+        let dark_mode: i32 = winsp_windows::system::theme::system_uses_dark_mode() as i32;
+        let _ = DwmSetWindowAttribute(
+            hwnd,
+            DWMWA_USE_IMMERSIVE_DARK_MODE as u32,
+            &dark_mode as *const _ as *const _,
+            std::mem::size_of_val(&dark_mode) as u32,
+        );
+
         let backdrop = DWMSBT_TRANSIENTWINDOW;
         let _ = DwmSetWindowAttribute(
             hwnd,
@@ -102,7 +114,7 @@ pub fn run_app(state: Arc<Mutex<AppState>>) -> Result<(), String> {
 
         let _ = RegisterHotKey(hwnd, 1, MOD_ALT, VK_SPACE as u32);
 
-        winsp_windows::system::tray::add(hwnd);
+        window_handle.add_tray_icon();
 
         let mut msg = std::mem::zeroed::<MSG>();
         while GetMessageW(&mut msg, std::ptr::null_mut(), 0, 0) > 0 {

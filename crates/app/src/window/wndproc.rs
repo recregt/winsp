@@ -3,7 +3,7 @@ use windows_sys::Win32::Graphics::Gdi::{BeginPaint, EndPaint, InvalidateRect, PA
 use windows_sys::Win32::UI::Input::KeyboardAndMouse::*;
 use windows_sys::Win32::UI::WindowsAndMessaging::*;
 
-use winsp_windows::system::tray::{ID_AUTOSTART, ID_EXIT, ID_TOGGLE, WM_TRAYICON};
+use winsp_windows::system::{TrayCommand, WM_TRAYICON};
 
 use super::APP_STATE;
 use super::geometry::{resize_window_for_results, toggle_visibility};
@@ -23,23 +23,22 @@ pub(super) unsafe extern "system" fn wnd_proc(
         }
         WM_TRAYICON => {
             if lparam as u32 == WM_RBUTTONUP {
-                unsafe {
-                    winsp_windows::system::tray::show_menu(hwnd);
-                }
+                winsp_windows::system::WindowHandle::new(hwnd).show_tray_menu();
             }
             0
         }
         WM_COMMAND => {
-            match wparam & 0xffff {
-                ID_TOGGLE => toggle_visibility(hwnd),
-                ID_AUTOSTART => {
-                    use winsp_windows::system::autostart;
-                    autostart::set_enabled(!autostart::is_enabled());
+            if let Some(cmd) = TrayCommand::from_wparam(wparam & 0xffff) {
+                match cmd {
+                    TrayCommand::Toggle => toggle_visibility(hwnd),
+                    TrayCommand::Autostart => {
+                        use winsp_windows::system::autostart;
+                        autostart::set_enabled(!autostart::is_enabled());
+                    }
+                    TrayCommand::Exit => unsafe {
+                        DestroyWindow(hwnd);
+                    },
                 }
-                ID_EXIT => unsafe {
-                    DestroyWindow(hwnd);
-                },
-                _ => {}
             }
             0
         }
@@ -120,8 +119,8 @@ pub(super) unsafe extern "system" fn wnd_proc(
             0
         }
         WM_DESTROY => {
+            winsp_windows::system::WindowHandle::new(hwnd).remove_tray_icon();
             unsafe {
-                winsp_windows::system::tray::remove(hwnd);
                 PostQuitMessage(0);
             }
             0

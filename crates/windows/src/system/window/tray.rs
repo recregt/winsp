@@ -1,5 +1,4 @@
-use std::ffi::OsStr;
-use std::os::windows::ffi::OsStrExt;
+use crate::system::registry::to_wide;
 use windows_sys::Win32::Foundation::{HWND, POINT};
 use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows_sys::Win32::UI::Shell::{
@@ -8,15 +7,27 @@ use windows_sys::Win32::UI::Shell::{
 use windows_sys::Win32::UI::WindowsAndMessaging::*;
 
 pub const WM_TRAYICON: u32 = WM_APP + 1;
-pub const ID_TOGGLE: usize = 1001;
-pub const ID_EXIT: usize = 1002;
-pub const ID_AUTOSTART: usize = 1003;
+
+#[repr(usize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TrayCommand {
+    Toggle = 1001,
+    Autostart = 1002,
+    Exit = 1003,
+}
+
+impl TrayCommand {
+    pub fn from_wparam(wparam: usize) -> Option<Self> {
+        match wparam {
+            1001 => Some(Self::Toggle),
+            1002 => Some(Self::Autostart),
+            1003 => Some(Self::Exit),
+            _ => None,
+        }
+    }
+}
 
 const TRAY_ICON_ID: u32 = 1;
-
-fn to_wide(s: &str) -> Vec<u16> {
-    OsStr::new(s).encode_wide().chain(Some(0)).collect()
-}
 
 fn tray_icon_data(hwnd: HWND) -> NOTIFYICONDATAW {
     let mut nid: NOTIFYICONDATAW = unsafe { std::mem::zeroed() };
@@ -26,8 +37,11 @@ fn tray_icon_data(hwnd: HWND) -> NOTIFYICONDATAW {
     nid
 }
 
-#[allow(clippy::missing_safety_doc)]
-pub unsafe fn add(hwnd: HWND) {
+/// Adds an icon to the notification area for the given window.
+pub(super) fn add(hwnd: HWND) {
+    if unsafe { IsWindow(hwnd) } == 0 {
+        return;
+    }
     unsafe {
         let mut nid = tray_icon_data(hwnd);
         nid.uFlags = NIF_ICON | NIF_MESSAGE | NIF_TIP;
@@ -40,34 +54,50 @@ pub unsafe fn add(hwnd: HWND) {
     }
 }
 
-#[allow(clippy::missing_safety_doc)]
-pub unsafe fn remove(hwnd: HWND) {
+/// Removes the notification area icon associated with the given window.
+pub(super) fn remove(hwnd: HWND) {
+    if unsafe { IsWindow(hwnd) } == 0 {
+        return;
+    }
     unsafe {
         let nid = tray_icon_data(hwnd);
         Shell_NotifyIconW(NIM_DELETE, &nid);
     }
 }
 
-#[allow(clippy::missing_safety_doc)]
-pub unsafe fn show_menu(hwnd: HWND) {
+/// Displays the notification area icon's context menu at the cursor.
+pub(super) fn show_menu(hwnd: HWND) {
+    if unsafe { IsWindow(hwnd) } == 0 {
+        return;
+    }
     unsafe {
         let menu = CreatePopupMenu();
         let toggle_label = to_wide("Toggle Search");
         let autostart_label = to_wide("Start with Windows");
         let exit_label = to_wide("Exit");
-        let autostart_flags = if super::autostart::is_enabled() {
+        let autostart_flags = if crate::system::autostart::is_enabled() {
             MF_STRING | MF_CHECKED
         } else {
             MF_STRING | MF_UNCHECKED
         };
-        AppendMenuW(menu, MF_STRING, ID_TOGGLE, toggle_label.as_ptr());
+        AppendMenuW(
+            menu,
+            MF_STRING,
+            TrayCommand::Toggle as usize,
+            toggle_label.as_ptr(),
+        );
         AppendMenuW(
             menu,
             autostart_flags,
-            ID_AUTOSTART,
+            TrayCommand::Autostart as usize,
             autostart_label.as_ptr(),
         );
-        AppendMenuW(menu, MF_STRING, ID_EXIT, exit_label.as_ptr());
+        AppendMenuW(
+            menu,
+            MF_STRING,
+            TrayCommand::Exit as usize,
+            exit_label.as_ptr(),
+        );
 
         let mut cursor = std::mem::zeroed::<POINT>();
         GetCursorPos(&mut cursor);
