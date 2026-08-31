@@ -1,6 +1,6 @@
 use winsp_core::models::{SearchResult, SearchResultKind};
 use winsp_core::search::Engine;
-use winsp_indexer::launcher::launch_target;
+use winsp_windows::launcher::launch_target;
 
 #[derive(Debug)]
 pub struct AppState {
@@ -98,7 +98,7 @@ impl AppState {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use winsp_indexer::populate_search_index;
+    use winsp_windows::populate_search_index;
 
     #[test]
     fn test_app_state_navigation() {

@@ -12,7 +12,7 @@ use state::AppState;
 #[cfg(not(windows))]
 use std::io::{self, Write};
 use std::sync::{Arc, Mutex};
-use winsp_indexer::populate_search_index;
+use winsp_windows::populate_search_index;
 
 #[cfg(windows)]
 #[global_allocator]
@@ -56,13 +56,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     };
 
-    let _reindex_watcher = if let Some(dir) = winsp_indexer::watcher::test_watch_dir() {
+    let _reindex_watcher = if let Some(dir) = winsp_windows::watcher::test_watch_dir() {
         println!("[WinSP] Test mode: watching {} for changes", dir.display());
-        winsp_indexer::watcher::watch_dirs(&[dir], reindex_callback).ok()
+        winsp_windows::watcher::watch_dirs(&[dir], reindex_callback).ok()
     } else {
         #[cfg(windows)]
         {
-            winsp_indexer::watcher::watch_start_menu(reindex_callback).ok()
+            winsp_windows::watcher::watch_start_menu(reindex_callback).ok()
         }
         #[cfg(not(windows))]
         {
