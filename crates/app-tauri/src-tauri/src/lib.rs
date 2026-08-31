@@ -101,6 +101,52 @@ fn toggle_main_window(app: &tauri::AppHandle) {
     }
 }
 
+fn setup_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
+    use tauri::menu::{CheckMenuItemBuilder, MenuBuilder, MenuItemBuilder};
+    use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
+    use winsp_windows::system::autostart;
+
+    let toggle_item = MenuItemBuilder::with_id("toggle", "Toggle Search").build(app)?;
+    let autostart_item = CheckMenuItemBuilder::with_id("autostart", "Start with Windows")
+        .checked(autostart::is_enabled())
+        .build(app)?;
+    let exit_item = MenuItemBuilder::with_id("exit", "Exit").build(app)?;
+    let menu = MenuBuilder::new(app)
+        .item(&toggle_item)
+        .item(&autostart_item)
+        .separator()
+        .item(&exit_item)
+        .build()?;
+
+    let autostart_item_for_event = autostart_item.clone();
+    TrayIconBuilder::new()
+        .icon(app.default_window_icon().cloned().unwrap())
+        .menu(&menu)
+        .on_menu_event(move |app, event| match event.id().as_ref() {
+            "toggle" => toggle_main_window(app),
+            "autostart" => {
+                let enabled = !autostart::is_enabled();
+                autostart::set_enabled(enabled);
+                let _ = autostart_item_for_event.set_checked(enabled);
+            }
+            "exit" => app.exit(0),
+            _ => {}
+        })
+        .on_tray_icon_event(|tray, event| {
+            if let TrayIconEvent::Click {
+                button: MouseButton::Left,
+                button_state: MouseButtonState::Up,
+                ..
+            } = event
+            {
+                toggle_main_window(tray.app_handle());
+            }
+        })
+        .build(app)?;
+
+    Ok(())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let index = populate_search_index();
@@ -111,6 +157,12 @@ pub fn run() {
     };
 
     tauri::Builder::default()
+        .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.show();
+                let _ = window.set_focus();
+            }
+        }))
         .manage(Mutex::new(state))
         .setup(|app| {
             #[cfg(target_os = "windows")]
@@ -134,6 +186,8 @@ pub fn run() {
                         })
                         .build(),
                 )?;
+
+                setup_tray(app.handle())?;
             }
 
             Ok(())
