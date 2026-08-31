@@ -12,6 +12,6 @@ pre-commit:
 pre-push:
   commands:
     clippy:
-      run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      run: cargo clippy --workspace --exclude winsp-app-tauri --all-targets --locked -- -D warnings
     test:
-      run: cargo test --workspace --locked
+      run: cargo test --workspace --exclude winsp-app-tauri --locked

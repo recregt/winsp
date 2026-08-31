@@ -40,13 +40,13 @@ jobs:
         run: cargo fmt --all -- --check
 
       - name: Clippy
-        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+        run: cargo clippy --workspace --exclude winsp-app-tauri --all-targets --locked -- -D warnings
 
       - name: Machete
         run: cargo machete
 
       - name: Test
-        run: cargo test --workspace --locked
+        run: cargo test --workspace --exclude winsp-app-tauri --locked
 
   coverage:
     name: Coverage
@@ -64,7 +64,7 @@ jobs:
         with:
           tool: cargo-tarpaulin
 
-      - run: cargo tarpaulin --workspace --locked --timeout 120
+      - run: cargo tarpaulin --workspace --exclude winsp-app-tauri --locked --timeout 120
 
   windows:
     name: Build and test (windows)

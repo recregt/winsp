@@ -1,0 +1,92 @@
+:root {
+  font-family:
+    "Segoe UI",
+    Inter,
+    Avenir,
+    Helvetica,
+    Arial,
+    sans-serif;
+  font-size: 15px;
+  line-height: 1.4;
+  font-weight: 400;
+
+  color: #e0e0e0;
+  background-color: #1e1e1e;
+
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+}
+
+html,
+body,
+#root {
+  margin: 0;
+  height: 100%;
+  background-color: #1e1e1e;
+  overflow: hidden;
+}
+
+.spotlight {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.search-bar {
+  flex: 0 0 64px;
+  height: 64px;
+  padding: 0 20px;
+  border: none;
+  outline: none;
+  background: transparent;
+  color: #ffffff;
+  font-size: 22px;
+  font-family: inherit;
+}
+
+.search-bar::placeholder {
+  color: #888888;
+}
+
+.result-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  border-top: 1px solid #333333;
+  overflow-y: auto;
+}
+
+.result-item {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  height: 54px;
+  padding: 0 20px;
+  cursor: default;
+  color: #e0e0e0;
+}
+
+.result-item.selected {
+  background-color: #3a3a3a;
+  color: #ffffff;
+}
+
+.result-title {
+  font-size: 15px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.result-title .highlight {
+  color: #4db7ff;
+}
+
+.result-subtitle {
+  font-size: 13px;
+  color: #999999;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
