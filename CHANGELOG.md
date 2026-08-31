@@ -32,7 +32,7 @@ All notable changes to WinSP are documented here. Format follows
 - Lowercase sci notation, tan domain by @recregt in #101
 - Clamp segment rects, add highlight tests by @recregt in #105
 - Remove comments, fix too-many-arguments by @recregt in #106
-- Fixed 10,000-item index, plus a full_session case for the whole typed by @codspeed-hq[bot] in #96
+- Fixed 10,000-item index, plus a full_session case for the whole typed by [@codspeed-hq[bot]](https://github.com/apps/codspeed-hq) in #96
 - Harden lefthook installer robustness by @recregt in #111
 - Avoid tmp file collision on install by @recregt in #111
 
@@ -87,7 +87,7 @@ All notable changes to WinSP are documented here. Format follows
 
 ## [0.1.0] - 2026-08-25
 
-- Update GitHub Actions to v7 by @renovate[bot] in #2
+- Update GitHub Actions to v7 by [@renovate[bot]](https://github.com/apps/renovate) in #2
 - Change lefthook install destination to cargo bin directory by @recregt
 - Adapt to windows-sys 0.61 HWND pointer type changes by @recregt in #6
 - Add minimal pull request template by @recregt in #7
