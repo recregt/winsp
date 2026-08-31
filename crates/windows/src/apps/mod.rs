@@ -1,13 +1,22 @@
 cfg_if::cfg_if! {
     if #[cfg(windows)] {
+        mod builtin;
         mod com;
+        mod discovery;
         mod lnk;
-        mod paths;
-        mod scan;
+        mod start_menu;
         mod url;
 
-        pub use paths::start_menu_dirs;
-        pub use scan::enumerate_installed_apps;
+        pub use discovery::enumerate_installed_apps;
+        pub(crate) use start_menu::start_menu_dirs;
+
+        fn resolve_shortcut_target(path: &std::path::Path, ext_lower: &str) -> Option<String> {
+            match ext_lower {
+                "lnk" => lnk::resolve_lnk_target(path),
+                "url" => url::resolve_url_target(path),
+                _ => None,
+            }
+        }
     } else {
         mod fallback;
 

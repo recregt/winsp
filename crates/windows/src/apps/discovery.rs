@@ -1,9 +1,9 @@
 use winsp_core::models::{AppItem, AppTarget};
 
+use super::builtin::built_in_tools;
 use super::com::ComGuard;
-use super::lnk::resolve_lnk_target;
-use super::paths::start_menu_dirs;
-use super::url::resolve_url_target;
+use super::resolve_shortcut_target;
+use super::start_menu::start_menu_dirs;
 
 pub fn enumerate_installed_apps() -> Vec<AppItem> {
     let mut apps = Vec::new();
@@ -11,35 +11,9 @@ pub fn enumerate_installed_apps() -> Vec<AppItem> {
 
     scan_start_menu(&start_menu_dirs(), &mut apps, &mut seen_ids);
 
-    let default_tools = vec![
-        ("Calculator", "calc.exe", "Microsoft Calculator"),
-        ("Notepad", "notepad.exe", "Fast text editor"),
-        ("Windows Terminal", "wt.exe", "Modern terminal console"),
-        ("Command Prompt", "cmd.exe", "Windows command interpreter"),
-        (
-            "PowerShell",
-            "powershell.exe",
-            "PowerShell scripting environment",
-        ),
-        ("Paint", "mspaint.exe", "Bitmap image editor"),
-        ("Snipping Tool", "snippingtool.exe", "Screen capture tool"),
-        (
-            "Registry Editor",
-            "regedit.exe",
-            "Windows registry management",
-        ),
-        (
-            "Control Panel",
-            "control.exe",
-            "Legacy system control panel",
-        ),
-        ("File Explorer", "explorer.exe", "File management"),
-    ];
-
-    for (name, exe, desc) in default_tools {
-        let id = format!("builtin:{}", exe);
-        if seen_ids.insert(id.clone()) {
-            apps.push(AppItem::new(id, name, AppTarget::Path(exe.into())).with_description(desc));
+    for item in built_in_tools() {
+        if seen_ids.insert(item.id.clone()) {
+            apps.push(item);
         }
     }
 
@@ -96,14 +70,6 @@ fn scan_directory_for_shortcuts(
                 }
             }
         }
-    }
-}
-
-fn resolve_shortcut_target(path: &std::path::Path, ext_lower: &str) -> Option<String> {
-    match ext_lower {
-        "lnk" => resolve_lnk_target(path),
-        "url" => resolve_url_target(path),
-        _ => None,
     }
 }
 

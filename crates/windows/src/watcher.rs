@@ -33,12 +33,6 @@ where
     watch_dirs(&crate::apps::start_menu_dirs(), on_change)
 }
 
-pub fn test_watch_dir() -> Option<std::path::PathBuf> {
-    std::env::var("WINSP_TEST_WATCH_DIR")
-        .ok()
-        .map(std::path::PathBuf::from)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

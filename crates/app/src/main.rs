@@ -12,11 +12,29 @@ use state::AppState;
 #[cfg(not(windows))]
 use std::io::{self, Write};
 use std::sync::{Arc, Mutex};
-use winsp_windows::populate_search_index;
+use winsp_core::models::AppItem;
+use winsp_core::search::Engine;
 
 #[cfg(windows)]
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
+fn populate_search_index() -> Engine {
+    let mut index = Engine::new();
+    let mut all_items: Vec<AppItem> = Vec::new();
+
+    all_items.extend(winsp_windows::apps::enumerate_installed_apps());
+    all_items.extend(winsp_windows::settings::get_windows_settings_items());
+
+    index.set_items(all_items);
+    index
+}
+
+fn test_watch_dir() -> Option<std::path::PathBuf> {
+    std::env::var("WINSP_TEST_WATCH_DIR")
+        .ok()
+        .map(std::path::PathBuf::from)
+}
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("====================================================");
@@ -56,7 +74,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     };
 
-    let _reindex_watcher = if let Some(dir) = winsp_windows::watcher::test_watch_dir() {
+    let _reindex_watcher = if let Some(dir) = test_watch_dir() {
         println!("[WinSP] Test mode: watching {} for changes", dir.display());
         winsp_windows::watcher::watch_dirs(&[dir], reindex_callback).ok()
     } else {
