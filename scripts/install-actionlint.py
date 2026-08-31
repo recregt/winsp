@@ -1,20 +1,66 @@
 #!/usr/bin/env python3
 import hashlib
+import os
+import platform
+import shutil
 import stat
 import subprocess
 import sys
+import tarfile
 import tempfile
 import urllib.error
 import urllib.request
+import zipfile
 from pathlib import Path
 
 VERSION = "1.7.12"
 TIMEOUT_SECONDS = 30
 
+PLATFORMS = {
+    "Linux": "linux",
+    "Darwin": "darwin",
+    "Windows": "windows",
+}
+
+ARCHES = {
+    "x86_64": "amd64",
+    "amd64": "amd64",
+    "AMD64": "amd64",
+    "arm64": "arm64",
+    "aarch64": "arm64",
+}
+
 
 def fail(message: str) -> None:
     print(message, file=sys.stderr)
     sys.exit(1)
+
+
+def installed_version() -> str | None:
+    actionlint = shutil.which("actionlint")
+    if not actionlint:
+        return None
+    out = subprocess.run(
+        [actionlint, "-version"], capture_output=True, text=True, encoding="utf-8", check=False
+    )
+    lines = out.stdout.splitlines()
+    return lines[0].strip() if lines else None
+
+
+def target_platform() -> str:
+    system = platform.system()
+    plat = PLATFORMS.get(system)
+    if not plat:
+        fail(f"unsupported OS: {system}")
+    return plat
+
+
+def target_arch() -> str:
+    machine = platform.machine()
+    arch = ARCHES.get(machine)
+    if not arch:
+        fail(f"unsupported arch: {machine}")
+    return arch
 
 
 def download(url: str, dest: Path) -> None:
@@ -45,8 +91,29 @@ def sha256_of(path: Path) -> str:
     return hasher.hexdigest()
 
 
+def extract_binary(archive_path: Path, member: str, dest_dir: Path) -> Path:
+    if archive_path.suffix == ".zip":
+        with zipfile.ZipFile(archive_path) as zf:
+            zf.extract(member, dest_dir)
+    else:
+        with tarfile.open(archive_path) as tf:
+            tf.extract(member, dest_dir, filter="data")
+    return dest_dir / member
+
+
 def main() -> None:
-    asset = f"actionlint_{VERSION}_linux_amd64.tar.gz"
+    bin_dir = Path.home() / ".cargo" / "bin"
+
+    if installed_version() == VERSION:
+        print(f"actionlint {VERSION} already installed", flush=True)
+        return
+
+    plat = target_platform()
+    arch = target_arch()
+    ext = "zip" if plat == "windows" else "tar.gz"
+    asset = f"actionlint_{VERSION}_{plat}_{arch}.{ext}"
+    member = "actionlint.exe" if plat == "windows" else "actionlint"
+
     base_url = f"https://github.com/rhysd/actionlint/releases/download/v{VERSION}"
 
     with tempfile.TemporaryDirectory() as tmp:
@@ -62,11 +129,22 @@ def main() -> None:
         if actual != expected:
             fail(f"checksum mismatch for {asset}")
 
-        subprocess.run(["tar", "xzf", str(asset_path), "actionlint"], check=True)
+        extracted = extract_binary(asset_path, member, tmp_dir)
 
-    binary = Path("actionlint")
-    binary.chmod(binary.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
-    print(f"installed actionlint {VERSION}")
+        bin_dir.mkdir(parents=True, exist_ok=True)
+        install_path = bin_dir / member
+        fd, tmp_name = tempfile.mkstemp(dir=bin_dir, prefix=f"{member}.", suffix=".tmp")
+        tmp_install = Path(tmp_name)
+        try:
+            os.close(fd)
+            shutil.copy(extracted, tmp_install)
+            tmp_install.chmod(tmp_install.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+            tmp_install.replace(install_path)
+        except BaseException:
+            tmp_install.unlink(missing_ok=True)
+            raise
+
+    print(f"installed actionlint {VERSION} to {bin_dir}")
 
 
 if __name__ == "__main__":

@@ -27,7 +27,7 @@ jobs:
         run: python3 scripts/install-actionlint.py
 
       - name: Check workflow files
-        run: ./actionlint -color
+        run: '"$HOME/.cargo/bin/actionlint" -color'
 
   ruff:
     name: ruff
