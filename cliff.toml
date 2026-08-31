@@ -14,7 +14,7 @@ body = """
 {% for group, commits in commits | group_by(attribute="group") %}
 ### {{ group | striptags | trim | upper_first }}
 {% for commit in commits -%}
-- {% if commit.breaking %}**BREAKING:** {% endif %}{{ commit.message | upper_first }}
+- {% if commit.breaking %}**BREAKING:** {% endif %}{{ commit.message | upper_first }}{% if commit.remote.pr_number %} (#{{ commit.remote.pr_number }}){% endif %}
 {% endfor %}
 {%- endfor %}
 """
@@ -35,6 +35,7 @@ commit_preprocessors = [
   { pattern = '(?s)^([^@][^\n]*).*$', replace = "${1}" },
   { pattern = '^@', replace = "" },
   { pattern = '(?m)^\* ', replace = "" },
+  { pattern = '(?m) \(#\d+\)$', replace = "" },
 ]
 commit_parsers = [
   { message = "^feat", group = "<!-- 0 -->Added" },

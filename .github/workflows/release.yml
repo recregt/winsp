@@ -74,6 +74,9 @@ jobs:
           tool: git-cliff
 
       - name: Generate release notes
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_REPO: ${{ github.repository }}
         run: git-cliff --config cliff.toml --latest --strip header -o target/release/release-notes.md
 
       - name: Create GitHub release
