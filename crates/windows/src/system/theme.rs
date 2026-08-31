@@ -7,13 +7,11 @@ use windows_sys::Win32::UI::WindowsAndMessaging::IsWindow;
 
 /// Reports whether Windows is currently configured to use dark mode.
 pub fn system_uses_dark_mode() -> bool {
-    unsafe {
-        read_dword(
-            HKEY_CURRENT_USER,
-            r"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize",
-            "AppsUseLightTheme",
-        )
-    }
+    read_dword(
+        HKEY_CURRENT_USER,
+        r"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize",
+        "AppsUseLightTheme",
+    )
     .is_some_and(|v| v == 0)
 }
 

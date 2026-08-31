@@ -8,11 +8,7 @@ pub(super) fn to_wide(s: &str) -> Vec<u16> {
 }
 
 /// Reads a 32 bit integer value from the Windows registry.
-///
-/// # Safety
-///
-/// `hive` must be a valid, currently open registry key handle.
-pub unsafe fn read_dword(hive: HKEY, subkey: &str, value: &str) -> Option<u32> {
+pub(crate) fn read_dword(hive: HKEY, subkey: &str, value: &str) -> Option<u32> {
     let subkey = to_wide(subkey);
     let value = to_wide(value);
     let mut data: u32 = 0;
