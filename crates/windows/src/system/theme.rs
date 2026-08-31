@@ -5,7 +5,6 @@ use windows_sys::Win32::System::LibraryLoader::{GetProcAddress, LoadLibraryA};
 use windows_sys::Win32::System::Registry::HKEY_CURRENT_USER;
 use windows_sys::Win32::UI::WindowsAndMessaging::IsWindow;
 
-/// Reports whether Windows is currently configured to use dark mode.
 pub(crate) fn system_uses_dark_mode() -> bool {
     read_dword(
         HKEY_CURRENT_USER,
@@ -29,7 +28,6 @@ fn proc_by_ordinal(ordinal: u16) -> FARPROC {
     unsafe { GetProcAddress(module, ordinal as usize as *const u8) }
 }
 
-/// Opts the current process into dark mode aware control rendering.
 pub fn allow_dark_mode_for_app() {
     type AllowDarkModeForApp = unsafe extern "system" fn(bool) -> bool;
     if let Some(f) = proc_by_ordinal(135) {
@@ -40,7 +38,6 @@ pub fn allow_dark_mode_for_app() {
     }
 }
 
-/// Enables dark mode rendering for controls owned by the given window.
 pub(crate) fn allow_dark_mode_for_window(hwnd: HWND) {
     if unsafe { IsWindow(hwnd) } == 0 {
         return;

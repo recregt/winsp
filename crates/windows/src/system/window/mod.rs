@@ -1,27 +1,27 @@
 mod tray;
 
 use crate::system::registry::to_wide;
-use windows_sys::Win32::Foundation::HWND;
+use windows_sys::Win32::Foundation::{HWND, RECT};
 use windows_sys::Win32::Graphics::Dwm::{
     DWMSBT_TRANSIENTWINDOW, DWMWA_SYSTEMBACKDROP_TYPE, DWMWA_USE_IMMERSIVE_DARK_MODE,
     DWMWA_WINDOW_CORNER_PREFERENCE, DWMWCP_ROUND, DwmSetWindowAttribute,
 };
-use windows_sys::Win32::Graphics::Gdi::{GetStockObject, WHITE_BRUSH};
+use windows_sys::Win32::Graphics::Gdi::{GetStockObject, InvalidateRect, WHITE_BRUSH};
 use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows_sys::Win32::UI::HiDpi::{
     DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2, SetProcessDpiAwarenessContext,
 };
 use windows_sys::Win32::UI::Input::KeyboardAndMouse::{RegisterHotKey, UnregisterHotKey};
 use windows_sys::Win32::UI::WindowsAndMessaging::{
-    CS_HREDRAW, CS_VREDRAW, CreateWindowExW, DispatchMessageW, GetMessageW, IDC_ARROW, LoadCursorW,
-    LoadIconW, MSG, RegisterClassExW, TranslateMessage, WNDCLASSEXW, WNDPROC, WS_EX_TOOLWINDOW,
-    WS_EX_TOPMOST, WS_POPUP,
+    CS_HREDRAW, CS_VREDRAW, CreateWindowExW, DispatchMessageW, GetMessageW, GetSystemMetrics,
+    GetWindowRect, HWND_TOPMOST, IDC_ARROW, IsWindowVisible, LoadCursorW, LoadIconW, MSG,
+    RegisterClassExW, SM_CXSCREEN, SM_CYSCREEN, SW_HIDE, SW_SHOW, SWP_NOACTIVATE, SWP_NOMOVE,
+    SetForegroundWindow, SetWindowPos, ShowWindow, TranslateMessage, WNDCLASSEXW, WNDPROC,
+    WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP,
 };
 
 pub use tray::{TrayCommand, WM_TRAYICON};
 
-/// A handle to the application's window, used to perform window-scoped
-/// system integration such as dark mode theming and the tray icon.
 pub struct WindowHandle {
     hwnd: HWND,
 }
@@ -31,9 +31,6 @@ impl WindowHandle {
         Self { hwnd }
     }
 
-    /// Registers the window class (if needed) and creates the window,
-    /// applying WinSP's standard appearance (transient Mica backdrop,
-    /// rounded corners).
     pub fn create(
         class_name: &str,
         title: &str,
@@ -63,7 +60,6 @@ impl WindowHandle {
                 hIconSm: LoadIconW(instance, 1u16 as _),
             };
 
-            // A failed class registration surfaces via CreateWindowExW failing below.
             RegisterClassExW(&wnd_class);
 
             let hwnd = CreateWindowExW(
@@ -87,7 +83,6 @@ impl WindowHandle {
 
             let handle = Self { hwnd };
 
-            // Cosmetic only; older Windows builds may not support these attributes.
             let backdrop = DWMSBT_TRANSIENTWINDOW;
             let _ = DwmSetWindowAttribute(
                 hwnd,
@@ -108,20 +103,16 @@ impl WindowHandle {
         }
     }
 
-    /// The raw window handle, for operations not yet wrapped by this type.
     pub fn hwnd(&self) -> HWND {
         self.hwnd
     }
 
-    /// Registers the given global hotkey and runs the window's message
-    /// loop until it receives `WM_QUIT`, then unregisters the hotkey.
-    ///
-    /// A failure to register the hotkey is not treated as fatal; the
-    /// window still runs and remains reachable through its tray icon.
     pub fn run_message_loop(&self, hotkey_modifiers: u32, hotkey_vk: u32) {
         const HOTKEY_ID: i32 = 1;
         unsafe {
-            let _ = RegisterHotKey(self.hwnd, HOTKEY_ID, hotkey_modifiers, hotkey_vk);
+            if RegisterHotKey(self.hwnd, HOTKEY_ID, hotkey_modifiers, hotkey_vk) == 0 {
+                notify_hotkey_registration_failed(std::io::Error::last_os_error());
+            }
 
             let mut msg = std::mem::zeroed::<MSG>();
             while GetMessageW(&mut msg, std::ptr::null_mut(), 0, 0) > 0 {
@@ -130,6 +121,57 @@ impl WindowHandle {
             }
 
             let _ = UnregisterHotKey(self.hwnd, HOTKEY_ID);
+        }
+    }
+
+    pub fn is_visible(&self) -> bool {
+        unsafe { IsWindowVisible(self.hwnd) != 0 }
+    }
+
+    pub fn show(&self) {
+        unsafe {
+            ShowWindow(self.hwnd, SW_SHOW);
+            SetForegroundWindow(self.hwnd);
+        }
+    }
+
+    pub fn hide(&self) {
+        unsafe {
+            ShowWindow(self.hwnd, SW_HIDE);
+        }
+    }
+
+    pub fn invalidate(&self) {
+        unsafe {
+            InvalidateRect(self.hwnd, std::ptr::null(), 1);
+        }
+    }
+
+    pub fn center(&self, width: i32, height: i32) {
+        unsafe {
+            let screen_width = GetSystemMetrics(SM_CXSCREEN);
+            let screen_height = GetSystemMetrics(SM_CYSCREEN);
+
+            let x = (screen_width - width) / 2;
+            let y = screen_height / 4;
+
+            SetWindowPos(self.hwnd, HWND_TOPMOST, x, y, width, height, SWP_NOACTIVATE);
+        }
+    }
+
+    pub fn resize(&self, width: i32, height: i32) {
+        unsafe {
+            let mut rect = std::mem::zeroed::<RECT>();
+            let _ = GetWindowRect(self.hwnd, &mut rect);
+            SetWindowPos(
+                self.hwnd,
+                HWND_TOPMOST,
+                rect.left,
+                rect.top,
+                width,
+                height,
+                SWP_NOMOVE | SWP_NOACTIVATE,
+            );
         }
     }
 
@@ -158,4 +200,8 @@ impl WindowHandle {
     pub fn show_tray_menu(&self) {
         tray::show_menu(self.hwnd);
     }
+}
+
+fn notify_hotkey_registration_failed(error: std::io::Error) {
+    eprintln!("failed to register global hotkey: {error}");
 }

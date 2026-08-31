@@ -27,7 +27,6 @@ fn tray_icon_data(hwnd: HWND) -> NOTIFYICONDATAW {
     nid
 }
 
-/// Adds an icon to the notification area for the given window.
 pub(super) fn add(hwnd: HWND) {
     if unsafe { IsWindow(hwnd) } == 0 {
         return;
@@ -44,7 +43,6 @@ pub(super) fn add(hwnd: HWND) {
     }
 }
 
-/// Removes the notification area icon associated with the given window.
 pub(super) fn remove(hwnd: HWND) {
     if unsafe { IsWindow(hwnd) } == 0 {
         return;
@@ -55,7 +53,6 @@ pub(super) fn remove(hwnd: HWND) {
     }
 }
 
-/// Displays the notification area icon's context menu at the cursor.
 pub(super) fn show_menu(hwnd: HWND) {
     if unsafe { IsWindow(hwnd) } == 0 {
         return;

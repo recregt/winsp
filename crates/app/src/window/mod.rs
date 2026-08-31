@@ -11,7 +11,6 @@ use std::sync::{Arc, Mutex, OnceLock};
 use windows_sys::Win32::UI::Input::KeyboardAndMouse::*;
 
 use crate::state::AppState;
-use geometry::center_window;
 use wndproc::wnd_proc;
 
 pub const WINDOW_WIDTH: i32 = 680;
@@ -41,7 +40,7 @@ pub fn run_app(state: Arc<Mutex<AppState>>) -> Result<(), String> {
     .map_err(|e| format!("failed to create window: {e}"))?;
     window_handle.enable_dark_mode();
 
-    center_window(window_handle.hwnd());
+    window_handle.center(WINDOW_WIDTH, SEARCH_BAR_HEIGHT);
     window_handle.add_tray_icon();
     window_handle.run_message_loop(MOD_ALT, VK_SPACE as u32);
 

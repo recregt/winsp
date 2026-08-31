@@ -7,7 +7,6 @@ pub(super) fn to_wide(s: &str) -> Vec<u16> {
     OsStr::new(s).encode_wide().chain(Some(0)).collect()
 }
 
-/// Reads a 32 bit integer value from the Windows registry.
 pub(crate) fn read_dword(hive: HKEY, subkey: &str, value: &str) -> Option<u32> {
     let subkey = to_wide(subkey);
     let value = to_wide(value);
