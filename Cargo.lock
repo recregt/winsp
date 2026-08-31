@@ -1360,7 +1360,7 @@ dependencies = [
 
 [[package]]
 name = "winsp-app"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "embed-resource",
  "mimalloc",
@@ -1371,7 +1371,7 @@ dependencies = [
 
 [[package]]
 name = "winsp-core"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "codspeed-criterion-compat",
  "logos",
@@ -1381,7 +1381,7 @@ dependencies = [
 
 [[package]]
 name = "winsp-windows"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "cfg-if",
  "notify-debouncer-mini",

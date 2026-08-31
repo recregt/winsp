@@ -3,6 +3,30 @@
 All notable changes to WinSP are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [0.2.1] - 2026-08-31
+
+### Added
+- Shunting-yard math engine with logos (#94)
+- Highlight matched characters in results (#105)
+
+### Fixed
+- Make GitHub release creation idempotent (#79)
+- Raise msstore publish upload timeout from the 100s default to 600s (#81)
+- Use --uploadTimeout, single dash isn't a valid long option (#82)
+- Don't show window on startup (#87)
+- Decode UTF-16 surrogate pairs in WM_CHAR (#88)
+- Dedupe start menu apps by name (#90)
+- Math correctness fixes (#101)
+- Harden lefthook installer robustness
+- Avoid tmp file collision on install
+
+### Changed
+- Extract msstore auth/publish composite actions (#83)
+- Nucleo matching, Arc<str> results, fat LTO (#93)
+- Qualify public API paths (#95)
+- Harden windows crate public API (#107)
+- Move OS integration into windows crate (#108)
+
 ## [0.2.0] - 2026-08-29
 
 ### Added
