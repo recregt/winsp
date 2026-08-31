@@ -5,7 +5,7 @@
 Install the git hooks (managed via `lefthook`):
 
 ```bash
-scripts/install-lefthook.sh
+python3 scripts/install-lefthook.py
 ```
 
 This enforces `cargo fmt` and commit message linting on commit, and `cargo test`/`clippy` before push.
