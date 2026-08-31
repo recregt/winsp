@@ -14,14 +14,18 @@ body = """
 {% for group, commits in commits | group_by(attribute="group") %}
 ### {{ group | striptags | trim | upper_first }}
 {% for commit in commits -%}
-- {% if commit.breaking %}**BREAKING:** {% endif %}{{ commit.message | upper_first }}
+- {% if commit.breaking %}**BREAKING:** {% endif %}{{ commit.message | upper_first }}{% if commit.remote.pr_number %} by {% if commit.remote.username is ending_with("[bot]") %}[@{{ commit.remote.username }}](https://github.com/apps/{{ commit.remote.username | replace(from="[bot]", to="") }}){% else %}@{{ commit.remote.username }}{% endif %} in #{{ commit.remote.pr_number }}{% endif %}
 {% endfor %}
 {%- endfor %}
+{% if previous and previous.version and version %}
+**Full Changelog**: https://github.com/recregt/winsp/compare/{{ previous.version }}...{{ version }}
+{% endif %}
 """
 trim = true
 footer = ""
 
 [git]
+ignore_tags = "^nightly$"
 conventional_commits = true
 filter_unconventional = true
 require_conventional = false
@@ -35,6 +39,7 @@ commit_preprocessors = [
   { pattern = '(?s)^([^@][^\n]*).*$', replace = "${1}" },
   { pattern = '^@', replace = "" },
   { pattern = '(?m)^\* ', replace = "" },
+  { pattern = '(?m) \(#\d+\)$', replace = "" },
 ]
 commit_parsers = [
   { message = "^feat", group = "<!-- 0 -->Added" },
