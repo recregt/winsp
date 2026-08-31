@@ -3,9 +3,9 @@ name: Lint
 on:
   push:
     branches: [main]
-    paths: [".github/workflows/**", ".github/actions/**", "scripts/**"]
+    paths: [".github/workflows/**", ".github/actions/**", "scripts/**", "cliff.toml"]
   pull_request:
-    paths: [".github/workflows/**", ".github/actions/**", "scripts/**"]
+    paths: [".github/workflows/**", ".github/actions/**", "scripts/**", "cliff.toml"]
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -45,3 +45,17 @@ jobs:
         run: curl -LsSf https://astral.sh/ruff/0.16.5/install.sh | sh
 
       - run: ruff check scripts/
+
+  changelog-config:
+    name: changelog config
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: taiki-e/install-action@1ed6d7be6168f6c9046541087ff549b6bc581fdf # v2
+        with:
+          tool: git-cliff
+
+      - run: python3 scripts/verify-cliff-config.py
