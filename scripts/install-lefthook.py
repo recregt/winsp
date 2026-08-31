@@ -51,7 +51,7 @@ def installed_version() -> str | None:
     out = subprocess.run(
         [lefthook, "version"], capture_output=True, text=True, encoding="utf-8", check=False
     )
-    match = re.search(r"\d+\.\d+\.\d+", out.stdout.splitlines()[0] if out.stdout else "")
+    match = re.search(r"\d+\.\d+\.\d+", out.stdout + out.stderr)
     return match.group(0) if match else None
 
 
@@ -110,15 +110,20 @@ def main() -> None:
         download(f"{base_url}/lefthook_checksums.txt", checksums_path)
 
         expected = checksum_for(checksums_path, asset)
-        actual = hashlib.sha256(asset_path.read_bytes()).hexdigest()
-        if actual != expected:
+        hasher = hashlib.sha256()
+        with asset_path.open("rb") as f:
+            for chunk in iter(lambda: f.read(1024 * 1024), b""):
+                hasher.update(chunk)
+        if hasher.hexdigest() != expected:
             fail(f"checksum mismatch for {asset}")
 
         bin_dir.mkdir(parents=True, exist_ok=True)
         install_name = "lefthook.exe" if plat == "Windows" else "lefthook"
         install_path = bin_dir / install_name
-        shutil.copy(asset_path, install_path)
-        install_path.chmod(install_path.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+        tmp_install = install_path.with_suffix(install_path.suffix + ".tmp")
+        shutil.copy(asset_path, tmp_install)
+        tmp_install.chmod(tmp_install.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+        tmp_install.replace(install_path)
 
     path_dirs = os.environ.get("PATH", "").split(os.pathsep)
     if str(bin_dir) not in path_dirs:
