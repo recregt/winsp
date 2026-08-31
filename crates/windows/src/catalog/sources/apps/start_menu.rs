@@ -1,4 +1,4 @@
-pub fn start_menu_dirs() -> Vec<std::path::PathBuf> {
+pub(crate) fn start_menu_dirs() -> Vec<std::path::PathBuf> {
     let mut dirs = Vec::new();
 
     if let Ok(app_data) = std::env::var("APPDATA") {

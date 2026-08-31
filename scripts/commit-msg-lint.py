@@ -168,7 +168,7 @@ def main() -> None:
             "  scope must match a file or folder name exactly, as it appears in the repo\n"
             f"  type:  {' '.join(TYPES)}\n"
             f"  scope: {' '.join(scopes)}\n"
-            "  example: fix(indexer): handle null pointer dereference in shell enumeration",
+            "  example: fix(windows): handle null pointer dereference in shell enumeration",
         )
 
     commit_type = match.group("type")

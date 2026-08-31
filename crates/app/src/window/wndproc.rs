@@ -3,13 +3,12 @@ use windows_sys::Win32::Graphics::Gdi::{BeginPaint, EndPaint, InvalidateRect, PA
 use windows_sys::Win32::UI::Input::KeyboardAndMouse::*;
 use windows_sys::Win32::UI::WindowsAndMessaging::*;
 
+use winsp_windows::system::tray::{ID_AUTOSTART, ID_EXIT, ID_TOGGLE, WM_TRAYICON};
+
 use super::APP_STATE;
 use super::geometry::{resize_window_for_results, toggle_visibility};
 use super::input::{PENDING_HIGH_SURROGATE, decode_utf16_unit};
 use super::render::render_ui;
-use super::tray::{
-    ID_TRAY_AUTOSTART, ID_TRAY_EXIT, ID_TRAY_TOGGLE, WM_TRAYICON, remove_tray_icon, show_tray_menu,
-};
 
 pub(super) unsafe extern "system" fn wnd_proc(
     hwnd: HWND,
@@ -24,17 +23,20 @@ pub(super) unsafe extern "system" fn wnd_proc(
         }
         WM_TRAYICON => {
             if lparam as u32 == WM_RBUTTONUP {
-                show_tray_menu(hwnd);
+                unsafe {
+                    winsp_windows::system::tray::show_menu(hwnd);
+                }
             }
             0
         }
         WM_COMMAND => {
             match wparam & 0xffff {
-                ID_TRAY_TOGGLE => toggle_visibility(hwnd),
-                ID_TRAY_AUTOSTART => {
-                    crate::autostart::set_enabled(!crate::autostart::is_enabled());
+                ID_TOGGLE => toggle_visibility(hwnd),
+                ID_AUTOSTART => {
+                    use winsp_windows::system::autostart;
+                    autostart::set_enabled(!autostart::is_enabled());
                 }
-                ID_TRAY_EXIT => unsafe {
+                ID_EXIT => unsafe {
                     DestroyWindow(hwnd);
                 },
                 _ => {}
@@ -118,8 +120,8 @@ pub(super) unsafe extern "system" fn wnd_proc(
             0
         }
         WM_DESTROY => {
-            remove_tray_icon(hwnd);
             unsafe {
+                winsp_windows::system::tray::remove(hwnd);
                 PostQuitMessage(0);
             }
             0
