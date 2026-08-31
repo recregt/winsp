@@ -1,10 +1,14 @@
 use std::sync::OnceLock;
 
-use winsp_windows::system::{Canvas, Color, Font, FontWeight, Rect};
+use winsp_windows::system::{Canvas, Color, Font, FontWeight, Rect, register_embedded_font};
 
 use super::{APP_STATE, ITEM_ROW_HEIGHT, SEARCH_BAR_HEIGHT, WINDOW_WIDTH};
 
 const HIGHLIGHT_COLOR: Color = Color(0x00FFB74D);
+
+static INTER_REGULAR: &[u8] = include_bytes!("../../assets/fonts/Inter-Regular.ttf");
+static INTER_SEMIBOLD: &[u8] = include_bytes!("../../assets/fonts/Inter-SemiBold.ttf");
+static INTER_DISPLAY_REGULAR: &[u8] = include_bytes!("../../assets/fonts/InterDisplay-Regular.ttf");
 
 struct Fonts {
     search: Font,
@@ -14,10 +18,16 @@ struct Fonts {
 
 fn fonts() -> &'static Fonts {
     static FONTS: OnceLock<Fonts> = OnceLock::new();
-    FONTS.get_or_init(|| Fonts {
-        search: Font::new("Segoe UI Variable Display", 26, FontWeight::Normal),
-        item_title: Font::new("Segoe UI Variable Text", 18, FontWeight::SemiBold),
-        item_sub: Font::new("Segoe UI Variable Text", 14, FontWeight::Normal),
+    FONTS.get_or_init(|| {
+        register_embedded_font(INTER_REGULAR);
+        register_embedded_font(INTER_SEMIBOLD);
+        register_embedded_font(INTER_DISPLAY_REGULAR);
+
+        Fonts {
+            search: Font::new("Inter Display", 26, FontWeight::Normal),
+            item_title: Font::new("Inter SemiBold", 18, FontWeight::Normal),
+            item_sub: Font::new("Inter", 14, FontWeight::Normal),
+        }
     })
 }
 

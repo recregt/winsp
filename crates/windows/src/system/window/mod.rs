@@ -25,7 +25,7 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{
     WNDPROC, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP,
 };
 
-pub use canvas::{Canvas, Color, Font, FontGuard, FontWeight, Rect};
+pub use canvas::{Canvas, Color, Font, FontGuard, FontWeight, Rect, register_embedded_font};
 pub use tray::{TrayCommand, WM_TRAYICON};
 
 pub struct WindowHandle {

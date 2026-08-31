@@ -6,4 +6,5 @@ mod window;
 
 pub use window::{
     Canvas, Color, Font, FontGuard, FontWeight, Rect, TrayCommand, WM_TRAYICON, WindowHandle,
+    register_embedded_font,
 };

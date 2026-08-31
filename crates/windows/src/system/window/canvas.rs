@@ -1,9 +1,10 @@
 use crate::system::registry::to_wide;
 use windows_sys::Win32::Foundation::{COLORREF, RECT, SIZE};
 use windows_sys::Win32::Graphics::Gdi::{
-    CreateFontW, CreatePen, CreateSolidBrush, DT_LEFT, DT_SINGLELINE, DT_VCENTER, DeleteObject,
-    DrawTextW, FW_NORMAL, FW_SEMIBOLD, FillRect, GetTextExtentPoint32W, HDC, HFONT, HGDIOBJ,
-    LineTo, MoveToEx, PS_SOLID, SelectObject, SetTextColor,
+    AddFontMemResourceEx, CreateFontW, CreatePen, CreateSolidBrush, DEFAULT_GUI_FONT, DT_LEFT,
+    DT_SINGLELINE, DT_VCENTER, DeleteObject, DrawTextW, FW_NORMAL, FW_SEMIBOLD, FillRect,
+    GetStockObject, GetTextExtentPoint32W, HDC, HFONT, HGDIOBJ, LineTo, MoveToEx, PS_SOLID,
+    SelectObject, SetTextColor,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -147,9 +148,27 @@ impl Font {
                 0,
                 font_name.as_ptr(),
             );
+            let handle = if handle.is_null() {
+                GetStockObject(DEFAULT_GUI_FONT) as HFONT
+            } else {
+                handle
+            };
             Self { handle }
         }
     }
+}
+
+pub fn register_embedded_font(data: &'static [u8]) -> bool {
+    let mut num_fonts: u32 = 0;
+    let result = unsafe {
+        AddFontMemResourceEx(
+            data.as_ptr() as *const _,
+            data.len() as u32,
+            std::ptr::null(),
+            &mut num_fonts as *mut u32 as *const u32,
+        )
+    };
+    !result.is_null()
 }
 
 impl Drop for Font {
