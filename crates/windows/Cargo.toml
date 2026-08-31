@@ -28,7 +28,6 @@ windows-sys = { version = "0.61", features = [
 ] }
 windows = { version = "0.62", features = [
     "ApplicationModel",
-    "Foundation",
     "Win32_System_Com",
     "Win32_System_Environment",
     "Win32_UI_Shell",
