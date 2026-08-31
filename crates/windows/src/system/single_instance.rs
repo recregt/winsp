@@ -1,14 +1,9 @@
-use std::ffi::OsStr;
-use std::os::windows::ffi::OsStrExt;
+use super::registry::to_wide;
 use windows_sys::Win32::Foundation::{CloseHandle, ERROR_ALREADY_EXISTS, HANDLE};
 use windows_sys::Win32::System::Threading::CreateMutexW;
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     FindWindowW, SW_SHOW, SetForegroundWindow, ShowWindow,
 };
-
-fn to_wide(s: &str) -> Vec<u16> {
-    OsStr::new(s).encode_wide().chain(Some(0)).collect()
-}
 
 pub struct InstanceGuard(HANDLE);
 
