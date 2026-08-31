@@ -31,7 +31,9 @@ sort_commits = "oldest"
 split_commits = true
 processing_order = ["commit_preprocessors", "split_commits", "conventional_commits", "commit_parsers", "link_parsers"]
 commit_preprocessors = [
-  { pattern = '(?s)^[^\n]*\n\n((?:\* .*\n?)+)$', replace = "${1}" },
+  { pattern = '(?s)^[^\n]*\n\n((?:\* .*\n?)+)$', replace = "@${1}" },
+  { pattern = '(?s)^([^@][^\n]*).*$', replace = "${1}" },
+  { pattern = '^@', replace = "" },
   { pattern = '(?m)^\* ', replace = "" },
 ]
 commit_parsers = [
