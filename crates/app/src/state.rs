@@ -1,6 +1,6 @@
 use winsp_core::models::{SearchResult, SearchResultKind};
 use winsp_core::search::Engine;
-use winsp_windows::launcher::run;
+use winsp_windows::catalog::launcher::run;
 
 #[derive(Debug)]
 pub struct AppState {
