@@ -1,6 +1,6 @@
 use winsp_core::models::{SearchResult, SearchResultKind};
 use winsp_core::search::Engine;
-use winsp_indexer::launcher::launch_target;
+use winsp_windows::launcher::run;
 
 #[derive(Debug)]
 pub struct AppState {
@@ -76,16 +76,16 @@ impl AppState {
         if let Some(selected) = self.results.get(self.selected_index) {
             match &selected.kind {
                 SearchResultKind::App(item) => {
-                    launch_target(&item.target)?;
+                    run(&item.target)?;
                 }
                 SearchResultKind::Calculation { result, .. } => {
                     println!("[WinSP] Calculation result: {}", result);
                 }
                 SearchResultKind::WebSearch { url, .. } => {
-                    launch_target(&winsp_core::models::AppTarget::Path(url.clone()))?;
+                    run(&winsp_core::models::AppTarget::Path(url.clone()))?;
                 }
                 SearchResultKind::SystemCommand { command, .. } => {
-                    launch_target(&winsp_core::models::AppTarget::SystemCommand(
+                    run(&winsp_core::models::AppTarget::SystemCommand(
                         command.clone(),
                     ))?;
                 }
@@ -98,7 +98,7 @@ impl AppState {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use winsp_indexer::populate_search_index;
+    use crate::populate_search_index;
 
     #[test]
     fn test_app_state_navigation() {

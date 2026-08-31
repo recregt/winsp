@@ -2,7 +2,7 @@ use notify_debouncer_mini::notify::{self, RecommendedWatcher, RecursiveMode};
 use notify_debouncer_mini::{DebounceEventResult, Debouncer, new_debouncer};
 use std::time::Duration;
 
-pub fn watch_dirs<F>(
+pub fn for_dirs<F>(
     dirs: &[std::path::PathBuf],
     on_change: F,
 ) -> notify::Result<Debouncer<RecommendedWatcher>>
@@ -26,17 +26,11 @@ where
 }
 
 #[cfg(windows)]
-pub fn watch_start_menu<F>(on_change: F) -> notify::Result<Debouncer<RecommendedWatcher>>
+pub fn for_start_menu<F>(on_change: F) -> notify::Result<Debouncer<RecommendedWatcher>>
 where
     F: Fn() + Send + 'static,
 {
-    watch_dirs(&crate::apps::start_menu_dirs(), on_change)
-}
-
-pub fn test_watch_dir() -> Option<std::path::PathBuf> {
-    std::env::var("WINSP_TEST_WATCH_DIR")
-        .ok()
-        .map(std::path::PathBuf::from)
+    for_dirs(&super::apps::start_menu_dirs(), on_change)
 }
 
 #[cfg(test)]
@@ -50,7 +44,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let (tx, rx) = channel();
 
-        let _watcher = watch_dirs(&[dir.path().to_path_buf()], move || {
+        let _watcher = for_dirs(&[dir.path().to_path_buf()], move || {
             let _ = tx.send(());
         })
         .unwrap();

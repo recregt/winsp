@@ -1,5 +1,5 @@
 [package]
-name = "winsp-indexer"
+name = "winsp-windows"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

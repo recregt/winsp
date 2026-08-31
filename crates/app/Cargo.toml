@@ -12,7 +12,7 @@ path = "src/main.rs"
 
 [dependencies]
 winsp-core = { path = "../core" }
-winsp-indexer = { path = "../indexer" }
+winsp-windows = { path = "../windows" }
 
 [build-dependencies]
 embed-resource = "3"

@@ -1,7 +1,6 @@
 use winsp_core::models::AppTarget;
 
-/// Executes an application target.
-pub fn launch_target(target: &AppTarget) -> Result<(), String> {
+pub fn run(target: &AppTarget) -> Result<(), String> {
     match target {
         AppTarget::Path(path) => launch_path(path),
         AppTarget::Aumid(aumid) => launch_aumid(aumid),
