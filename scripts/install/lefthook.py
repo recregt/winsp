@@ -1,15 +1,16 @@
 #!/usr/bin/env python3
-import hashlib
 import os
 import platform
 import re
 import shutil
-import stat
 import subprocess
 import sys
 import tempfile
-import urllib.request
 from pathlib import Path
+
+sys.dont_write_bytecode = True
+
+from common import atomic_install, checksum_for, download, fail, sha256_of
 
 VERSION = "2.1.12"
 
@@ -26,11 +27,6 @@ ARCHES = {
     "arm64": "arm64",
     "aarch64": "arm64",
 }
-
-
-def fail(message: str) -> None:
-    print(message, file=sys.stderr)
-    sys.exit(1)
 
 
 def repo_root() -> Path:
@@ -71,19 +67,6 @@ def target_arch() -> str:
     return arch
 
 
-def download(url: str, dest: Path) -> None:
-    with urllib.request.urlopen(url) as response, dest.open("wb") as f:
-        shutil.copyfileobj(response, f)
-
-
-def checksum_for(checksums_path: Path, asset: str) -> str:
-    for line in checksums_path.read_text(encoding="utf-8").splitlines():
-        digest, _, name = line.partition("  ")
-        if name == asset:
-            return digest
-    fail(f"no checksum entry for {asset}")
-
-
 def main() -> None:
     root = repo_root()
     bin_dir = Path.home() / ".cargo" / "bin"
@@ -110,26 +93,12 @@ def main() -> None:
         download(f"{base_url}/lefthook_checksums.txt", checksums_path)
 
         expected = checksum_for(checksums_path, asset)
-        hasher = hashlib.sha256()
-        with asset_path.open("rb") as f:
-            for chunk in iter(lambda: f.read(1024 * 1024), b""):
-                hasher.update(chunk)
-        if hasher.hexdigest() != expected:
+        if sha256_of(asset_path) != expected:
             fail(f"checksum mismatch for {asset}")
 
         bin_dir.mkdir(parents=True, exist_ok=True)
         install_name = "lefthook.exe" if plat == "Windows" else "lefthook"
-        install_path = bin_dir / install_name
-        fd, tmp_name = tempfile.mkstemp(dir=bin_dir, prefix=f"{install_name}.", suffix=".tmp")
-        tmp_install = Path(tmp_name)
-        try:
-            os.close(fd)
-            shutil.copy(asset_path, tmp_install)
-            tmp_install.chmod(tmp_install.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
-            tmp_install.replace(install_path)
-        except BaseException:
-            tmp_install.unlink(missing_ok=True)
-            raise
+        install_path = atomic_install(asset_path, bin_dir, install_name)
 
     path_dirs = os.environ.get("PATH", "").split(os.pathsep)
     if str(bin_dir) not in path_dirs:

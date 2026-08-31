@@ -24,16 +24,31 @@
       "matchDepNames": ["evilmartians/lefthook"],
       "semanticCommitType": "chore",
       "semanticCommitScope": "scripts"
+    },
+    {
+      "matchDepNames": ["rhysd/actionlint"],
+      "semanticCommitType": "chore",
+      "semanticCommitScope": "scripts"
     }
   ],
   "customManagers": [
     {
       "customType": "regex",
-      "managerFilePatterns": ["/^scripts/install-lefthook\\.sh$/"],
+      "managerFilePatterns": ["/^scripts/install/lefthook\\.py$/"],
       "matchStrings": [
-        "version=\"(?<currentValue>[\\d.]+)\""
+        "VERSION = \"(?<currentValue>[\\d.]+)\""
       ],
       "depNameTemplate": "evilmartians/lefthook",
+      "datasourceTemplate": "github-releases",
+      "extractVersionTemplate": "^v(?<version>.*)$"
+    },
+    {
+      "customType": "regex",
+      "managerFilePatterns": ["/^scripts/install/actionlint\\.py$/"],
+      "matchStrings": [
+        "VERSION = \"(?<currentValue>[\\d.]+)\""
+      ],
+      "depNameTemplate": "rhysd/actionlint",
       "datasourceTemplate": "github-releases",
       "extractVersionTemplate": "^v(?<version>.*)$"
     }

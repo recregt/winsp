@@ -23,15 +23,11 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Download actionlint
-        id: get_actionlint
-        run: bash <(curl -s https://raw.githubusercontent.com/rhysd/actionlint/v1.7.12/scripts/download-actionlint.bash)
-        shell: bash
+      - name: Install actionlint
+        run: python3 scripts/install/actionlint.py
 
       - name: Check workflow files
-        run: ${STEPS_GET_ACTIONLINT_OUTPUTS_EXECUTABLE} -color
-        env:
-          STEPS_GET_ACTIONLINT_OUTPUTS_EXECUTABLE: ${{ steps.get_actionlint.outputs.executable }}
+        run: '"$HOME/.cargo/bin/actionlint" -color'
 
   ruff:
     name: ruff
@@ -41,10 +37,9 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Install ruff
-        run: curl -LsSf https://astral.sh/ruff/0.16.5/install.sh | sh
-
-      - run: ruff check scripts/
+      - uses: astral-sh/ruff-action@278981a28ce3188b1e39527901f38254bf3aac89 # v4.1.0
+        with:
+          src: scripts/
 
   changelog-config:
     name: changelog config
