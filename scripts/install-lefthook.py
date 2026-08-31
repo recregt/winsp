@@ -8,10 +8,12 @@ import stat
 import subprocess
 import sys
 import tempfile
+import urllib.error
 import urllib.request
 from pathlib import Path
 
 VERSION = "2.1.12"
+TIMEOUT_SECONDS = 30
 
 PLATFORMS = {
     "Linux": "Linux",
@@ -72,8 +74,14 @@ def target_arch() -> str:
 
 
 def download(url: str, dest: Path) -> None:
-    with urllib.request.urlopen(url) as response, dest.open("wb") as f:
-        shutil.copyfileobj(response, f)
+    try:
+        with (
+            urllib.request.urlopen(url, timeout=TIMEOUT_SECONDS) as response,
+            dest.open("wb") as f,
+        ):
+            shutil.copyfileobj(response, f)
+    except urllib.error.URLError as e:
+        fail(f"failed to download {url}: {e}")
 
 
 def checksum_for(checksums_path: Path, asset: str) -> str:

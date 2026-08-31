@@ -4,10 +4,12 @@ import stat
 import subprocess
 import sys
 import tempfile
+import urllib.error
 import urllib.request
 from pathlib import Path
 
 VERSION = "1.7.12"
+TIMEOUT_SECONDS = 30
 
 
 def fail(message: str) -> None:
@@ -16,9 +18,15 @@ def fail(message: str) -> None:
 
 
 def download(url: str, dest: Path) -> None:
-    with urllib.request.urlopen(url) as response, dest.open("wb") as f:
-        while chunk := response.read(1024 * 1024):
-            f.write(chunk)
+    try:
+        with (
+            urllib.request.urlopen(url, timeout=TIMEOUT_SECONDS) as response,
+            dest.open("wb") as f,
+        ):
+            while chunk := response.read(1024 * 1024):
+                f.write(chunk)
+    except urllib.error.URLError as e:
+        fail(f"failed to download {url}: {e}")
 
 
 def checksum_for(checksums_path: Path, asset: str) -> str:
