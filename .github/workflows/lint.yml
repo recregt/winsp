@@ -24,7 +24,7 @@ jobs:
           persist-credentials: false
 
       - name: Install actionlint
-        run: python3 scripts/install-actionlint.py
+        run: python3 scripts/install/actionlint.py
 
       - name: Check workflow files
         run: '"$HOME/.cargo/bin/actionlint" -color'
