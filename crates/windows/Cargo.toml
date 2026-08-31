@@ -15,6 +15,7 @@ winsp-core = { path = "../core" }
 tempfile = "3.27.0"
 
 [target.'cfg(windows)'.dependencies]
+num_enum = "0.7"
 windows-sys = { version = "0.61", features = [
     "Win32_Foundation",
     "Win32_Graphics_Gdi",

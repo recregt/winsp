@@ -28,7 +28,7 @@ pub(super) unsafe extern "system" fn wnd_proc(
             0
         }
         WM_COMMAND => {
-            if let Some(cmd) = TrayCommand::from_wparam(wparam & 0xffff) {
+            if let Ok(cmd) = TrayCommand::try_from(wparam & 0xffff) {
                 match cmd {
                     TrayCommand::Toggle => toggle_visibility(hwnd),
                     TrayCommand::Autostart => {

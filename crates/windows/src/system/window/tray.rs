@@ -1,4 +1,5 @@
 use crate::system::registry::to_wide;
+use num_enum::TryFromPrimitive;
 use windows_sys::Win32::Foundation::{HWND, POINT};
 use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows_sys::Win32::UI::Shell::{
@@ -9,22 +10,11 @@ use windows_sys::Win32::UI::WindowsAndMessaging::*;
 pub const WM_TRAYICON: u32 = WM_APP + 1;
 
 #[repr(usize)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, TryFromPrimitive)]
 pub enum TrayCommand {
     Toggle = 1001,
     Autostart = 1002,
     Exit = 1003,
-}
-
-impl TrayCommand {
-    pub fn from_wparam(wparam: usize) -> Option<Self> {
-        match wparam {
-            1001 => Some(Self::Toggle),
-            1002 => Some(Self::Autostart),
-            1003 => Some(Self::Exit),
-            _ => None,
-        }
-    }
 }
 
 const TRAY_ICON_ID: u32 = 1;
