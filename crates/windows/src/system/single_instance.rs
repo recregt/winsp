@@ -54,3 +54,33 @@ fn focus_existing_window(window_class_name: &str) {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const MUTEX_NAME: &str = "WinSpTest_SingleInstance_Mutex";
+    const WINDOW_CLASS_NAME: &str = "WinSpTest_NoSuchWindowClass";
+
+    #[test]
+    fn detects_collision_and_releases_cleanly() {
+        let first = acquire(MUTEX_NAME, WINDOW_CLASS_NAME);
+        assert!(first.is_some(), "first acquire should succeed");
+
+        assert!(
+            acquire(MUTEX_NAME, WINDOW_CLASS_NAME).is_none(),
+            "a second acquire while the first is held should detect the collision"
+        );
+        assert!(
+            acquire(MUTEX_NAME, WINDOW_CLASS_NAME).is_none(),
+            "the collision cleanup must not release the mutex the first guard still holds"
+        );
+
+        drop(first);
+
+        assert!(
+            acquire(MUTEX_NAME, WINDOW_CLASS_NAME).is_some(),
+            "after the guard is dropped, acquiring again should succeed"
+        );
+    }
+}

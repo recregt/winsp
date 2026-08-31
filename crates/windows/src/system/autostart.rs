@@ -32,3 +32,13 @@ fn startup_task_set_enabled(enabled: bool) -> windows::core::Result<()> {
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn is_enabled_degrades_gracefully_without_package_identity() {
+        assert!(!is_enabled());
+    }
+}

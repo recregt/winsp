@@ -85,3 +85,72 @@ pub unsafe fn show_menu(hwnd: HWND) {
         DestroyMenu(menu);
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        CreateWindowExW, DefWindowProcW, DestroyWindow, RegisterClassExW, UnregisterClassW,
+        WNDCLASSEXW,
+    };
+
+    unsafe extern "system" fn noop_wnd_proc(
+        hwnd: HWND,
+        msg: u32,
+        wparam: usize,
+        lparam: isize,
+    ) -> isize {
+        unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) }
+    }
+
+    fn create_test_window(class_name: &[u16]) -> HWND {
+        unsafe {
+            let instance = GetModuleHandleW(std::ptr::null());
+            let wnd_class = WNDCLASSEXW {
+                cbSize: std::mem::size_of::<WNDCLASSEXW>() as u32,
+                lpfnWndProc: Some(noop_wnd_proc),
+                hInstance: instance,
+                lpszClassName: class_name.as_ptr(),
+                ..std::mem::zeroed()
+            };
+            RegisterClassExW(&wnd_class);
+            CreateWindowExW(
+                0,
+                class_name.as_ptr(),
+                std::ptr::null(),
+                0,
+                0,
+                0,
+                0,
+                0,
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+                instance,
+                std::ptr::null(),
+            )
+        }
+    }
+
+    #[test]
+    fn add_and_remove_succeed_on_a_real_window() {
+        let class_name = to_wide("WinSpTest_TrayWindow");
+        let hwnd = create_test_window(&class_name);
+        assert!(!hwnd.is_null(), "test window creation should succeed");
+
+        unsafe {
+            let added = Shell_NotifyIconW(NIM_ADD, &{
+                let mut nid = tray_icon_data(hwnd);
+                nid.uFlags = NIF_ICON | NIF_MESSAGE | NIF_TIP;
+                nid.uCallbackMessage = WM_TRAYICON;
+                nid
+            });
+            assert!(added != 0, "Shell_NotifyIconW(NIM_ADD) should succeed");
+
+            let removed = Shell_NotifyIconW(NIM_DELETE, &tray_icon_data(hwnd));
+            assert!(removed != 0, "Shell_NotifyIconW(NIM_DELETE) should succeed");
+
+            DestroyWindow(hwnd);
+            UnregisterClassW(class_name.as_ptr(), GetModuleHandleW(std::ptr::null()));
+        }
+    }
+}
