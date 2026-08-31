@@ -23,8 +23,8 @@ fn populate_search_index() -> Engine {
     let mut index = Engine::new();
     let mut all_items: Vec<AppItem> = Vec::new();
 
-    all_items.extend(winsp_windows::sources::list_installed_apps());
-    all_items.extend(winsp_windows::sources::list_settings());
+    all_items.extend(winsp_windows::sources::apps::list_installed_apps());
+    all_items.extend(winsp_windows::sources::settings::list_settings());
 
     index.set_items(all_items);
     index
