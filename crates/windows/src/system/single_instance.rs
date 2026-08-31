@@ -2,10 +2,9 @@ use std::ffi::OsStr;
 use std::os::windows::ffi::OsStrExt;
 use windows_sys::Win32::Foundation::{CloseHandle, ERROR_ALREADY_EXISTS, HANDLE};
 use windows_sys::Win32::System::Threading::CreateMutexW;
-
-use crate::window::focus_existing_window;
-
-const MUTEX_NAME: &str = "WinSP_SingleInstance_Mutex";
+use windows_sys::Win32::UI::WindowsAndMessaging::{
+    FindWindowW, SW_SHOW, SetForegroundWindow, ShowWindow,
+};
 
 fn to_wide(s: &str) -> Vec<u16> {
     OsStr::new(s).encode_wide().chain(Some(0)).collect()
@@ -21,11 +20,8 @@ impl Drop for InstanceGuard {
     }
 }
 
-/// Attempts to become the single running instance of WinSP.
-/// Returns `None` if another instance already holds the lock — in that case,
-/// the existing instance's window is brought to the foreground.
-pub fn acquire() -> Option<InstanceGuard> {
-    let name = to_wide(MUTEX_NAME);
+pub fn acquire(mutex_name: &str, window_class_name: &str) -> Option<InstanceGuard> {
+    let name = to_wide(mutex_name);
     let (handle, already_exists) = unsafe {
         let handle = CreateMutexW(std::ptr::null(), 0, name.as_ptr());
         let already_exists =
@@ -33,10 +29,28 @@ pub fn acquire() -> Option<InstanceGuard> {
         (handle, already_exists)
     };
 
+    if handle.is_null() {
+        return None;
+    }
+
     if already_exists {
-        focus_existing_window();
+        unsafe {
+            CloseHandle(handle);
+        }
+        focus_existing_window(window_class_name);
         return None;
     }
 
     Some(InstanceGuard(handle))
+}
+
+fn focus_existing_window(window_class_name: &str) {
+    let class_name = to_wide(window_class_name);
+    unsafe {
+        let existing = FindWindowW(class_name.as_ptr(), std::ptr::null());
+        if !existing.is_null() {
+            ShowWindow(existing, SW_SHOW);
+            SetForegroundWindow(existing);
+        }
+    }
 }

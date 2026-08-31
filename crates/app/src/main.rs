@@ -3,11 +3,6 @@
 mod state;
 mod window;
 
-#[cfg(windows)]
-mod autostart;
-#[cfg(windows)]
-mod single_instance;
-
 use state::AppState;
 #[cfg(not(windows))]
 use std::io::{self, Write};
@@ -23,8 +18,8 @@ fn populate_search_index() -> Engine {
     let mut index = Engine::new();
     let mut all_items: Vec<AppItem> = Vec::new();
 
-    all_items.extend(winsp_windows::sources::apps::list_installed_apps());
-    all_items.extend(winsp_windows::sources::settings::list_settings());
+    all_items.extend(winsp_windows::catalog::sources::apps::list_installed_apps());
+    all_items.extend(winsp_windows::catalog::sources::settings::list_settings());
 
     index.set_items(all_items);
     index
@@ -42,7 +37,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("====================================================");
 
     #[cfg(windows)]
-    let _instance_mutex = match single_instance::acquire() {
+    let _instance_mutex = match winsp_windows::system::single_instance::acquire(
+        "WinSP_SingleInstance_Mutex",
+        window::WINDOW_CLASS_NAME,
+    ) {
         Some(mutex) => mutex,
         None => {
             println!("WinSP is already running — focusing the existing window.");
@@ -76,11 +74,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let _reindex_watcher = if let Some(dir) = test_watch_dir() {
         println!("[WinSP] Test mode: watching {} for changes", dir.display());
-        winsp_windows::sources::watcher::for_dirs(&[dir], reindex_callback).ok()
+        winsp_windows::catalog::sources::watcher::for_dirs(&[dir], reindex_callback).ok()
     } else {
         #[cfg(windows)]
         {
-            winsp_windows::sources::watcher::for_start_menu(reindex_callback).ok()
+            winsp_windows::catalog::sources::watcher::for_start_menu(reindex_callback).ok()
         }
         #[cfg(not(windows))]
         {

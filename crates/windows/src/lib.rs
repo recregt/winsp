@@ -1,2 +1,3 @@
-pub mod launcher;
-pub mod sources;
+pub mod catalog;
+#[cfg(windows)]
+pub mod system;

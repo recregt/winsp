@@ -1303,7 +1303,6 @@ version = "0.2.0"
 dependencies = [
  "embed-resource",
  "mimalloc",
- "windows",
  "windows-sys 0.61.2",
  "winsp-core",
  "winsp-windows",

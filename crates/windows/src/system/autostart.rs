@@ -11,9 +11,12 @@ pub fn set_enabled(enabled: bool) {
     let _ = startup_task_set_enabled(enabled);
 }
 
+fn startup_task() -> windows::core::Result<StartupTask> {
+    StartupTask::GetAsync(&HSTRING::from(STARTUP_TASK_ID))?.join()
+}
+
 fn startup_task_is_enabled() -> windows::core::Result<bool> {
-    let task = StartupTask::GetAsync(&HSTRING::from(STARTUP_TASK_ID))?.join()?;
-    let state = task.State()?;
+    let state = startup_task()?.State()?;
     Ok(matches!(
         state,
         StartupTaskState::Enabled | StartupTaskState::EnabledByPolicy
@@ -21,7 +24,7 @@ fn startup_task_is_enabled() -> windows::core::Result<bool> {
 }
 
 fn startup_task_set_enabled(enabled: bool) -> windows::core::Result<()> {
-    let task = StartupTask::GetAsync(&HSTRING::from(STARTUP_TASK_ID))?.join()?;
+    let task = startup_task()?;
     if enabled {
         task.RequestEnableAsync()?.join()?;
     } else {
