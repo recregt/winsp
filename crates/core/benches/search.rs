@@ -1,4 +1,5 @@
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
+use std::hint::black_box;
 use winsp_core::models::{AppItem, AppTarget};
 use winsp_core::search::Engine;
 
@@ -84,5 +85,38 @@ fn bench_search(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(benches, bench_search);
+const TYPED_QUERY: &str = "visual studio";
+const TYPING_INDEX_SIZE: usize = 10_000;
+
+fn bench_search_while_typing(c: &mut Criterion) {
+    let index = synthetic_index(TYPING_INDEX_SIZE);
+    let prefixes: Vec<&str> = TYPED_QUERY
+        .char_indices()
+        .map(|(offset, ch)| &TYPED_QUERY[..offset + ch.len_utf8()])
+        .collect();
+
+    let mut group = c.benchmark_group("search_while_typing");
+
+    for prefix in &prefixes {
+        group.bench_with_input(
+            BenchmarkId::new("keystroke", prefix),
+            prefix,
+            |b, prefix| {
+                b.iter(|| index.search(prefix, 6));
+            },
+        );
+    }
+
+    group.bench_function("full_session", |b| {
+        b.iter(|| {
+            for prefix in &prefixes {
+                black_box(index.search(prefix, 6));
+            }
+        });
+    });
+
+    group.finish();
+}
+
+criterion_group!(benches, bench_search, bench_search_while_typing);
 criterion_main!(benches);
