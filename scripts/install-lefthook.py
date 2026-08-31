@@ -120,10 +120,16 @@ def main() -> None:
         bin_dir.mkdir(parents=True, exist_ok=True)
         install_name = "lefthook.exe" if plat == "Windows" else "lefthook"
         install_path = bin_dir / install_name
-        tmp_install = install_path.with_suffix(install_path.suffix + ".tmp")
-        shutil.copy(asset_path, tmp_install)
-        tmp_install.chmod(tmp_install.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
-        tmp_install.replace(install_path)
+        fd, tmp_name = tempfile.mkstemp(dir=bin_dir, prefix=f"{install_name}.", suffix=".tmp")
+        tmp_install = Path(tmp_name)
+        try:
+            os.close(fd)
+            shutil.copy(asset_path, tmp_install)
+            tmp_install.chmod(tmp_install.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+            tmp_install.replace(install_path)
+        except BaseException:
+            tmp_install.unlink(missing_ok=True)
+            raise
 
     path_dirs = os.environ.get("PATH", "").split(os.pathsep)
     if str(bin_dir) not in path_dirs:
