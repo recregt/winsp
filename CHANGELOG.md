@@ -87,8 +87,9 @@ All notable changes to WinSP are documented here. Format follows
 
 ## [0.1.0] - 2026-08-25
 
-### Fixed
-- Change lefthook install destination to cargo bin directory
-- Adapt to windows-sys 0.61 HWND pointer type changes
+- Update GitHub Actions to v7 by @renovate[bot] in #2
+- Change lefthook install destination to cargo bin directory by @recregt
+- Adapt to windows-sys 0.61 HWND pointer type changes by @recregt in #6
+- Add minimal pull request template by @recregt in #7
 
 
