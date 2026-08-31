@@ -14,14 +14,18 @@ body = """
 {% for group, commits in commits | group_by(attribute="group") %}
 ### {{ group | striptags | trim | upper_first }}
 {% for commit in commits -%}
-- {% if commit.breaking %}**BREAKING:** {% endif %}{{ commit.message | upper_first }}{% if commit.remote.pr_number %} (#{{ commit.remote.pr_number }}){% endif %}
+- {% if commit.breaking %}**BREAKING:** {% endif %}{{ commit.message | upper_first }}{% if commit.remote.pr_number %} by @{{ commit.remote.username }} in #{{ commit.remote.pr_number }}{% endif %}
 {% endfor %}
 {%- endfor %}
+{% if previous and previous.version and version %}
+**Full Changelog**: https://github.com/recregt/winsp/compare/{{ previous.version }}...{{ version }}
+{% endif %}
 """
 trim = true
 footer = ""
 
 [git]
+ignore_tags = "^nightly$"
 conventional_commits = true
 filter_unconventional = true
 require_conventional = false
