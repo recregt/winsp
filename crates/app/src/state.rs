@@ -9,8 +9,6 @@ pub struct AppState {
     pub selected_index: usize,
     #[cfg_attr(not(windows), allow(dead_code))]
     pub capturing_hotkey: bool,
-    #[cfg_attr(not(windows), allow(dead_code))]
-    pub suppress_next_char: bool,
 }
 
 impl AppState {
@@ -22,7 +20,6 @@ impl AppState {
             results: initial_results,
             selected_index: 0,
             capturing_hotkey: false,
-            suppress_next_char: false,
         }
     }
 

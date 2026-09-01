@@ -22,11 +22,11 @@ use windows::Win32::UI::Input::KeyboardAndMouse::{MOD_NOREPEAT, RegisterHotKey, 
 use windows::Win32::UI::WindowsAndMessaging::{
     CS_HREDRAW, CS_VREDRAW, CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW,
     GetClientRect, GetMessageW, GetSystemMetrics, GetWindowRect, HCURSOR, HICON, HWND_TOPMOST,
-    IDC_ARROW, IsWindowVisible, LoadCursorW, LoadIconW, MSG, PostQuitMessage, RegisterClassExW,
-    SM_CXSCREEN, SM_CYSCREEN, SW_HIDE, SW_SHOW, SWP_NOACTIVATE, SWP_NOMOVE, SetForegroundWindow,
-    SetWindowPos, ShowWindow, TranslateMessage, WM_CHAR, WM_COMMAND, WM_DESTROY, WM_HOTKEY,
-    WM_KEYDOWN, WM_KILLFOCUS, WM_PAINT, WM_RBUTTONUP, WM_SYSKEYDOWN, WNDCLASSEXW, WS_EX_TOOLWINDOW,
-    WS_EX_TOPMOST, WS_POPUP,
+    IDC_ARROW, IsWindowVisible, LoadCursorW, LoadIconW, MSG, PM_REMOVE, PeekMessageW,
+    PostQuitMessage, RegisterClassExW, SM_CXSCREEN, SM_CYSCREEN, SW_HIDE, SW_SHOW, SWP_NOACTIVATE,
+    SWP_NOMOVE, SetForegroundWindow, SetWindowPos, ShowWindow, TranslateMessage, WM_CHAR,
+    WM_COMMAND, WM_DESTROY, WM_HOTKEY, WM_KEYDOWN, WM_KILLFOCUS, WM_PAINT, WM_RBUTTONUP,
+    WM_SYSKEYDOWN, WNDCLASSEXW, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP,
 };
 use windows::core::{HSTRING, PCWSTR};
 
@@ -219,6 +219,13 @@ impl Window {
         }
 
         self.unregister_hotkey(HotkeySlot::Primary);
+    }
+
+    pub fn discard_pending_char(&self) {
+        unsafe {
+            let mut msg = std::mem::zeroed::<MSG>();
+            while PeekMessageW(&mut msg, Some(self.hwnd), WM_CHAR, WM_CHAR, PM_REMOVE).as_bool() {}
+        }
     }
 
     pub fn is_visible(&self) -> bool {
@@ -438,6 +445,66 @@ mod tests {
 
         window.unregister_hotkey(HotkeySlot::Primary);
         window.unregister_hotkey(HotkeySlot::Secondary);
+
+        unsafe {
+            let _ = DestroyWindow(hwnd);
+            let _ = UnregisterClassW(&class_name, Some(GetModuleHandleW(None).unwrap().into()));
+        }
+    }
+
+    #[test]
+    fn discard_pending_char_removes_a_queued_char_message() {
+        use windows::Win32::UI::WindowsAndMessaging::PostMessageW;
+
+        let class_name = HSTRING::from("WinSpTest_DiscardPendingCharWindow");
+        let hwnd = create_test_window(&class_name);
+        assert!(!hwnd.is_invalid(), "test window creation should succeed");
+        let window = Window::new(hwnd);
+
+        unsafe {
+            let _ = PostMessageW(Some(hwnd), WM_CHAR, WPARAM('a' as usize), LPARAM(0));
+        }
+
+        window.discard_pending_char();
+
+        let still_pending = unsafe {
+            let mut msg = std::mem::zeroed::<MSG>();
+            PeekMessageW(&mut msg, Some(hwnd), WM_CHAR, WM_CHAR, PM_REMOVE).as_bool()
+        };
+        assert!(
+            !still_pending,
+            "expected the queued WM_CHAR to have been discarded"
+        );
+
+        unsafe {
+            let _ = DestroyWindow(hwnd);
+            let _ = UnregisterClassW(&class_name, Some(GetModuleHandleW(None).unwrap().into()));
+        }
+    }
+
+    #[test]
+    fn discard_pending_char_leaves_unrelated_messages_alone() {
+        use windows::Win32::UI::WindowsAndMessaging::{PostMessageW, WM_APP};
+
+        let class_name = HSTRING::from("WinSpTest_DiscardPendingCharUnrelatedWindow");
+        let hwnd = create_test_window(&class_name);
+        assert!(!hwnd.is_invalid(), "test window creation should succeed");
+        let window = Window::new(hwnd);
+
+        unsafe {
+            let _ = PostMessageW(Some(hwnd), WM_APP, WPARAM(0), LPARAM(0));
+        }
+
+        window.discard_pending_char();
+
+        let still_pending = unsafe {
+            let mut msg = std::mem::zeroed::<MSG>();
+            PeekMessageW(&mut msg, Some(hwnd), WM_APP, WM_APP, PM_REMOVE).as_bool()
+        };
+        assert!(
+            still_pending,
+            "discard_pending_char should not remove messages other than WM_CHAR"
+        );
 
         unsafe {
             let _ = DestroyWindow(hwnd);

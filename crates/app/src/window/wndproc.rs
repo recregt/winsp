@@ -41,9 +41,7 @@ pub(super) fn handle_message(window: &Window, message: Message) {
             if let Some(state_arc) = APP_STATE.get() {
                 let mut results_count = None;
                 if let Ok(mut state) = state_arc.lock() {
-                    if state.suppress_next_char {
-                        state.suppress_next_char = false;
-                    } else if !state.capturing_hotkey {
+                    if !state.capturing_hotkey {
                         interaction::insert_char(&mut state, c);
                         results_count = Some(state.results.len());
                     }
@@ -148,9 +146,9 @@ fn end_capture(window: &Window) {
     if let Some(state_arc) = APP_STATE.get() {
         if let Ok(mut state) = state_arc.lock() {
             state.capturing_hotkey = false;
-            state.suppress_next_char = true;
             interaction::clear_query(&mut state);
         }
     }
+    window.discard_pending_char();
     window.hide();
 }
