@@ -1,10 +1,16 @@
 [target.x86_64-pc-windows-gnu]
 linker = "x86_64-w64-mingw32-gcc"
 ar = "x86_64-w64-mingw32-gcc-ar"
+runner = "wine"
 
 [target.x86_64-pc-windows-msvc]
 rustflags = ["-C", "target-feature=+crt-static"]
 
 [build]
 # Default to Windows target if desired, or pass --target x86_64-pc-windows-gnu
+
+[alias]
+win-clippy = "clippy --workspace --all-targets --target x86_64-pc-windows-gnu"
+win-test = ["test", "--workspace", "--target", "x86_64-pc-windows-gnu", "--", "--skip", "encapsulation", "--skip", "build_toast_escapes_reserved_characters_into_valid_xml", "--skip", "build_toast_produces_xml_the_real_parser_accepts", "--skip", "build_package_sets_text_content_successfully"]
+win-run = "run -p winsp-app --target x86_64-pc-windows-gnu"
 
