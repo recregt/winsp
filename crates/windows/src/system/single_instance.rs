@@ -25,14 +25,14 @@ pub fn acquire(mutex_name: &str, window_class_name: &str) -> Option<InstanceGuar
         unsafe {
             let _ = CloseHandle(handle);
         }
-        focus_existing_window(window_class_name);
+        request_show(window_class_name);
         return None;
     }
 
     Some(InstanceGuard(handle))
 }
 
-fn focus_existing_window(window_class_name: &str) {
+fn request_show(window_class_name: &str) {
     let class_name = HSTRING::from(window_class_name);
     unsafe {
         if let Ok(existing) = FindWindowW(&class_name, None) {
@@ -94,12 +94,12 @@ mod tests {
     }
 
     #[test]
-    fn focus_existing_window_posts_a_show_request_to_the_matching_class() {
-        let class_name = HSTRING::from("WinSpTest_FocusExistingWindow");
+    fn request_show_posts_a_show_request_to_the_matching_class() {
+        let class_name = HSTRING::from("WinSpTest_RequestShowWindow");
         let hwnd = create_test_window(&class_name);
         assert!(!hwnd.is_invalid(), "test window creation should succeed");
 
-        focus_existing_window("WinSpTest_FocusExistingWindow");
+        request_show("WinSpTest_RequestShowWindow");
 
         let received = unsafe {
             let mut msg = std::mem::zeroed::<MSG>();
@@ -124,8 +124,8 @@ mod tests {
     }
 
     #[test]
-    fn focus_existing_window_is_a_no_op_when_no_window_matches() {
-        focus_existing_window("WinSpTest_NoSuchWindowClassEither");
+    fn request_show_is_a_no_op_when_no_window_matches() {
+        request_show("WinSpTest_NoSuchWindowClassEither");
     }
 
     #[test]
