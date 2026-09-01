@@ -96,6 +96,32 @@ mod tests {
     }
 
     #[test]
+    fn save_to_replaces_an_existing_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.msgpack");
+        Settings { hotkey_vk: 0x41 }.save_to(&path).unwrap();
+
+        let replacement = Settings { hotkey_vk: 0x42 };
+        replacement.save_to(&path).unwrap();
+
+        assert_eq!(Settings::load_from(&path), replacement);
+    }
+
+    #[test]
+    fn corrupt_settings_are_repaired_on_save() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.msgpack");
+        std::fs::write(&path, b"not valid msgpack").unwrap();
+
+        let settings = Settings::load_from(&path);
+        assert_eq!(settings, Settings::default());
+
+        settings.save_to(&path).unwrap();
+
+        assert_eq!(Settings::load_from(&path), Settings::default());
+    }
+
+    #[test]
     fn save_leaves_no_temp_file_behind() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("settings.msgpack");
