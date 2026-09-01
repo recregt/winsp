@@ -39,7 +39,7 @@ fn notify_com_init_failed() {
     NOTIFIED.call_once(|| {
         crate::system::toast::show(
             "WinSP",
-            "Couldn't scan Start Menu shortcuts this time. Some apps may be missing from search until WinSP restarts.",
+            "A Windows component didn't initialize correctly. A few similarly named shortcuts may not all appear until WinSP restarts.",
         );
     });
 }

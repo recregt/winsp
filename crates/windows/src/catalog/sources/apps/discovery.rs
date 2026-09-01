@@ -25,9 +25,7 @@ fn scan_start_menu(
     apps: &mut Vec<AppItem>,
     seen_ids: &mut std::collections::HashSet<String>,
 ) {
-    let Some(_com_guard) = ComGuard::new() else {
-        return;
-    };
+    let _com_guard = ComGuard::new();
 
     for dir_path in dirs {
         scan_directory_for_shortcuts(dir_path, apps, seen_ids);
