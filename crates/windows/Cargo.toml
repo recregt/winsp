@@ -6,6 +6,9 @@ rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
 
+[features]
+test-support = []
+
 [dependencies]
 cfg-if = "1"
 notify-debouncer-mini = "0.7.0"

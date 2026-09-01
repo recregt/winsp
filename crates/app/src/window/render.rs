@@ -170,78 +170,10 @@ pub(super) fn render_ui(canvas: &Canvas, client_rect: Rect) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use windows_sys::Win32::Foundation::COLORREF;
-    use windows_sys::Win32::Foundation::RECT;
-    use windows_sys::Win32::Graphics::Gdi::{
-        CreateCompatibleBitmap, CreateCompatibleDC, CreateSolidBrush, DeleteDC,
-        DeleteObject as GdiDeleteObject, FillRect, GetDC, GetPixel, HBITMAP, HDC, HGDIOBJ,
-        ReleaseDC, SelectObject, SetBkMode, TRANSPARENT,
-    };
+    use winsp_windows::system::testing::OffscreenSurface;
 
     const BITMAP_WIDTH: i32 = 300;
     const BITMAP_HEIGHT: i32 = 40;
-
-    struct OffscreenSurface {
-        hdc: HDC,
-        bitmap: HBITMAP,
-        old_bitmap: HGDIOBJ,
-    }
-
-    impl OffscreenSurface {
-        fn new() -> Self {
-            unsafe {
-                let screen_dc = GetDC(std::ptr::null_mut());
-                let hdc = CreateCompatibleDC(screen_dc);
-                let bitmap = CreateCompatibleBitmap(screen_dc, BITMAP_WIDTH, BITMAP_HEIGHT);
-                ReleaseDC(std::ptr::null_mut(), screen_dc);
-                let old_bitmap = SelectObject(hdc, bitmap);
-
-                let fill_rect = RECT {
-                    left: 0,
-                    top: 0,
-                    right: BITMAP_WIDTH,
-                    bottom: BITMAP_HEIGHT,
-                };
-                let bg_brush = CreateSolidBrush(0x00000000);
-                FillRect(hdc, &fill_rect, bg_brush);
-                GdiDeleteObject(bg_brush);
-                SetBkMode(hdc, TRANSPARENT as i32);
-
-                Self {
-                    hdc,
-                    bitmap,
-                    old_bitmap,
-                }
-            }
-        }
-
-        fn canvas(&self) -> Canvas {
-            unsafe { Canvas::from_raw(self.hdc) }
-        }
-
-        fn contains_pixel(&self, color: COLORREF) -> bool {
-            unsafe {
-                for y in 0..BITMAP_HEIGHT {
-                    for x in 0..BITMAP_WIDTH {
-                        if GetPixel(self.hdc, x, y) == color {
-                            return true;
-                        }
-                    }
-                }
-            }
-            false
-        }
-    }
-
-    impl Drop for OffscreenSurface {
-        fn drop(&mut self) {
-            unsafe {
-                SelectObject(self.hdc, self.old_bitmap);
-                GdiDeleteObject(self.bitmap);
-                DeleteDC(self.hdc);
-            }
-        }
-    }
 
     const BASE_COLOR: Color = Color(0x00E0E0E0);
 
@@ -254,7 +186,7 @@ mod tests {
 
     #[test]
     fn test_highlighted_title_paints_the_highlight_color() {
-        let surface = OffscreenSurface::new();
+        let surface = OffscreenSurface::new(BITMAP_WIDTH, BITMAP_HEIGHT);
         draw_highlighted_title(
             &surface.canvas(),
             "Notepad",
@@ -263,17 +195,17 @@ mod tests {
             BASE_COLOR,
         );
         assert!(
-            surface.contains_pixel(HIGHLIGHT_COLOR.0),
+            surface.contains_pixel(HIGHLIGHT_COLOR),
             "expected at least one pixel painted in the highlight color"
         );
     }
 
     #[test]
     fn test_unhighlighted_title_never_paints_the_highlight_color() {
-        let surface = OffscreenSurface::new();
+        let surface = OffscreenSurface::new(BITMAP_WIDTH, BITMAP_HEIGHT);
         draw_highlighted_title(&surface.canvas(), "Notepad", &[], TEST_BOUNDS, BASE_COLOR);
         assert!(
-            !surface.contains_pixel(HIGHLIGHT_COLOR.0),
+            !surface.contains_pixel(HIGHLIGHT_COLOR),
             "no pixel should be the highlight color when nothing matched"
         );
     }

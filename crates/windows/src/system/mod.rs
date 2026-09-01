@@ -8,3 +8,6 @@ pub use window::{
     Canvas, Color, Font, FontGuard, FontWeight, Hotkey, Key, Message, Rect, TrayCommand,
     WindowHandle, register_embedded_font,
 };
+
+#[cfg(feature = "test-support")]
+pub use window::testing;
