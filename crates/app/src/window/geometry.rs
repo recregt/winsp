@@ -29,3 +29,10 @@ pub(super) fn resize_window_for_results(handle: &Window, results_count: usize) {
     };
     handle.resize(WINDOW_WIDTH, height);
 }
+
+pub(super) fn begin_hotkey_capture(handle: &Window) {
+    handle.center(WINDOW_WIDTH, SEARCH_BAR_HEIGHT);
+    resize_window_for_results(handle, 0);
+    handle.show();
+    handle.invalidate();
+}

@@ -15,6 +15,7 @@ pub enum TrayCommand {
     Toggle = 1001,
     Autostart = 1002,
     Exit = 1003,
+    ChangeHotkey = 1004,
 }
 
 const TRAY_ICON_ID: u32 = 1;
@@ -80,6 +81,12 @@ pub(super) fn show_menu(hwnd: HWND) {
             autostart_flags,
             TrayCommand::Autostart as usize,
             w!("Start with Windows"),
+        );
+        let _ = AppendMenuW(
+            menu,
+            MF_STRING,
+            TrayCommand::ChangeHotkey as usize,
+            w!("Change Hotkey…"),
         );
         let _ = AppendMenuW(menu, MF_STRING, TrayCommand::Exit as usize, w!("Exit"));
 

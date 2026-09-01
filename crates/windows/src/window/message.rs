@@ -1,7 +1,8 @@
 use std::sync::Mutex;
 use windows::Win32::UI::Input::KeyboardAndMouse::{
-    HOT_KEY_MODIFIERS, MOD_ALT, MOD_CONTROL, MOD_SHIFT, MOD_WIN, VIRTUAL_KEY, VK_BACK, VK_DOWN,
-    VK_ESCAPE, VK_RETURN, VK_SPACE, VK_TAB, VK_UP,
+    GetKeyState, HOT_KEY_MODIFIERS, MOD_ALT, MOD_CONTROL, MOD_SHIFT, MOD_WIN, VIRTUAL_KEY, VK_BACK,
+    VK_CONTROL, VK_DOWN, VK_ESCAPE, VK_LCONTROL, VK_LMENU, VK_LSHIFT, VK_LWIN, VK_MENU,
+    VK_RCONTROL, VK_RETURN, VK_RMENU, VK_RSHIFT, VK_RWIN, VK_SHIFT, VK_SPACE, VK_TAB, VK_UP,
 };
 
 use super::TrayCommand;
@@ -44,6 +45,27 @@ impl Key {
             Key::Other(vk) => VIRTUAL_KEY(vk),
         }
     }
+
+    pub fn vk(self) -> u16 {
+        self.to_vk().0
+    }
+
+    pub fn is_modifier(self) -> bool {
+        matches!(
+            self.to_vk(),
+            VK_CONTROL
+                | VK_LCONTROL
+                | VK_RCONTROL
+                | VK_SHIFT
+                | VK_LSHIFT
+                | VK_RSHIFT
+                | VK_MENU
+                | VK_LMENU
+                | VK_RMENU
+                | VK_LWIN
+                | VK_RWIN
+        )
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -82,6 +104,21 @@ impl Hotkey {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HotkeySlot {
+    Primary,
+    Secondary,
+}
+
+impl HotkeySlot {
+    pub(super) fn id(self) -> i32 {
+        match self {
+            HotkeySlot::Primary => 1,
+            HotkeySlot::Secondary => 2,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy)]
 pub enum Message {
     Hotkey,
@@ -89,8 +126,21 @@ pub enum Message {
     Command(TrayCommand),
     KillFocus,
     Char(char),
-    KeyDown(Key),
+    KeyDown(Key, Modifiers),
     Paint,
+}
+
+fn is_key_down(vk: VIRTUAL_KEY) -> bool {
+    unsafe { GetKeyState(vk.0 as i32) < 0 }
+}
+
+pub(super) fn current_modifiers() -> Modifiers {
+    Modifiers {
+        ctrl: is_key_down(VK_CONTROL),
+        shift: is_key_down(VK_SHIFT),
+        alt: is_key_down(VK_MENU),
+        win: is_key_down(VK_LWIN) || is_key_down(VK_RWIN),
+    }
 }
 
 static PENDING_HIGH_SURROGATE: Mutex<Option<u16>> = Mutex::new(None);
@@ -251,5 +301,45 @@ mod tests {
     fn new_carries_the_keys_virtual_key_code() {
         let hotkey = Hotkey::new(Modifiers::default(), Key::Other(0x41));
         assert_eq!(hotkey.vk, 0x41);
+    }
+
+    #[test]
+    fn vk_round_trips_a_named_key() {
+        assert_eq!(Key::Space.vk(), VK_SPACE.0);
+    }
+
+    #[test]
+    fn vk_round_trips_an_unnamed_key() {
+        assert_eq!(Key::Other(0x41).vk(), 0x41);
+    }
+
+    #[test]
+    fn every_modifier_variant_is_reported_as_a_modifier() {
+        for vk in [
+            VK_CONTROL,
+            VK_LCONTROL,
+            VK_RCONTROL,
+            VK_SHIFT,
+            VK_LSHIFT,
+            VK_RSHIFT,
+            VK_MENU,
+            VK_LMENU,
+            VK_RMENU,
+            VK_LWIN,
+            VK_RWIN,
+        ] {
+            assert!(
+                Key::Other(vk.0).is_modifier(),
+                "expected vk {:#x} to be reported as a modifier",
+                vk.0
+            );
+        }
+    }
+
+    #[test]
+    fn an_ordinary_key_is_not_a_modifier() {
+        assert!(!Key::Other(0x41).is_modifier());
+        assert!(!Key::Space.is_modifier());
+        assert!(!Key::Escape.is_modifier());
     }
 }
