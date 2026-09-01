@@ -150,7 +150,10 @@ fn targets_uninstaller(target: &str, arguments: &str) -> bool {
         return true;
     }
 
-    exe_name == "msiexec.exe" && (arguments.contains("/x") || arguments.contains("/uninstall"))
+    exe_name == "msiexec.exe"
+        && arguments
+            .split_whitespace()
+            .any(|arg| arg == "/x" || arg == "/uninstall")
 }
 
 fn is_uninstaller_exe_name(exe_name: &str) -> bool {
@@ -531,6 +534,24 @@ mod tests {
         let catalog = StartMenuCatalog::scan(vec![dir.path().into()]);
 
         assert_eq!(catalog.items().len(), 0);
+    }
+
+    #[test]
+    fn does_not_filter_msiexec_shortcuts_with_unrelated_flags() {
+        let dir = tempfile::tempdir().unwrap();
+        {
+            let _com = ComInit::new();
+            create_test_lnk(
+                dir.path(),
+                "Configure Foo",
+                r"C:\Windows\System32\msiexec.exe",
+                "/xmlconfig /import settings.xml",
+            );
+        }
+
+        let catalog = StartMenuCatalog::scan(vec![dir.path().into()]);
+
+        assert_eq!(catalog.items().len(), 1);
     }
 
     #[test]
