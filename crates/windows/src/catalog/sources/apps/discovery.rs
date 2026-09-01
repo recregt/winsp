@@ -1,7 +1,6 @@
 use winsp_core::models::{AppItem, AppTarget};
 
 use super::builtin::built_in_tools;
-use super::com::ComGuard;
 use super::resolve_shortcut_target;
 use super::start_menu::start_menu_dirs;
 
@@ -25,10 +24,6 @@ fn scan_start_menu(
     apps: &mut Vec<AppItem>,
     seen_ids: &mut std::collections::HashSet<String>,
 ) {
-    let Some(_com_guard) = ComGuard::new() else {
-        return;
-    };
-
     for dir_path in dirs {
         scan_directory_for_shortcuts(dir_path, apps, seen_ids);
     }
@@ -79,15 +74,24 @@ mod tests {
     use std::fs;
     use std::os::windows::ffi::OsStrExt;
     use windows::Win32::System::Com::{
-        CLSCTX_INPROC_SERVER, COINIT_MULTITHREADED, CoCreateInstance, CoInitializeEx,
+        CLSCTX_INPROC_SERVER, COINIT_APARTMENTTHREADED, CoCreateInstance, CoInitializeEx,
         CoUninitialize, IPersistFile,
     };
     use windows::Win32::UI::Shell::{IShellLinkW, ShellLink};
     use windows::core::{Interface, PCWSTR};
 
-    struct ConflictingApartmentGuard;
+    struct ComInit;
 
-    impl Drop for ConflictingApartmentGuard {
+    impl ComInit {
+        fn new() -> Self {
+            unsafe {
+                CoInitializeEx(None, COINIT_APARTMENTTHREADED).ok().unwrap();
+            }
+            Self
+        }
+    }
+
+    impl Drop for ComInit {
         fn drop(&mut self) {
             unsafe {
                 CoUninitialize();
@@ -124,12 +128,13 @@ mod tests {
 
     #[test]
     fn dedupes_real_lnk_shortcuts_with_same_target() {
-        let _guard = ComGuard::new();
         let per_user = tempfile::tempdir().unwrap();
         let system_wide = tempfile::tempdir().unwrap();
-
-        create_test_lnk(per_user.path(), "App", r"C:\Apps\App\app.exe", "");
-        create_test_lnk(system_wide.path(), "App", r"C:\Apps\App\app.exe", "");
+        {
+            let _com = ComInit::new();
+            create_test_lnk(per_user.path(), "App", r"C:\Apps\App\app.exe", "");
+            create_test_lnk(system_wide.path(), "App", r"C:\Apps\App\app.exe", "");
+        }
 
         let mut apps = Vec::new();
         let mut seen_ids = std::collections::HashSet::new();
@@ -141,12 +146,13 @@ mod tests {
 
     #[test]
     fn keeps_real_lnk_shortcuts_with_different_targets_same_name() {
-        let _guard = ComGuard::new();
         let per_user = tempfile::tempdir().unwrap();
         let system_wide = tempfile::tempdir().unwrap();
-
-        create_test_lnk(per_user.path(), "App", r"C:\VendorA\app.exe", "");
-        create_test_lnk(system_wide.path(), "App", r"C:\VendorB\app.exe", "");
+        {
+            let _com = ComInit::new();
+            create_test_lnk(per_user.path(), "App", r"C:\VendorA\app.exe", "");
+            create_test_lnk(system_wide.path(), "App", r"C:\VendorB\app.exe", "");
+        }
 
         let mut apps = Vec::new();
         let mut seen_ids = std::collections::HashSet::new();
@@ -158,22 +164,23 @@ mod tests {
 
     #[test]
     fn keeps_real_lnk_shortcuts_with_same_target_different_arguments() {
-        let _guard = ComGuard::new();
         let per_user = tempfile::tempdir().unwrap();
         let system_wide = tempfile::tempdir().unwrap();
-
-        create_test_lnk(
-            per_user.path(),
-            "App",
-            r"C:\Apps\App\app.exe",
-            "--profile=work",
-        );
-        create_test_lnk(
-            system_wide.path(),
-            "App",
-            r"C:\Apps\App\app.exe",
-            "--profile=personal",
-        );
+        {
+            let _com = ComInit::new();
+            create_test_lnk(
+                per_user.path(),
+                "App",
+                r"C:\Apps\App\app.exe",
+                "--profile=work",
+            );
+            create_test_lnk(
+                system_wide.path(),
+                "App",
+                r"C:\Apps\App\app.exe",
+                "--profile=personal",
+            );
+        }
 
         let mut apps = Vec::new();
         let mut seen_ids = std::collections::HashSet::new();
@@ -303,30 +310,5 @@ mod tests {
         scan_directory_for_shortcuts(system_wide.path(), &mut apps, &mut seen_ids);
 
         assert_eq!(apps.len(), 2);
-    }
-
-    #[test]
-    fn skips_shortcut_scan_when_com_apartment_conflicts() {
-        let dir = tempfile::tempdir().unwrap();
-        {
-            let _guard = ComGuard::new();
-            create_test_lnk(
-                dir.path(),
-                "Chrome",
-                r"C:\Program Files\Chrome\chrome.exe",
-                "",
-            );
-        }
-
-        unsafe {
-            CoInitializeEx(None, COINIT_MULTITHREADED).ok().unwrap();
-        }
-        let _cleanup = ConflictingApartmentGuard;
-
-        let mut apps = Vec::new();
-        let mut seen_ids = std::collections::HashSet::new();
-        scan_start_menu(&[dir.path().to_path_buf()], &mut apps, &mut seen_ids);
-
-        assert!(apps.is_empty());
     }
 }

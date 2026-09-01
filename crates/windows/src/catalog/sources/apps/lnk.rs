@@ -1,60 +1,73 @@
-use std::os::windows::ffi::OsStrExt;
-use windows::Win32::System::Com::{
-    CLSCTX_INPROC_SERVER, CoCreateInstance, IPersistFile, STGM_READ,
-};
-use windows::Win32::System::Environment::ExpandEnvironmentStringsW;
-use windows::Win32::UI::Shell::{IShellLinkW, SLGP_RAWPATH, ShellLink};
-use windows::core::{Interface, PCWSTR};
+use lnk::encoding::WINDOWS_1252;
 
 pub(super) fn resolve_lnk_target(path: &std::path::Path) -> Option<String> {
-    unsafe {
-        let shell_link: IShellLinkW =
-            CoCreateInstance(&ShellLink, None, CLSCTX_INPROC_SERVER).ok()?;
-        let persist_file: IPersistFile = shell_link.cast().ok()?;
+    let shell_link = lnk::ShellLink::open(path, WINDOWS_1252).ok()?;
+    identity_from_shell_link(&shell_link)
+}
 
-        let wide_path: Vec<u16> = path.as_os_str().encode_wide().chain(Some(0)).collect();
-        persist_file
-            .Load(PCWSTR(wide_path.as_ptr()), STGM_READ)
-            .ok()?;
+fn identity_from_shell_link(shell_link: &lnk::ShellLink) -> Option<String> {
+    let raw_target = shell_link
+        .link_info()
+        .as_ref()
+        .and_then(|info| {
+            let full_path = format!(
+                "{}{}",
+                info.local_base_path().unwrap_or_default(),
+                info.common_path_suffix()
+            );
+            (!full_path.is_empty()).then_some(full_path)
+        })
+        .or_else(|| shell_link.string_data().relative_path().clone())?;
 
-        let mut raw_path = [0u16; 260];
-        shell_link
-            .GetPath(&mut raw_path, std::ptr::null_mut(), SLGP_RAWPATH.0 as u32)
-            .ok()?;
+    let target = expand_env_vars(&raw_target);
+    if target.is_empty() {
+        return None;
+    }
 
-        let target = expand_env_vars(&raw_path);
-        if target.is_empty() {
-            return None;
+    let arguments = shell_link
+        .string_data()
+        .command_line_arguments()
+        .clone()
+        .unwrap_or_default();
+
+    Some(format!(
+        "{}|{}",
+        target.to_lowercase(),
+        arguments.to_lowercase()
+    ))
+}
+
+fn expand_env_vars(raw: &str) -> String {
+    let mut result = String::with_capacity(raw.len());
+    let mut rest = raw;
+
+    while let Some(start) = rest.find('%') {
+        let (before, after_percent) = rest.split_at(start);
+        result.push_str(before);
+        let after_percent = &after_percent[1..];
+
+        match after_percent.find('%') {
+            Some(end) => {
+                let name = &after_percent[..end];
+                match std::env::var(name) {
+                    Ok(value) => result.push_str(&value),
+                    Err(_) => {
+                        result.push('%');
+                        result.push_str(name);
+                        result.push('%');
+                    }
+                }
+                rest = &after_percent[end + 1..];
+            }
+            None => {
+                result.push('%');
+                rest = after_percent;
+            }
         }
-
-        let mut args_buf = [0u16; 1024];
-        let arguments = shell_link
-            .GetArguments(&mut args_buf)
-            .ok()
-            .map(|()| wide_str_from_buf(&args_buf))
-            .unwrap_or_default();
-
-        Some(format!(
-            "{}|{}",
-            target.to_lowercase(),
-            arguments.to_lowercase()
-        ))
     }
-}
 
-fn wide_str_from_buf(buf: &[u16]) -> String {
-    let end = buf.iter().position(|&c| c == 0).unwrap_or(buf.len());
-    String::from_utf16_lossy(&buf[..end])
-}
-
-fn expand_env_vars(raw: &[u16]) -> String {
-    let mut expanded = [0u16; 260];
-    let written = unsafe { ExpandEnvironmentStringsW(PCWSTR(raw.as_ptr()), Some(&mut expanded)) };
-    if written == 0 || written as usize > expanded.len() {
-        wide_str_from_buf(raw)
-    } else {
-        wide_str_from_buf(&expanded)
-    }
+    result.push_str(rest);
+    result
 }
 
 #[cfg(test)]
@@ -63,17 +76,24 @@ mod tests {
 
     #[test]
     fn expands_environment_variables_in_lnk_target() {
-        let program_files = std::env::var("ProgramFiles").unwrap();
-        let raw: Vec<u16> = std::ffi::OsStr::new(r"%ProgramFiles%\App\app.exe")
-            .encode_wide()
-            .chain(Some(0))
-            .collect();
+        let path = std::env::var("PATH").unwrap();
 
-        let expanded = expand_env_vars(&raw);
+        let expanded = expand_env_vars(r"%PATH%\App\app.exe");
 
-        assert_eq!(
-            expanded.to_lowercase(),
-            format!(r"{program_files}\App\app.exe").to_lowercase()
-        );
+        assert_eq!(expanded, format!(r"{path}\App\app.exe"));
+    }
+
+    #[test]
+    fn leaves_unknown_variables_untouched() {
+        let expanded = expand_env_vars(r"%DefinitelyNotARealVariable%\App\app.exe");
+
+        assert_eq!(expanded, r"%DefinitelyNotARealVariable%\App\app.exe");
+    }
+
+    #[test]
+    fn falls_back_to_none_when_lnk_carries_no_resolvable_target() {
+        let shell_link = lnk::ShellLink::default();
+
+        assert_eq!(identity_from_shell_link(&shell_link), None);
     }
 }
