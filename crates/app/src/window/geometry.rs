@@ -1,6 +1,6 @@
 use winsp_windows::window::Window;
 
-use super::{APP_STATE, ITEM_ROW_HEIGHT, PADDING, SEARCH_BAR_HEIGHT, WINDOW_WIDTH};
+use super::{APP_STATE, ITEM_ROW_HEIGHT, PADDING, RECONCILE_TX, SEARCH_BAR_HEIGHT, WINDOW_WIDTH};
 
 pub(super) fn toggle_visibility(handle: &Window) {
     if handle.is_visible() {
@@ -11,6 +11,9 @@ pub(super) fn toggle_visibility(handle: &Window) {
             if let Ok(mut state) = state_arc.lock() {
                 state.clear_query();
             }
+        }
+        if let Some(tx) = RECONCILE_TX.get() {
+            let _ = tx.send(());
         }
         handle.show();
         handle.invalidate();
