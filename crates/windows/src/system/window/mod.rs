@@ -105,7 +105,7 @@ pub struct WindowHandle {
 }
 
 impl WindowHandle {
-    pub fn new(hwnd: HWND) -> Self {
+    fn new(hwnd: HWND) -> Self {
         Self { hwnd }
     }
 
@@ -182,10 +182,6 @@ impl WindowHandle {
 
             Ok(handle)
         }
-    }
-
-    pub fn hwnd(&self) -> HWND {
-        self.hwnd
     }
 
     pub fn run_message_loop(&self, hotkey: Hotkey) {

@@ -54,9 +54,8 @@ impl Canvas {
         Self { hdc }
     }
 
-    /// # Safety
-    /// `hdc` must be a valid device context handle for the lifetime of the returned `Canvas`.
-    pub unsafe fn from_raw(hdc: HDC) -> Self {
+    #[cfg(feature = "test-support")]
+    unsafe fn from_raw(hdc: HDC) -> Self {
         Self { hdc }
     }
 
