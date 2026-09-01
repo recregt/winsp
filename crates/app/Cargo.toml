@@ -11,6 +11,7 @@ name = "winsp"
 path = "src/main.rs"
 
 [dependencies]
+cfg-if = "1"
 winsp-core = { path = "../core" }
 winsp-windows = { path = "../windows" }
 

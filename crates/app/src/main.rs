@@ -31,34 +31,36 @@ fn test_watch_dir() -> Option<std::path::PathBuf> {
         .map(std::path::PathBuf::from)
 }
 
-#[cfg(windows)]
-const RECONCILE_INTERVAL: std::time::Duration = std::time::Duration::from_secs(600);
-#[cfg(windows)]
-const MIN_RECONCILE_GAP: std::time::Duration = std::time::Duration::from_secs(30);
+cfg_if::cfg_if! {
+    if #[cfg(windows)] {
+        const RECONCILE_INTERVAL: std::time::Duration = std::time::Duration::from_secs(600);
+        const MIN_RECONCILE_GAP: std::time::Duration = std::time::Duration::from_secs(30);
 
-#[cfg(windows)]
-fn engine_from_catalog(
-    catalog: &winsp_windows::catalog::sources::apps::StartMenuCatalog,
-) -> Engine {
-    let mut index = Engine::new();
-    let mut all_items: Vec<AppItem> =
-        winsp_windows::catalog::sources::apps::merge_with_built_ins(catalog.items());
-    all_items.extend(winsp_windows::catalog::sources::settings::list_settings());
+        fn engine_from_catalog(
+            catalog: &winsp_windows::catalog::sources::apps::StartMenuCatalog,
+        ) -> Engine {
+            let mut index = Engine::new();
+            let mut all_items: Vec<AppItem> =
+                winsp_windows::catalog::sources::apps::merge_with_built_ins(catalog.items());
+            all_items.extend(winsp_windows::catalog::sources::settings::list_settings());
 
-    index.set_items(all_items);
-    index
-}
+            index.set_items(all_items);
+            index
+        }
 
-#[cfg(windows)]
-fn notify_if_scan_incomplete(catalog: &winsp_windows::catalog::sources::apps::StartMenuCatalog) {
-    static NOTIFIED: std::sync::Once = std::sync::Once::new();
-    if !catalog.unreadable_dirs().is_empty() {
-        NOTIFIED.call_once(|| {
-            winsp_windows::system::toast::show(
-                "WinSP",
-                "Some Start Menu folders couldn't be scanned. Results may be incomplete.",
-            );
-        });
+        fn notify_if_scan_incomplete(
+            catalog: &winsp_windows::catalog::sources::apps::StartMenuCatalog,
+        ) {
+            static NOTIFIED: std::sync::Once = std::sync::Once::new();
+            if !catalog.unreadable_dirs().is_empty() {
+                NOTIFIED.call_once(|| {
+                    winsp_windows::system::toast::show(
+                        "WinSP",
+                        "Some Start Menu folders couldn't be scanned. Results may be incomplete.",
+                    );
+                });
+            }
+        }
     }
 }
 
@@ -79,21 +81,24 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let start_init = std::time::Instant::now();
 
-    #[cfg(windows)]
-    let initial_catalog = if watch_dir.is_none() {
-        let catalog = winsp_windows::catalog::sources::apps::StartMenuCatalog::for_start_menu();
-        notify_if_scan_incomplete(&catalog);
-        Some(catalog)
-    } else {
-        None
-    };
-    #[cfg(windows)]
-    let index = match &initial_catalog {
-        Some(catalog) => engine_from_catalog(catalog),
-        None => populate_search_index(),
-    };
-    #[cfg(not(windows))]
-    let index = populate_search_index();
+    cfg_if::cfg_if! {
+        if #[cfg(windows)] {
+            let initial_catalog = if watch_dir.is_none() {
+                let catalog =
+                    winsp_windows::catalog::sources::apps::StartMenuCatalog::for_start_menu();
+                notify_if_scan_incomplete(&catalog);
+                Some(catalog)
+            } else {
+                None
+            };
+            let index = match &initial_catalog {
+                Some(catalog) => engine_from_catalog(catalog),
+                None => populate_search_index(),
+            };
+        } else {
+            let index = populate_search_index();
+        }
+    }
 
     let init_duration = start_init.elapsed();
     println!(
@@ -117,32 +122,51 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         })
         .ok()
     } else {
-        #[cfg(windows)]
-        {
-            use std::sync::mpsc;
-            use std::time::Instant;
-            use winsp_windows::catalog::sources::watcher::WatchEvent;
+        cfg_if::cfg_if! {
+            if #[cfg(windows)] {
+                use std::sync::mpsc;
+                use std::time::Instant;
+                use winsp_windows::catalog::sources::watcher::WatchEvent;
 
-            let catalog = Arc::new(Mutex::new(
-                initial_catalog.expect("built above when not running in test-watch mode"),
-            ));
-            let (reconcile_tx, reconcile_rx) = mpsc::channel::<()>();
+                let catalog = Arc::new(Mutex::new(
+                    initial_catalog.expect("built above when not running in test-watch mode"),
+                ));
+                let (reconcile_tx, reconcile_rx) = mpsc::channel::<()>();
 
-            {
-                let state = Arc::clone(&state);
-                let catalog = Arc::clone(&catalog);
-                std::thread::spawn(move || {
-                    let mut last_rescan = Instant::now();
-                    loop {
-                        let _ = reconcile_rx.recv_timeout(RECONCILE_INTERVAL);
-                        while reconcile_rx.try_recv().is_ok() {}
+                {
+                    let state = Arc::clone(&state);
+                    let catalog = Arc::clone(&catalog);
+                    std::thread::spawn(move || {
+                        let mut last_rescan = Instant::now();
+                        loop {
+                            let _ = reconcile_rx.recv_timeout(RECONCILE_INTERVAL);
+                            while reconcile_rx.try_recv().is_ok() {}
 
-                        if last_rescan.elapsed() < MIN_RECONCILE_GAP {
-                            continue;
+                            if last_rescan.elapsed() < MIN_RECONCILE_GAP {
+                                continue;
+                            }
+
+                            if let Ok(mut cat) = catalog.lock() {
+                                cat.rescan();
+                                notify_if_scan_incomplete(&cat);
+                                let index = engine_from_catalog(&cat);
+                                if let Ok(mut app_state) = state.lock() {
+                                    app_state.index = index;
+                                    app_state.refresh_results();
+                                }
+                            }
+                            last_rescan = Instant::now();
                         }
+                    });
+                }
 
+                window::set_reconcile_hook(reconcile_tx.clone());
+
+                let state = Arc::clone(&state);
+                winsp_windows::catalog::sources::watcher::for_start_menu(move |event| match event {
+                    WatchEvent::Changed(paths) => {
                         if let Ok(mut cat) = catalog.lock() {
-                            cat.rescan();
+                            cat.apply_changes(&paths);
                             notify_if_scan_incomplete(&cat);
                             let index = engine_from_catalog(&cat);
                             if let Ok(mut app_state) = state.lock() {
@@ -150,47 +174,25 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 app_state.refresh_results();
                             }
                         }
-                        last_rescan = Instant::now();
                     }
-                });
+                    WatchEvent::Uncertain => {
+                        let _ = reconcile_tx.send(());
+                    }
+                })
+                .ok()
+            } else {
+                None
             }
-
-            window::set_reconcile_hook(reconcile_tx.clone());
-
-            let state = Arc::clone(&state);
-            winsp_windows::catalog::sources::watcher::for_start_menu(move |event| match event {
-                WatchEvent::Changed(paths) => {
-                    if let Ok(mut cat) = catalog.lock() {
-                        cat.apply_changes(&paths);
-                        notify_if_scan_incomplete(&cat);
-                        let index = engine_from_catalog(&cat);
-                        if let Ok(mut app_state) = state.lock() {
-                            app_state.index = index;
-                            app_state.refresh_results();
-                        }
-                    }
-                }
-                WatchEvent::Uncertain => {
-                    let _ = reconcile_tx.send(());
-                }
-            })
-            .ok()
-        }
-        #[cfg(not(windows))]
-        {
-            None
         }
     };
 
-    #[cfg(windows)]
-    {
-        println!("Press Alt+Space to toggle the search bar, Esc to dismiss.");
-        window::run_app(state).map_err(|e| e.into())
-    }
-
-    #[cfg(not(windows))]
-    {
-        run_terminal_demo(state)
+    cfg_if::cfg_if! {
+        if #[cfg(windows)] {
+            println!("Press Alt+Space to toggle the search bar, Esc to dismiss.");
+            window::run_app(state).map_err(|e| e.into())
+        } else {
+            run_terminal_demo(state)
+        }
     }
 }
 
