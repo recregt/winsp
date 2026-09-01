@@ -46,7 +46,9 @@ pub(super) fn handle_message(window: &Window, message: Message) {
                             state.select_prev();
                         }
                         Key::Enter => {
-                            let _ = state.execute_selected();
+                            if let Err(error) = state.execute_selected() {
+                                winsp_windows::system::toast::show("WinSP", &error);
+                            }
                             should_hide = true;
                         }
                         Key::Escape => {
