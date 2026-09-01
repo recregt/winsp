@@ -6,39 +6,55 @@ use windows::Win32::System::Environment::ExpandEnvironmentStringsW;
 use windows::Win32::UI::Shell::{IShellLinkW, SLGP_RAWPATH, ShellLink};
 use windows::core::{Interface, PCWSTR};
 
-pub(super) fn resolve_lnk_target(path: &std::path::Path) -> Option<String> {
-    unsafe {
-        let shell_link: IShellLinkW =
-            CoCreateInstance(&ShellLink, None, CLSCTX_INPROC_SERVER).ok()?;
-        let persist_file: IPersistFile = shell_link.cast().ok()?;
+pub(super) struct LnkResolver {
+    shell_link: IShellLinkW,
+    persist_file: IPersistFile,
+}
 
-        let wide_path: Vec<u16> = path.as_os_str().encode_wide().chain(Some(0)).collect();
-        persist_file
-            .Load(PCWSTR(wide_path.as_ptr()), STGM_READ)
-            .ok()?;
-
-        let mut raw_path = [0u16; 260];
-        shell_link
-            .GetPath(&mut raw_path, std::ptr::null_mut(), SLGP_RAWPATH.0 as u32)
-            .ok()?;
-
-        let target = expand_env_vars(&raw_path);
-        if target.is_empty() {
-            return None;
+impl LnkResolver {
+    pub(super) fn new() -> Option<Self> {
+        unsafe {
+            let shell_link: IShellLinkW =
+                CoCreateInstance(&ShellLink, None, CLSCTX_INPROC_SERVER).ok()?;
+            let persist_file: IPersistFile = shell_link.cast().ok()?;
+            Some(Self {
+                shell_link,
+                persist_file,
+            })
         }
+    }
 
-        let mut args_buf = [0u16; 1024];
-        let arguments = shell_link
-            .GetArguments(&mut args_buf)
-            .ok()
-            .map(|()| wide_str_from_buf(&args_buf))
-            .unwrap_or_default();
+    pub(super) fn resolve(&self, path: &std::path::Path) -> Option<String> {
+        unsafe {
+            let wide_path: Vec<u16> = path.as_os_str().encode_wide().chain(Some(0)).collect();
+            self.persist_file
+                .Load(PCWSTR(wide_path.as_ptr()), STGM_READ)
+                .ok()?;
 
-        Some(format!(
-            "{}|{}",
-            target.to_lowercase(),
-            arguments.to_lowercase()
-        ))
+            let mut raw_path = [0u16; 260];
+            self.shell_link
+                .GetPath(&mut raw_path, std::ptr::null_mut(), SLGP_RAWPATH.0 as u32)
+                .ok()?;
+
+            let target = expand_env_vars(&raw_path);
+            if target.is_empty() {
+                return None;
+            }
+
+            let mut args_buf = [0u16; 1024];
+            let arguments = self
+                .shell_link
+                .GetArguments(&mut args_buf)
+                .ok()
+                .map(|()| wide_str_from_buf(&args_buf))
+                .unwrap_or_default();
+
+            Some(format!(
+                "{}|{}",
+                target.to_lowercase(),
+                arguments.to_lowercase()
+            ))
+        }
     }
 }
 

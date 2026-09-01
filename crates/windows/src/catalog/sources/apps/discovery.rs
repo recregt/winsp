@@ -2,6 +2,7 @@ use winsp_core::models::{AppItem, AppTarget};
 
 use super::builtin::built_in_tools;
 use super::com::ComGuard;
+use super::lnk::LnkResolver;
 use super::resolve_shortcut_target;
 use super::start_menu::start_menu_dirs;
 
@@ -26,9 +27,10 @@ fn scan_start_menu(
     seen_ids: &mut std::collections::HashSet<String>,
 ) {
     let _com_guard = ComGuard::new();
+    let lnk_resolver = LnkResolver::new();
 
     for dir_path in dirs {
-        scan_directory_for_shortcuts(dir_path, apps, seen_ids);
+        scan_directory_for_shortcuts(dir_path, apps, seen_ids, lnk_resolver.as_ref());
     }
 }
 
@@ -36,12 +38,13 @@ fn scan_directory_for_shortcuts(
     dir: &std::path::Path,
     apps: &mut Vec<AppItem>,
     seen_ids: &mut std::collections::HashSet<String>,
+    lnk_resolver: Option<&LnkResolver>,
 ) {
     if let Ok(entries) = std::fs::read_dir(dir) {
         for entry in entries.flatten() {
             let path = entry.path();
             if path.is_dir() {
-                scan_directory_for_shortcuts(&path, apps, seen_ids);
+                scan_directory_for_shortcuts(&path, apps, seen_ids, lnk_resolver);
             } else if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
                 let ext_lower = ext.to_lowercase();
                 if ext_lower == "lnk" || ext_lower == "url" {
@@ -51,7 +54,7 @@ fn scan_directory_for_shortcuts(
                             continue;
                         }
 
-                        let identity = resolve_shortcut_target(&path, &ext_lower)
+                        let identity = resolve_shortcut_target(&path, &ext_lower, lnk_resolver)
                             .unwrap_or_else(|| stem_lower.clone());
                         let id = format!("shortcut:{}", identity);
                         if seen_ids.insert(id.clone()) {
@@ -123,6 +126,7 @@ mod tests {
     #[test]
     fn dedupes_real_lnk_shortcuts_with_same_target() {
         let _guard = ComGuard::new();
+        let resolver = LnkResolver::new();
         let per_user = tempfile::tempdir().unwrap();
         let system_wide = tempfile::tempdir().unwrap();
 
@@ -131,8 +135,13 @@ mod tests {
 
         let mut apps = Vec::new();
         let mut seen_ids = std::collections::HashSet::new();
-        scan_directory_for_shortcuts(per_user.path(), &mut apps, &mut seen_ids);
-        scan_directory_for_shortcuts(system_wide.path(), &mut apps, &mut seen_ids);
+        scan_directory_for_shortcuts(per_user.path(), &mut apps, &mut seen_ids, resolver.as_ref());
+        scan_directory_for_shortcuts(
+            system_wide.path(),
+            &mut apps,
+            &mut seen_ids,
+            resolver.as_ref(),
+        );
 
         assert_eq!(apps.len(), 1);
     }
@@ -140,6 +149,7 @@ mod tests {
     #[test]
     fn keeps_real_lnk_shortcuts_with_different_targets_same_name() {
         let _guard = ComGuard::new();
+        let resolver = LnkResolver::new();
         let per_user = tempfile::tempdir().unwrap();
         let system_wide = tempfile::tempdir().unwrap();
 
@@ -148,8 +158,13 @@ mod tests {
 
         let mut apps = Vec::new();
         let mut seen_ids = std::collections::HashSet::new();
-        scan_directory_for_shortcuts(per_user.path(), &mut apps, &mut seen_ids);
-        scan_directory_for_shortcuts(system_wide.path(), &mut apps, &mut seen_ids);
+        scan_directory_for_shortcuts(per_user.path(), &mut apps, &mut seen_ids, resolver.as_ref());
+        scan_directory_for_shortcuts(
+            system_wide.path(),
+            &mut apps,
+            &mut seen_ids,
+            resolver.as_ref(),
+        );
 
         assert_eq!(apps.len(), 2);
     }
@@ -157,6 +172,7 @@ mod tests {
     #[test]
     fn keeps_real_lnk_shortcuts_with_same_target_different_arguments() {
         let _guard = ComGuard::new();
+        let resolver = LnkResolver::new();
         let per_user = tempfile::tempdir().unwrap();
         let system_wide = tempfile::tempdir().unwrap();
 
@@ -175,8 +191,13 @@ mod tests {
 
         let mut apps = Vec::new();
         let mut seen_ids = std::collections::HashSet::new();
-        scan_directory_for_shortcuts(per_user.path(), &mut apps, &mut seen_ids);
-        scan_directory_for_shortcuts(system_wide.path(), &mut apps, &mut seen_ids);
+        scan_directory_for_shortcuts(per_user.path(), &mut apps, &mut seen_ids, resolver.as_ref());
+        scan_directory_for_shortcuts(
+            system_wide.path(),
+            &mut apps,
+            &mut seen_ids,
+            resolver.as_ref(),
+        );
 
         assert_eq!(apps.len(), 2);
     }
@@ -191,8 +212,8 @@ mod tests {
 
         let mut apps = Vec::new();
         let mut seen_ids = std::collections::HashSet::new();
-        scan_directory_for_shortcuts(per_user.path(), &mut apps, &mut seen_ids);
-        scan_directory_for_shortcuts(system_wide.path(), &mut apps, &mut seen_ids);
+        scan_directory_for_shortcuts(per_user.path(), &mut apps, &mut seen_ids, None);
+        scan_directory_for_shortcuts(system_wide.path(), &mut apps, &mut seen_ids, None);
 
         assert_eq!(apps.len(), 1);
         assert_eq!(apps[0].name.as_ref(), "Chrome");
@@ -208,8 +229,8 @@ mod tests {
 
         let mut apps = Vec::new();
         let mut seen_ids = std::collections::HashSet::new();
-        scan_directory_for_shortcuts(per_user.path(), &mut apps, &mut seen_ids);
-        scan_directory_for_shortcuts(system_wide.path(), &mut apps, &mut seen_ids);
+        scan_directory_for_shortcuts(per_user.path(), &mut apps, &mut seen_ids, None);
+        scan_directory_for_shortcuts(system_wide.path(), &mut apps, &mut seen_ids, None);
 
         assert_eq!(apps.len(), 2);
     }
@@ -225,8 +246,8 @@ mod tests {
 
         let mut apps = Vec::new();
         let mut seen_ids = std::collections::HashSet::new();
-        scan_directory_for_shortcuts(per_user.path(), &mut apps, &mut seen_ids);
-        scan_directory_for_shortcuts(system_wide.path(), &mut apps, &mut seen_ids);
+        scan_directory_for_shortcuts(per_user.path(), &mut apps, &mut seen_ids, None);
+        scan_directory_for_shortcuts(system_wide.path(), &mut apps, &mut seen_ids, None);
 
         assert_eq!(apps.len(), 1);
     }
@@ -249,8 +270,8 @@ mod tests {
 
         let mut apps = Vec::new();
         let mut seen_ids = std::collections::HashSet::new();
-        scan_directory_for_shortcuts(per_user.path(), &mut apps, &mut seen_ids);
-        scan_directory_for_shortcuts(system_wide.path(), &mut apps, &mut seen_ids);
+        scan_directory_for_shortcuts(per_user.path(), &mut apps, &mut seen_ids, None);
+        scan_directory_for_shortcuts(system_wide.path(), &mut apps, &mut seen_ids, None);
 
         assert_eq!(apps.len(), 2);
     }
@@ -273,8 +294,8 @@ mod tests {
 
         let mut apps = Vec::new();
         let mut seen_ids = std::collections::HashSet::new();
-        scan_directory_for_shortcuts(per_user.path(), &mut apps, &mut seen_ids);
-        scan_directory_for_shortcuts(system_wide.path(), &mut apps, &mut seen_ids);
+        scan_directory_for_shortcuts(per_user.path(), &mut apps, &mut seen_ids, None);
+        scan_directory_for_shortcuts(system_wide.path(), &mut apps, &mut seen_ids, None);
 
         assert_eq!(apps.len(), 1);
     }
@@ -297,8 +318,8 @@ mod tests {
 
         let mut apps = Vec::new();
         let mut seen_ids = std::collections::HashSet::new();
-        scan_directory_for_shortcuts(per_user.path(), &mut apps, &mut seen_ids);
-        scan_directory_for_shortcuts(system_wide.path(), &mut apps, &mut seen_ids);
+        scan_directory_for_shortcuts(per_user.path(), &mut apps, &mut seen_ids, None);
+        scan_directory_for_shortcuts(system_wide.path(), &mut apps, &mut seen_ids, None);
 
         assert_eq!(apps.len(), 2);
     }
