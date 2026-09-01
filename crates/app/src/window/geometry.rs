@@ -54,3 +54,14 @@ pub(super) fn begin_hotkey_capture(handle: &Window) {
     handle.show();
     handle.invalidate();
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn to_anchor_maps_each_position_to_its_matching_anchor() {
+        assert_eq!(to_anchor(WindowPosition::Top), Anchor::Top);
+        assert_eq!(to_anchor(WindowPosition::Center), Anchor::Center);
+    }
+}

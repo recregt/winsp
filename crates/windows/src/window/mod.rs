@@ -545,4 +545,91 @@ mod tests {
             let _ = UnregisterClassW(&class_name, Some(GetModuleHandleW(None).unwrap().into()));
         }
     }
+
+    #[test]
+    fn position_for_top_horizontally_centers_and_anchors_near_the_top() {
+        let (x, y) = Anchor::Top.position_for(680, 64);
+        unsafe {
+            assert_eq!(x, (GetSystemMetrics(SM_CXSCREEN) - 680) / 2);
+            assert_eq!(y, GetSystemMetrics(SM_CYSCREEN) / 4);
+        }
+    }
+
+    #[test]
+    fn position_for_center_vertically_centers_using_the_given_height() {
+        let (x, y) = Anchor::Center.position_for(680, 400);
+        unsafe {
+            assert_eq!(x, (GetSystemMetrics(SM_CXSCREEN) - 680) / 2);
+            assert_eq!(y, (GetSystemMetrics(SM_CYSCREEN) - 400) / 2);
+        }
+    }
+
+    #[test]
+    fn top_and_center_agree_on_x_but_differ_on_y() {
+        let (top_x, top_y) = Anchor::Top.position_for(680, 64);
+        let (center_x, center_y) = Anchor::Center.position_for(680, 64);
+        assert_eq!(top_x, center_x);
+        assert_ne!(top_y, center_y);
+    }
+
+    #[test]
+    fn center_places_the_window_at_the_anchors_computed_position() {
+        let class_name = HSTRING::from("WinSpTest_CenterWindow");
+        let hwnd = create_test_window(&class_name);
+        assert!(!hwnd.is_invalid(), "test window creation should succeed");
+        let window = Window::new(hwnd);
+
+        window.center(680, 64, Anchor::Center);
+
+        let (expected_x, expected_y) = Anchor::Center.position_for(680, 64);
+        let mut rect = unsafe { std::mem::zeroed::<RECT>() };
+        unsafe {
+            let _ = GetWindowRect(hwnd, &mut rect);
+        }
+        assert_eq!(rect.left, expected_x);
+        assert_eq!(rect.top, expected_y);
+        assert_eq!(rect.right - rect.left, 680);
+        assert_eq!(rect.bottom - rect.top, 64);
+
+        unsafe {
+            let _ = DestroyWindow(hwnd);
+            let _ = UnregisterClassW(&class_name, Some(GetModuleHandleW(None).unwrap().into()));
+        }
+    }
+
+    #[test]
+    fn reposition_moves_the_window_without_changing_its_size() {
+        let class_name = HSTRING::from("WinSpTest_RepositionWindow");
+        let hwnd = create_test_window(&class_name);
+        assert!(!hwnd.is_invalid(), "test window creation should succeed");
+        let window = Window::new(hwnd);
+
+        window.center(680, 64, Anchor::Top);
+        window.resize(680, 400);
+
+        window.reposition(Anchor::Center);
+
+        let (expected_x, expected_y) = Anchor::Center.position_for(680, 400);
+        let mut rect = unsafe { std::mem::zeroed::<RECT>() };
+        unsafe {
+            let _ = GetWindowRect(hwnd, &mut rect);
+        }
+        assert_eq!(rect.left, expected_x);
+        assert_eq!(rect.top, expected_y);
+        assert_eq!(
+            rect.right - rect.left,
+            680,
+            "reposition must not change width"
+        );
+        assert_eq!(
+            rect.bottom - rect.top,
+            400,
+            "reposition must not change height"
+        );
+
+        unsafe {
+            let _ = DestroyWindow(hwnd);
+            let _ = UnregisterClassW(&class_name, Some(GetModuleHandleW(None).unwrap().into()));
+        }
+    }
 }
