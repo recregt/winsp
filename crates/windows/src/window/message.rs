@@ -46,8 +46,6 @@ impl Key {
     }
 }
 
-/// The modifier keys held alongside a hotkey's trigger key, expressed the way a caller
-/// selects them, not the way Windows represents them on the wire.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct Modifiers {
     pub ctrl: bool,
