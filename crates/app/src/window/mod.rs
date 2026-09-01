@@ -6,7 +6,7 @@ mod wndproc;
 
 use std::sync::{Arc, Mutex, OnceLock};
 
-use winsp_windows::window::{Hotkey, Key};
+use winsp_windows::window::{Hotkey, Key, Window};
 
 use crate::state::AppState;
 use wndproc::handle_message;
@@ -24,7 +24,7 @@ pub fn run_app(state: Arc<Mutex<AppState>>) -> Result<(), String> {
 
     winsp_windows::system::theme::allow_dark_mode_for_app();
 
-    let window_handle = winsp_windows::window::WindowHandle::create(
+    let window_handle = Window::create(
         WINDOW_CLASS_NAME,
         "WinSP",
         WINDOW_WIDTH,

@@ -1,8 +1,8 @@
-use winsp_windows::window::WindowHandle;
+use winsp_windows::window::Window;
 
 use super::{APP_STATE, ITEM_ROW_HEIGHT, PADDING, SEARCH_BAR_HEIGHT, WINDOW_WIDTH};
 
-pub(super) fn toggle_visibility(handle: &WindowHandle) {
+pub(super) fn toggle_visibility(handle: &Window) {
     if handle.is_visible() {
         handle.hide();
     } else {
@@ -17,7 +17,7 @@ pub(super) fn toggle_visibility(handle: &WindowHandle) {
     }
 }
 
-pub(super) fn resize_window_for_results(handle: &WindowHandle, results_count: usize) {
+pub(super) fn resize_window_for_results(handle: &Window, results_count: usize) {
     let height = if results_count == 0 {
         SEARCH_BAR_HEIGHT
     } else {
