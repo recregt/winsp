@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-const DEFAULT_VK: u16 = 0x20; // VK_SPACE
+const DEFAULT_VK: u16 = 0x20;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub(super) struct HotkeyBinding {
@@ -175,6 +175,20 @@ mod tests {
     }
 
     #[test]
+    fn the_default_binding_is_alt_space() {
+        assert_eq!(
+            HotkeyBinding::default(),
+            HotkeyBinding {
+                ctrl: false,
+                shift: false,
+                alt: true,
+                win: false,
+                vk: 0x20,
+            }
+        );
+    }
+
+    #[test]
     fn an_empty_map_with_no_hotkey_key_defaults_to_alt_space() {
         #[derive(Serialize)]
         struct Empty {}
@@ -189,11 +203,6 @@ mod tests {
 
     #[test]
     fn a_136_shaped_file_is_treated_as_having_no_hotkey_configured() {
-        // This is the exact on-disk shape shipped by #136, before `hotkey_vk` was
-        // folded into the nested `HotkeyBinding`. No writer ever persisted a
-        // non-default value for it, so treating an old file as "unconfigured"
-        // (falling back to the current default) is a deliberate choice, not an
-        // accident of `#[serde(default)]` — it does not migrate the old field.
         #[derive(Serialize)]
         struct LegacySettings {
             hotkey_vk: u16,
