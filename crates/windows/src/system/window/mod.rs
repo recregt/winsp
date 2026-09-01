@@ -33,6 +33,9 @@ pub use canvas::{Canvas, Color, Font, FontGuard, FontWeight, Rect, register_embe
 pub use message::{Hotkey, Key, Message};
 pub use tray::TrayCommand;
 
+#[cfg(feature = "test-support")]
+pub use canvas::testing;
+
 static HANDLER: OnceLock<fn(&WindowHandle, Message)> = OnceLock::new();
 
 unsafe extern "system" fn dispatch(

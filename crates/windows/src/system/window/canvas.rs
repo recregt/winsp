@@ -194,3 +194,80 @@ impl Drop for FontGuard {
         }
     }
 }
+
+#[cfg(feature = "test-support")]
+pub mod testing {
+    use super::{Canvas, Color};
+    use windows_sys::Win32::Foundation::RECT;
+    use windows_sys::Win32::Graphics::Gdi::{
+        CreateCompatibleBitmap, CreateCompatibleDC, CreateSolidBrush, DeleteDC, DeleteObject,
+        FillRect, GetDC, GetPixel, HBITMAP, HDC, HGDIOBJ, ReleaseDC, SelectObject, SetBkMode,
+        TRANSPARENT,
+    };
+
+    pub struct OffscreenSurface {
+        hdc: HDC,
+        bitmap: HBITMAP,
+        old_bitmap: HGDIOBJ,
+        width: i32,
+        height: i32,
+    }
+
+    impl OffscreenSurface {
+        pub fn new(width: i32, height: i32) -> Self {
+            unsafe {
+                let screen_dc = GetDC(std::ptr::null_mut());
+                let hdc = CreateCompatibleDC(screen_dc);
+                let bitmap = CreateCompatibleBitmap(screen_dc, width, height);
+                ReleaseDC(std::ptr::null_mut(), screen_dc);
+                let old_bitmap = SelectObject(hdc, bitmap);
+
+                let fill_rect = RECT {
+                    left: 0,
+                    top: 0,
+                    right: width,
+                    bottom: height,
+                };
+                let bg_brush = CreateSolidBrush(0x00000000);
+                FillRect(hdc, &fill_rect, bg_brush);
+                DeleteObject(bg_brush);
+                SetBkMode(hdc, TRANSPARENT as i32);
+
+                Self {
+                    hdc,
+                    bitmap,
+                    old_bitmap,
+                    width,
+                    height,
+                }
+            }
+        }
+
+        pub fn canvas(&self) -> Canvas {
+            unsafe { Canvas::from_raw(self.hdc) }
+        }
+
+        pub fn contains_pixel(&self, color: Color) -> bool {
+            unsafe {
+                for y in 0..self.height {
+                    for x in 0..self.width {
+                        if GetPixel(self.hdc, x, y) == color.0 {
+                            return true;
+                        }
+                    }
+                }
+            }
+            false
+        }
+    }
+
+    impl Drop for OffscreenSurface {
+        fn drop(&mut self) {
+            unsafe {
+                SelectObject(self.hdc, self.old_bitmap);
+                DeleteObject(self.bitmap);
+                DeleteDC(self.hdc);
+            }
+        }
+    }
+}
