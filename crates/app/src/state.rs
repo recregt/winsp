@@ -8,8 +8,6 @@ pub struct AppState {
     pub query: String,
     pub results: Vec<SearchResult>,
     pub selected_index: usize,
-    #[allow(dead_code)]
-    pub is_visible: bool,
 }
 
 impl AppState {
@@ -20,42 +18,41 @@ impl AppState {
             query: String::new(),
             results: initial_results,
             selected_index: 0,
-            is_visible: false,
         }
     }
 
-    #[allow(dead_code)]
+    #[cfg_attr(windows, allow(dead_code))]
     pub fn set_query(&mut self, query: String) {
         self.query = query;
         self.refresh_results();
     }
 
-    #[allow(dead_code)]
+    #[cfg_attr(not(windows), allow(dead_code))]
     pub fn insert_char(&mut self, c: char) {
         self.query.push(c);
         self.refresh_results();
     }
 
-    #[allow(dead_code)]
+    #[cfg_attr(not(windows), allow(dead_code))]
     pub fn backspace(&mut self) {
         self.query.pop();
         self.refresh_results();
     }
 
-    #[allow(dead_code)]
+    #[cfg_attr(not(windows), allow(dead_code))]
     pub fn clear_query(&mut self) {
         self.query.clear();
         self.refresh_results();
     }
 
-    #[allow(dead_code)]
+    #[cfg_attr(not(windows), allow(dead_code))]
     pub fn select_next(&mut self) {
         if !self.results.is_empty() {
             self.selected_index = (self.selected_index + 1) % self.results.len();
         }
     }
 
-    #[allow(dead_code)]
+    #[cfg_attr(not(windows), allow(dead_code))]
     pub fn select_prev(&mut self) {
         if !self.results.is_empty() {
             if self.selected_index == 0 {
@@ -71,7 +68,7 @@ impl AppState {
         self.selected_index = 0;
     }
 
-    #[allow(dead_code)]
+    #[cfg_attr(not(windows), allow(dead_code))]
     pub fn execute_selected(&mut self) -> Result<Option<String>, String> {
         let Some(selected) = self.results.get(self.selected_index) else {
             return Ok(None);
