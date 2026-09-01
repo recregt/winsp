@@ -1,4 +1,4 @@
-use winsp_windows::system::WindowHandle;
+use winsp_windows::window::WindowHandle;
 
 use super::{APP_STATE, ITEM_ROW_HEIGHT, PADDING, SEARCH_BAR_HEIGHT, WINDOW_WIDTH};
 

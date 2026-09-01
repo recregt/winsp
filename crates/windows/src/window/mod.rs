@@ -311,9 +311,9 @@ impl WindowHandle {
     }
 
     pub fn enable_dark_mode(&self) {
-        super::theme::allow_dark_mode_for_window(self.hwnd);
+        crate::system::theme::allow_dark_mode_for_window(self.hwnd);
 
-        let dark_mode: i32 = super::theme::system_uses_dark_mode() as i32;
+        let dark_mode: i32 = crate::system::theme::system_uses_dark_mode() as i32;
         unsafe {
             let _ = DwmSetWindowAttribute(
                 self.hwnd,

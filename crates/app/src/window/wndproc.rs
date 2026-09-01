@@ -1,4 +1,4 @@
-use winsp_windows::system::{Key, Message, TrayCommand, WindowHandle};
+use winsp_windows::window::{Key, Message, TrayCommand, WindowHandle};
 
 use super::APP_STATE;
 use super::geometry::{resize_window_for_results, toggle_visibility};

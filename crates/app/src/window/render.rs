@@ -1,6 +1,6 @@
 use std::sync::OnceLock;
 
-use winsp_windows::system::{Canvas, Color, Font, FontWeight, Rect, register_embedded_font};
+use winsp_windows::window::{Canvas, Color, Font, FontWeight, Rect, register_embedded_font};
 
 use super::{APP_STATE, ITEM_ROW_HEIGHT, SEARCH_BAR_HEIGHT, WINDOW_WIDTH};
 
@@ -170,7 +170,7 @@ pub(super) fn render_ui(canvas: &Canvas, client_rect: Rect) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use winsp_windows::system::testing::OffscreenSurface;
+    use winsp_windows::window::testing::OffscreenSurface;
 
     const BITMAP_WIDTH: i32 = 300;
     const BITMAP_HEIGHT: i32 = 40;
