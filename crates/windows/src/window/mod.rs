@@ -24,8 +24,8 @@ use windows::Win32::UI::WindowsAndMessaging::{
     GetClientRect, GetMessageW, GetSystemMetrics, GetWindowRect, HCURSOR, HICON, HWND_TOPMOST,
     IDC_ARROW, IsWindowVisible, LoadCursorW, LoadIconW, MSG, PM_REMOVE, PeekMessageW,
     PostQuitMessage, RegisterClassExW, SM_CXSCREEN, SM_CYSCREEN, SW_HIDE, SW_SHOW, SWP_NOACTIVATE,
-    SWP_NOMOVE, SetForegroundWindow, SetWindowPos, ShowWindow, TranslateMessage, WM_CHAR,
-    WM_COMMAND, WM_DESTROY, WM_HOTKEY, WM_KEYDOWN, WM_KILLFOCUS, WM_PAINT, WM_RBUTTONUP,
+    SWP_NOMOVE, SWP_NOSIZE, SetForegroundWindow, SetWindowPos, ShowWindow, TranslateMessage,
+    WM_CHAR, WM_COMMAND, WM_DESTROY, WM_HOTKEY, WM_KEYDOWN, WM_KILLFOCUS, WM_PAINT, WM_RBUTTONUP,
     WM_SYSKEYDOWN, WNDCLASSEXW, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP,
 };
 use windows::core::{HSTRING, PCWSTR};
@@ -100,6 +100,28 @@ unsafe extern "system" fn dispatch(
             LRESULT(0)
         }
         _ => unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) },
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Anchor {
+    Top,
+    Center,
+}
+
+impl Anchor {
+    fn position_for(self, width: i32, height: i32) -> (i32, i32) {
+        unsafe {
+            let screen_width = GetSystemMetrics(SM_CXSCREEN);
+            let screen_height = GetSystemMetrics(SM_CYSCREEN);
+
+            let x = (screen_width - width) / 2;
+            let y = match self {
+                Anchor::Top => screen_height / 4,
+                Anchor::Center => (screen_height - height) / 2,
+            };
+            (x, y)
+        }
     }
 }
 
@@ -301,14 +323,9 @@ impl Window {
         }
     }
 
-    pub fn center(&self, width: i32, height: i32) {
+    pub fn center(&self, width: i32, height: i32, anchor: Anchor) {
+        let (x, y) = anchor.position_for(width, height);
         unsafe {
-            let screen_width = GetSystemMetrics(SM_CXSCREEN);
-            let screen_height = GetSystemMetrics(SM_CYSCREEN);
-
-            let x = (screen_width - width) / 2;
-            let y = screen_height / 4;
-
             let _ = SetWindowPos(
                 self.hwnd,
                 Some(HWND_TOPMOST),
@@ -337,6 +354,23 @@ impl Window {
         }
     }
 
+    pub fn reposition(&self, anchor: Anchor) {
+        unsafe {
+            let mut rect = std::mem::zeroed::<RECT>();
+            let _ = GetWindowRect(self.hwnd, &mut rect);
+            let (x, y) = anchor.position_for(rect.right - rect.left, rect.bottom - rect.top);
+            let _ = SetWindowPos(
+                self.hwnd,
+                Some(HWND_TOPMOST),
+                x,
+                y,
+                0,
+                0,
+                SWP_NOSIZE | SWP_NOACTIVATE,
+            );
+        }
+    }
+
     pub fn enable_dark_mode(&self) {
         crate::system::theme::allow_dark_mode_for_window(self.hwnd);
 
@@ -355,8 +389,8 @@ impl Window {
         tray::add(self.hwnd);
     }
 
-    pub fn show_tray_menu(&self) {
-        tray::show_menu(self.hwnd);
+    pub fn show_tray_menu(&self, current_position: Anchor) {
+        tray::show_menu(self.hwnd, current_position);
     }
 }
 
@@ -504,6 +538,93 @@ mod tests {
         assert!(
             still_pending,
             "discard_pending_char should not remove messages other than WM_CHAR"
+        );
+
+        unsafe {
+            let _ = DestroyWindow(hwnd);
+            let _ = UnregisterClassW(&class_name, Some(GetModuleHandleW(None).unwrap().into()));
+        }
+    }
+
+    #[test]
+    fn position_for_top_horizontally_centers_and_anchors_near_the_top() {
+        let (x, y) = Anchor::Top.position_for(680, 64);
+        unsafe {
+            assert_eq!(x, (GetSystemMetrics(SM_CXSCREEN) - 680) / 2);
+            assert_eq!(y, GetSystemMetrics(SM_CYSCREEN) / 4);
+        }
+    }
+
+    #[test]
+    fn position_for_center_vertically_centers_using_the_given_height() {
+        let (x, y) = Anchor::Center.position_for(680, 400);
+        unsafe {
+            assert_eq!(x, (GetSystemMetrics(SM_CXSCREEN) - 680) / 2);
+            assert_eq!(y, (GetSystemMetrics(SM_CYSCREEN) - 400) / 2);
+        }
+    }
+
+    #[test]
+    fn top_and_center_agree_on_x_but_differ_on_y() {
+        let (top_x, top_y) = Anchor::Top.position_for(680, 64);
+        let (center_x, center_y) = Anchor::Center.position_for(680, 64);
+        assert_eq!(top_x, center_x);
+        assert_ne!(top_y, center_y);
+    }
+
+    #[test]
+    fn center_places_the_window_at_the_anchors_computed_position() {
+        let class_name = HSTRING::from("WinSpTest_CenterWindow");
+        let hwnd = create_test_window(&class_name);
+        assert!(!hwnd.is_invalid(), "test window creation should succeed");
+        let window = Window::new(hwnd);
+
+        window.center(680, 64, Anchor::Center);
+
+        let (expected_x, expected_y) = Anchor::Center.position_for(680, 64);
+        let mut rect = unsafe { std::mem::zeroed::<RECT>() };
+        unsafe {
+            let _ = GetWindowRect(hwnd, &mut rect);
+        }
+        assert_eq!(rect.left, expected_x);
+        assert_eq!(rect.top, expected_y);
+        assert_eq!(rect.right - rect.left, 680);
+        assert_eq!(rect.bottom - rect.top, 64);
+
+        unsafe {
+            let _ = DestroyWindow(hwnd);
+            let _ = UnregisterClassW(&class_name, Some(GetModuleHandleW(None).unwrap().into()));
+        }
+    }
+
+    #[test]
+    fn reposition_moves_the_window_without_changing_its_size() {
+        let class_name = HSTRING::from("WinSpTest_RepositionWindow");
+        let hwnd = create_test_window(&class_name);
+        assert!(!hwnd.is_invalid(), "test window creation should succeed");
+        let window = Window::new(hwnd);
+
+        window.center(680, 64, Anchor::Top);
+        window.resize(680, 400);
+
+        window.reposition(Anchor::Center);
+
+        let (expected_x, expected_y) = Anchor::Center.position_for(680, 400);
+        let mut rect = unsafe { std::mem::zeroed::<RECT>() };
+        unsafe {
+            let _ = GetWindowRect(hwnd, &mut rect);
+        }
+        assert_eq!(rect.left, expected_x);
+        assert_eq!(rect.top, expected_y);
+        assert_eq!(
+            rect.right - rect.left,
+            680,
+            "reposition must not change width"
+        );
+        assert_eq!(
+            rect.bottom - rect.top,
+            400,
+            "reposition must not change height"
         );
 
         unsafe {

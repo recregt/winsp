@@ -7,6 +7,8 @@ use windows::Win32::UI::Shell::{
 use windows::Win32::UI::WindowsAndMessaging::*;
 use windows::core::{PCWSTR, w};
 
+use super::Anchor;
+
 pub(super) const WM_TRAYICON: u32 = WM_APP + 1;
 
 #[repr(usize)]
@@ -16,6 +18,8 @@ pub enum TrayCommand {
     Autostart = 1002,
     Exit = 1003,
     ChangeHotkey = 1004,
+    PositionTop = 1005,
+    PositionCenter = 1006,
 }
 
 const TRAY_ICON_ID: u32 = 1;
@@ -57,7 +61,22 @@ pub(super) fn remove(hwnd: HWND) {
     }
 }
 
-pub(super) fn show_menu(hwnd: HWND) {
+fn checked_flag(is_current: bool) -> MENU_ITEM_FLAGS {
+    if is_current {
+        MF_STRING | MF_CHECKED
+    } else {
+        MF_STRING | MF_UNCHECKED
+    }
+}
+
+fn position_flags(current_position: Anchor) -> (MENU_ITEM_FLAGS, MENU_ITEM_FLAGS) {
+    (
+        checked_flag(current_position == Anchor::Top),
+        checked_flag(current_position == Anchor::Center),
+    )
+}
+
+pub(super) fn show_menu(hwnd: HWND, current_position: Anchor) {
     if !unsafe { IsWindow(Some(hwnd)) }.as_bool() {
         return;
     }
@@ -65,11 +84,8 @@ pub(super) fn show_menu(hwnd: HWND) {
         let Ok(menu) = CreatePopupMenu() else {
             return;
         };
-        let autostart_flags = if crate::system::autostart::is_enabled() {
-            MF_STRING | MF_CHECKED
-        } else {
-            MF_STRING | MF_UNCHECKED
-        };
+        let autostart_flags = checked_flag(crate::system::autostart::is_enabled());
+        let (top_flags, center_flags) = position_flags(current_position);
         let _ = AppendMenuW(
             menu,
             MF_STRING,
@@ -87,6 +103,18 @@ pub(super) fn show_menu(hwnd: HWND) {
             MF_STRING,
             TrayCommand::ChangeHotkey as usize,
             w!("Change Hotkey…"),
+        );
+        let _ = AppendMenuW(
+            menu,
+            top_flags,
+            TrayCommand::PositionTop as usize,
+            w!("Position: Top"),
+        );
+        let _ = AppendMenuW(
+            menu,
+            center_flags,
+            TrayCommand::PositionCenter as usize,
+            w!("Position: Center"),
         );
         let _ = AppendMenuW(menu, MF_STRING, TrayCommand::Exit as usize, w!("Exit"));
 
@@ -108,6 +136,17 @@ mod tests {
         WNDCLASSEXW,
     };
     use windows::core::HSTRING;
+
+    #[test]
+    fn position_flags_checks_only_the_current_anchors_item() {
+        let (top, center) = position_flags(Anchor::Top);
+        assert_eq!(top, MF_STRING | MF_CHECKED);
+        assert_eq!(center, MF_STRING | MF_UNCHECKED);
+
+        let (top, center) = position_flags(Anchor::Center);
+        assert_eq!(top, MF_STRING | MF_UNCHECKED);
+        assert_eq!(center, MF_STRING | MF_CHECKED);
+    }
 
     unsafe extern "system" fn noop_wnd_proc(
         hwnd: HWND,

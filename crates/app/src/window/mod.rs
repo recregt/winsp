@@ -12,6 +12,8 @@ use std::sync::{Arc, Mutex, OnceLock};
 
 use winsp_windows::window::{Hotkey, Key, Modifiers, Window};
 
+use geometry::to_anchor;
+
 use crate::state::AppState;
 use settings::Settings;
 use wndproc::handle_message;
@@ -45,6 +47,7 @@ pub fn run_app(state: Arc<Mutex<AppState>>) -> Result<(), String> {
         win: settings.hotkey.win,
     };
     let hotkey = Hotkey::new(modifiers, Key::Other(settings.hotkey.vk));
+    let anchor = to_anchor(settings.position);
     let _ = SETTINGS.set(Mutex::new(settings));
 
     winsp_windows::system::theme::allow_dark_mode_for_app();
@@ -59,7 +62,7 @@ pub fn run_app(state: Arc<Mutex<AppState>>) -> Result<(), String> {
     .map_err(|e| format!("failed to create window: {e}"))?;
     window_handle.enable_dark_mode();
 
-    window_handle.center(WINDOW_WIDTH, SEARCH_BAR_HEIGHT);
+    window_handle.center(WINDOW_WIDTH, SEARCH_BAR_HEIGHT, anchor);
     window_handle.add_tray_icon();
     window_handle.run_message_loop(hotkey);
 
