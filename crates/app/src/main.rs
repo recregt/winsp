@@ -49,6 +49,19 @@ fn engine_from_catalog(
     index
 }
 
+#[cfg(windows)]
+fn notify_if_scan_incomplete(catalog: &winsp_windows::catalog::sources::apps::StartMenuCatalog) {
+    static NOTIFIED: std::sync::Once = std::sync::Once::new();
+    if !catalog.unreadable_dirs().is_empty() {
+        NOTIFIED.call_once(|| {
+            winsp_windows::system::toast::show(
+                "WinSP",
+                "Some Start Menu folders couldn't be scanned. Results may be incomplete.",
+            );
+        });
+    }
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     #[cfg(windows)]
     let _instance_mutex = match winsp_windows::system::single_instance::acquire(
@@ -93,7 +106,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             use winsp_windows::catalog::sources::apps::StartMenuCatalog;
             use winsp_windows::catalog::sources::watcher::WatchEvent;
 
-            let catalog = Arc::new(Mutex::new(StartMenuCatalog::for_start_menu()));
+            let initial_catalog = StartMenuCatalog::for_start_menu();
+            notify_if_scan_incomplete(&initial_catalog);
+            let catalog = Arc::new(Mutex::new(initial_catalog));
             let (reconcile_tx, reconcile_rx) = mpsc::channel::<()>();
 
             {
@@ -111,6 +126,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                         if let Ok(mut cat) = catalog.lock() {
                             cat.rescan();
+                            notify_if_scan_incomplete(&cat);
                             let index = engine_from_catalog(&cat);
                             if let Ok(mut app_state) = state.lock() {
                                 app_state.index = index;
@@ -129,6 +145,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 WatchEvent::Changed(paths) => {
                     if let Ok(mut cat) = catalog.lock() {
                         cat.apply_changes(&paths);
+                        notify_if_scan_incomplete(&cat);
                         let index = engine_from_catalog(&cat);
                         if let Ok(mut app_state) = state.lock() {
                             app_state.index = index;

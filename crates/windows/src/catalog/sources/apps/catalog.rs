@@ -14,6 +14,7 @@ struct ScannedShortcut {
 pub struct StartMenuCatalog {
     dirs: Vec<PathBuf>,
     shortcuts: std::collections::HashMap<PathBuf, ScannedShortcut>,
+    unreadable_dirs: Vec<PathBuf>,
 }
 
 impl StartMenuCatalog {
@@ -23,10 +24,15 @@ impl StartMenuCatalog {
 
     pub fn scan(dirs: Vec<PathBuf>) -> Self {
         let mut shortcuts = std::collections::HashMap::new();
+        let mut unreadable_dirs = Vec::new();
         for (priority, dir) in dirs.iter().enumerate() {
-            collect_shortcuts(dir, priority, &mut shortcuts);
+            collect_shortcuts(dir, priority, &mut shortcuts, &mut unreadable_dirs);
         }
-        Self { dirs, shortcuts }
+        Self {
+            dirs,
+            shortcuts,
+            unreadable_dirs,
+        }
     }
 
     pub fn rescan(&mut self) {
@@ -53,7 +59,12 @@ impl StartMenuCatalog {
             .unwrap_or(usize::MAX);
 
         if path.is_dir() {
-            collect_shortcuts(path, priority, &mut self.shortcuts);
+            collect_shortcuts(
+                path,
+                priority,
+                &mut self.shortcuts,
+                &mut self.unreadable_dirs,
+            );
         } else {
             insert_if_shortcut(path, priority, &mut self.shortcuts);
         }
@@ -74,22 +85,30 @@ impl StartMenuCatalog {
         }
         items
     }
+
+    pub fn unreadable_dirs(&self) -> &[PathBuf] {
+        &self.unreadable_dirs
+    }
 }
 
 fn collect_shortcuts(
     dir: &Path,
     priority: usize,
     shortcuts: &mut std::collections::HashMap<PathBuf, ScannedShortcut>,
+    unreadable_dirs: &mut Vec<PathBuf>,
 ) {
-    if let Ok(entries) = std::fs::read_dir(dir) {
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.is_dir() {
-                collect_shortcuts(&path, priority, shortcuts);
-            } else {
-                insert_if_shortcut(&path, priority, shortcuts);
+    match std::fs::read_dir(dir) {
+        Ok(entries) => {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.is_dir() {
+                    collect_shortcuts(&path, priority, shortcuts, unreadable_dirs);
+                } else {
+                    insert_if_shortcut(&path, priority, shortcuts);
+                }
             }
         }
+        Err(_) => unreadable_dirs.push(dir.to_path_buf()),
     }
 }
 
@@ -489,6 +508,40 @@ mod tests {
         catalog.apply_changes(&[subfolder]);
 
         assert_eq!(catalog.items().len(), 0);
+    }
+
+    #[test]
+    fn scan_records_directories_it_could_not_read() {
+        let dir = tempfile::tempdir().unwrap();
+        let missing = dir.path().join("does-not-exist");
+
+        let catalog = StartMenuCatalog::scan(vec![dir.path().into(), missing.clone()]);
+
+        assert_eq!(catalog.unreadable_dirs(), &[missing]);
+    }
+
+    #[test]
+    fn unreadable_dirs_is_empty_for_a_clean_scan() {
+        let dir = tempfile::tempdir().unwrap();
+
+        let catalog = StartMenuCatalog::scan(vec![dir.path().into()]);
+
+        assert!(catalog.unreadable_dirs().is_empty());
+    }
+
+    #[test]
+    fn rescan_clears_a_previously_unreadable_directory_once_it_recovers() {
+        let dir = tempfile::tempdir().unwrap();
+        let later_created = dir.path().join("VendorX");
+
+        let mut catalog = StartMenuCatalog::scan(vec![later_created.clone()]);
+        let expected = [later_created.clone()];
+        assert_eq!(catalog.unreadable_dirs(), &expected);
+
+        fs::create_dir(&later_created).unwrap();
+        catalog.rescan();
+
+        assert!(catalog.unreadable_dirs().is_empty());
     }
 
     #[test]
