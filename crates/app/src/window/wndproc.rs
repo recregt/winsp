@@ -137,6 +137,9 @@ fn set_position(window: &Window, position: WindowPosition) {
     };
 
     let previous = settings.position;
+    if previous == position {
+        return;
+    }
     settings.position = position;
     if let Err(err) = settings.save() {
         settings.position = previous;
