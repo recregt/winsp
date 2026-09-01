@@ -4,15 +4,9 @@ mod state;
 mod window;
 
 use state::AppState;
-#[cfg(not(windows))]
-use std::io::{self, Write};
 use std::sync::{Arc, Mutex};
 use winsp_core::models::AppItem;
 use winsp_core::search::Engine;
-
-#[cfg(windows)]
-#[global_allocator]
-static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
 fn populate_search_index() -> Engine {
     let mut index = Engine::new();
@@ -33,6 +27,9 @@ fn test_watch_dir() -> Option<std::path::PathBuf> {
 
 cfg_if::cfg_if! {
     if #[cfg(windows)] {
+        #[global_allocator]
+        static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
         use winsp_windows::catalog::sources::apps::StartMenuCatalog;
         use winsp_windows::catalog::sources::watcher::WatchEvent;
 
@@ -125,60 +122,49 @@ cfg_if::cfg_if! {
                 }
             }
         }
-    }
-}
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
-    #[cfg(windows)]
-    let _instance_mutex = match winsp_windows::system::single_instance::acquire(
-        "WinSP_SingleInstance_Mutex",
-        window::WINDOW_CLASS_NAME,
-    ) {
-        Some(mutex) => mutex,
-        None => {
-            println!("WinSP is already running, focusing the existing window.");
-            return Ok(());
-        }
-    };
+        fn main() -> Result<(), Box<dyn std::error::Error>> {
+            let _instance_mutex = match winsp_windows::system::single_instance::acquire(
+                "WinSP_SingleInstance_Mutex",
+                window::WINDOW_CLASS_NAME,
+            ) {
+                Some(mutex) => mutex,
+                None => {
+                    println!("WinSP is already running, focusing the existing window.");
+                    return Ok(());
+                }
+            };
 
-    let watch_dir = test_watch_dir();
+            let watch_dir = test_watch_dir();
 
-    let start_init = std::time::Instant::now();
-    cfg_if::cfg_if! {
-        if #[cfg(windows)] {
+            let start_init = std::time::Instant::now();
             let initial_catalog = build_initial_catalog(watch_dir.is_some());
             let index = match &initial_catalog {
                 Some(catalog) => engine_from_catalog(catalog),
                 None => populate_search_index(),
             };
-        } else {
-            let index = populate_search_index();
-        }
-    }
-    let init_duration = start_init.elapsed();
-    println!(
-        "Indexed {} applications & settings in {:.2?}",
-        index.len(),
-        init_duration
-    );
+            let init_duration = start_init.elapsed();
+            println!(
+                "Indexed {} applications & settings in {:.2?}",
+                index.len(),
+                init_duration
+            );
 
-    let state = Arc::new(Mutex::new(AppState::new(index)));
+            let state = Arc::new(Mutex::new(AppState::new(index)));
 
-    let _reindex_watcher = if let Some(dir) = watch_dir {
-        println!("Test mode: watching {} for changes", dir.display());
-        let state = Arc::clone(&state);
-        winsp_windows::catalog::sources::watcher::for_dirs(&[dir], move |_event| {
-            let index = populate_search_index();
-            println!("Reindex triggered: {} items", index.len());
-            if let Ok(mut app_state) = state.lock() {
-                app_state.index = index;
-                app_state.refresh_results();
-            }
-        })
-        .ok()
-    } else {
-        cfg_if::cfg_if! {
-            if #[cfg(windows)] {
+            let _reindex_watcher = if let Some(dir) = watch_dir {
+                println!("Test mode: watching {} for changes", dir.display());
+                let state = Arc::clone(&state);
+                winsp_windows::catalog::sources::watcher::for_dirs(&[dir], move |_event| {
+                    let index = populate_search_index();
+                    println!("Reindex triggered: {} items", index.len());
+                    if let Ok(mut app_state) = state.lock() {
+                        app_state.index = index;
+                        app_state.refresh_results();
+                    }
+                })
+                .ok()
+            } else {
                 let catalog = Arc::new(Mutex::new(
                     initial_catalog.expect("built above when not running in test-watch mode"),
                 ));
@@ -190,62 +176,76 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     handle_watch_event(event, &state, &catalog, &reconcile_tx);
                 })
                 .ok()
-            } else {
-                None
-            }
-        }
-    };
+            };
 
-    cfg_if::cfg_if! {
-        if #[cfg(windows)] {
             println!("Press Alt+Space to toggle the search bar, Esc to dismiss.");
             window::run_app(state).map_err(|e| e.into())
-        } else {
+        }
+    } else {
+        use std::io::{self, Write};
+
+        fn main() -> Result<(), Box<dyn std::error::Error>> {
+            let index = populate_search_index();
+            let state = Arc::new(Mutex::new(AppState::new(index)));
+
+            let _reindex_watcher = test_watch_dir().and_then(|dir| {
+                println!("Test mode: watching {} for changes", dir.display());
+                let state = Arc::clone(&state);
+                winsp_windows::catalog::sources::watcher::for_dirs(&[dir], move |_event| {
+                    let index = populate_search_index();
+                    println!("Reindex triggered: {} items", index.len());
+                    if let Ok(mut app_state) = state.lock() {
+                        app_state.index = index;
+                        app_state.refresh_results();
+                    }
+                })
+                .ok()
+            });
+
             run_terminal_demo(state)
         }
-    }
-}
 
-#[cfg(not(windows))]
-fn run_terminal_demo(state: Arc<Mutex<AppState>>) -> Result<(), Box<dyn std::error::Error>> {
-    println!("Cross-platform interactive demo mode.");
-    println!("Type a query to search, '=expr' for math, or ':q' to quit.");
+        fn run_terminal_demo(state: Arc<Mutex<AppState>>) -> Result<(), Box<dyn std::error::Error>> {
+            println!("Cross-platform interactive demo mode.");
+            println!("Type a query to search, '=expr' for math, or ':q' to quit.");
 
-    loop {
-        print!("Spotlight > ");
-        io::stdout().flush()?;
+            loop {
+                print!("Spotlight > ");
+                io::stdout().flush()?;
 
-        let mut input = String::new();
-        if io::stdin().read_line(&mut input)? == 0 {
-            break;
-        }
+                let mut input = String::new();
+                if io::stdin().read_line(&mut input)? == 0 {
+                    break;
+                }
 
-        let query = input.trim();
-        if query == ":q" || query == "exit" {
-            break;
-        }
+                let query = input.trim();
+                if query == ":q" || query == "exit" {
+                    break;
+                }
 
-        let start_search = std::time::Instant::now();
-        let mut app_state = state.lock().unwrap();
-        app_state.set_query(query.to_string());
-        let search_duration = start_search.elapsed();
+                let start_search = std::time::Instant::now();
+                let mut app_state = state.lock().unwrap();
+                app_state.set_query(query.to_string());
+                let search_duration = start_search.elapsed();
 
-        println!(
-            "Found {} in {:.3?}",
-            app_state.results.len(),
-            search_duration
-        );
+                println!(
+                    "Found {} in {:.3?}",
+                    app_state.results.len(),
+                    search_duration
+                );
 
-        if app_state.results.is_empty() {
-            println!("  No matching applications or calculations found.");
-        } else {
-            for (i, res) in app_state.results.iter().enumerate() {
-                let sub = res.subtitle.as_deref().unwrap_or("");
-                println!("  [{}] {:<25} | {}", i + 1, res.title, sub);
+                if app_state.results.is_empty() {
+                    println!("  No matching applications or calculations found.");
+                } else {
+                    for (i, res) in app_state.results.iter().enumerate() {
+                        let sub = res.subtitle.as_deref().unwrap_or("");
+                        println!("  [{}] {:<25} | {}", i + 1, res.title, sub);
+                    }
+                }
+                println!();
             }
-        }
-        println!();
-    }
 
-    Ok(())
+            Ok(())
+        }
+    }
 }
