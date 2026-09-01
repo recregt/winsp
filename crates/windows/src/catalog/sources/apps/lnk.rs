@@ -1,12 +1,11 @@
-use std::os::windows::ffi::OsStrExt;
-
 use lnk::encoding::WINDOWS_1252;
-use windows::Win32::System::Environment::ExpandEnvironmentStringsW;
-use windows::core::PCWSTR;
 
 pub(super) fn resolve_lnk_target(path: &std::path::Path) -> Option<String> {
     let shell_link = lnk::ShellLink::open(path, WINDOWS_1252).ok()?;
+    identity_from_shell_link(&shell_link)
+}
 
+fn identity_from_shell_link(shell_link: &lnk::ShellLink) -> Option<String> {
     let raw_target = shell_link
         .link_info()
         .as_ref()
@@ -39,21 +38,36 @@ pub(super) fn resolve_lnk_target(path: &std::path::Path) -> Option<String> {
 }
 
 fn expand_env_vars(raw: &str) -> String {
-    let wide: Vec<u16> = std::ffi::OsStr::new(raw)
-        .encode_wide()
-        .chain(Some(0))
-        .collect();
-    let mut expanded = [0u16; 260];
-    let written = unsafe { ExpandEnvironmentStringsW(PCWSTR(wide.as_ptr()), Some(&mut expanded)) };
-    if written == 0 || written as usize > expanded.len() {
-        raw.to_string()
-    } else {
-        let end = expanded
-            .iter()
-            .position(|&c| c == 0)
-            .unwrap_or(expanded.len());
-        String::from_utf16_lossy(&expanded[..end])
+    let mut result = String::with_capacity(raw.len());
+    let mut rest = raw;
+
+    while let Some(start) = rest.find('%') {
+        let (before, after_percent) = rest.split_at(start);
+        result.push_str(before);
+        let after_percent = &after_percent[1..];
+
+        match after_percent.find('%') {
+            Some(end) => {
+                let name = &after_percent[..end];
+                match std::env::var(name) {
+                    Ok(value) => result.push_str(&value),
+                    Err(_) => {
+                        result.push('%');
+                        result.push_str(name);
+                        result.push('%');
+                    }
+                }
+                rest = &after_percent[end + 1..];
+            }
+            None => {
+                result.push('%');
+                rest = after_percent;
+            }
+        }
     }
+
+    result.push_str(rest);
+    result
 }
 
 #[cfg(test)]
@@ -62,13 +76,24 @@ mod tests {
 
     #[test]
     fn expands_environment_variables_in_lnk_target() {
-        let program_files = std::env::var("ProgramFiles").unwrap();
+        let path = std::env::var("PATH").unwrap();
 
-        let expanded = expand_env_vars(r"%ProgramFiles%\App\app.exe");
+        let expanded = expand_env_vars(r"%PATH%\App\app.exe");
 
-        assert_eq!(
-            expanded.to_lowercase(),
-            format!(r"{program_files}\App\app.exe").to_lowercase()
-        );
+        assert_eq!(expanded, format!(r"{path}\App\app.exe"));
+    }
+
+    #[test]
+    fn leaves_unknown_variables_untouched() {
+        let expanded = expand_env_vars(r"%DefinitelyNotARealVariable%\App\app.exe");
+
+        assert_eq!(expanded, r"%DefinitelyNotARealVariable%\App\app.exe");
+    }
+
+    #[test]
+    fn falls_back_to_none_when_lnk_carries_no_resolvable_target() {
+        let shell_link = lnk::ShellLink::default();
+
+        assert_eq!(identity_from_shell_link(&shell_link), None);
     }
 }
