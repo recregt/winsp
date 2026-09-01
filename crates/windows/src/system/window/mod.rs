@@ -4,30 +4,31 @@ mod tray;
 
 use std::sync::OnceLock;
 
-use crate::system::registry::to_wide;
-use windows_sys::Win32::Foundation::{HWND, LPARAM, LRESULT, RECT, WPARAM};
-use windows_sys::Win32::Graphics::Dwm::{
+use windows::Win32::Foundation::{HINSTANCE, HWND, LPARAM, LRESULT, RECT, WPARAM};
+use windows::Win32::Graphics::Dwm::{
     DWMSBT_TRANSIENTWINDOW, DWMWA_SYSTEMBACKDROP_TYPE, DWMWA_USE_IMMERSIVE_DARK_MODE,
     DWMWA_WINDOW_CORNER_PREFERENCE, DWMWCP_ROUND, DwmSetWindowAttribute,
 };
-use windows_sys::Win32::Graphics::Gdi::{
+use windows::Win32::Graphics::Gdi::{
     BeginPaint, BitBlt, CreateCompatibleBitmap, CreateCompatibleDC, DeleteDC, DeleteObject,
     EndPaint, GetStockObject, InvalidateRect, PAINTSTRUCT, SRCCOPY, SelectObject, SetBkMode,
     TRANSPARENT, WHITE_BRUSH,
 };
-use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
-use windows_sys::Win32::UI::HiDpi::{
+use windows::Win32::System::LibraryLoader::GetModuleHandleW;
+use windows::Win32::UI::HiDpi::{
     DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2, SetProcessDpiAwarenessContext,
 };
-use windows_sys::Win32::UI::Input::KeyboardAndMouse::{RegisterHotKey, UnregisterHotKey};
-use windows_sys::Win32::UI::WindowsAndMessaging::{
+use windows::Win32::UI::Input::KeyboardAndMouse::{RegisterHotKey, UnregisterHotKey};
+use windows::Win32::UI::WindowsAndMessaging::{
     CS_HREDRAW, CS_VREDRAW, CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW,
-    GetClientRect, GetMessageW, GetSystemMetrics, GetWindowRect, HWND_TOPMOST, IDC_ARROW,
-    IsWindowVisible, LoadCursorW, LoadIconW, MSG, PostQuitMessage, RegisterClassExW, SM_CXSCREEN,
-    SM_CYSCREEN, SW_HIDE, SW_SHOW, SWP_NOACTIVATE, SWP_NOMOVE, SetForegroundWindow, SetWindowPos,
-    ShowWindow, TranslateMessage, WM_CHAR, WM_COMMAND, WM_DESTROY, WM_HOTKEY, WM_KEYDOWN,
-    WM_KILLFOCUS, WM_PAINT, WM_RBUTTONUP, WNDCLASSEXW, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP,
+    GetClientRect, GetMessageW, GetSystemMetrics, GetWindowRect, HCURSOR, HICON, HWND_TOPMOST,
+    IDC_ARROW, IsWindowVisible, LoadCursorW, LoadIconW, MSG, PostQuitMessage, RegisterClassExW,
+    SM_CXSCREEN, SM_CYSCREEN, SW_HIDE, SW_SHOW, SWP_NOACTIVATE, SWP_NOMOVE, SetForegroundWindow,
+    SetWindowPos, ShowWindow, TranslateMessage, WM_CHAR, WM_COMMAND, WM_DESTROY, WM_HOTKEY,
+    WM_KEYDOWN, WM_KILLFOCUS, WM_PAINT, WM_RBUTTONUP, WNDCLASSEXW, WS_EX_TOOLWINDOW, WS_EX_TOPMOST,
+    WS_POPUP,
 };
+use windows::core::{HSTRING, PCWSTR};
 
 pub use canvas::{Canvas, Color, Font, FontGuard, FontWeight, Rect, register_embedded_font};
 pub use message::{Hotkey, Key, Message};
@@ -51,44 +52,49 @@ unsafe extern "system" fn dispatch(
     match msg {
         WM_HOTKEY => {
             handler(&window, Message::Hotkey);
-            0
+            LRESULT(0)
         }
         tray::WM_TRAYICON => {
-            if lparam as u32 == WM_RBUTTONUP {
+            if lparam.0 as u32 == WM_RBUTTONUP {
                 handler(&window, Message::TrayRightClick);
             }
-            0
+            LRESULT(0)
         }
         WM_COMMAND => {
-            if let Ok(cmd) = TrayCommand::try_from(wparam & 0xffff) {
+            if let Ok(cmd) = TrayCommand::try_from(wparam.0 & 0xffff) {
                 handler(&window, Message::Command(cmd));
             }
-            0
+            LRESULT(0)
         }
         WM_KILLFOCUS => {
             handler(&window, Message::KillFocus);
-            0
+            LRESULT(0)
         }
         WM_CHAR => {
-            if let Some(c) = message::decode_wm_char(wparam as u16) {
+            if let Some(c) = message::decode_wm_char(wparam.0 as u16) {
                 if !c.is_control() {
                     handler(&window, Message::Char(c));
                 }
             }
-            0
+            LRESULT(0)
         }
         WM_KEYDOWN => {
-            handler(&window, Message::KeyDown(Key::from_vk(wparam as u16)));
-            0
+            handler(
+                &window,
+                Message::KeyDown(Key::from_vk(
+                    windows::Win32::UI::Input::KeyboardAndMouse::VIRTUAL_KEY(wparam.0 as u16),
+                )),
+            );
+            LRESULT(0)
         }
         WM_PAINT => {
             handler(&window, Message::Paint);
-            0
+            LRESULT(0)
         }
         WM_DESTROY => {
             tray::remove(hwnd);
             unsafe { PostQuitMessage(0) };
-            0
+            LRESULT(0)
         }
         _ => unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) },
     }
@@ -112,11 +118,15 @@ impl WindowHandle {
     ) -> Result<Self, std::io::Error> {
         let _ = HANDLER.set(handler);
         unsafe {
-            SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
+            let _ = SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
 
-            let instance = GetModuleHandleW(std::ptr::null());
-            let class_name = to_wide(class_name);
-            let title = to_wide(title);
+            let instance: HINSTANCE = GetModuleHandleW(None).unwrap().into();
+            let class_name = HSTRING::from(class_name);
+            let title = HSTRING::from(title);
+
+            #[allow(clippy::manual_dangling_ptr)]
+            let app_icon = PCWSTR(1 as *const u16);
+            let icon = LoadIconW(Some(instance), app_icon).unwrap_or(HICON(std::ptr::null_mut()));
 
             let wnd_class = WNDCLASSEXW {
                 cbSize: std::mem::size_of::<WNDCLASSEXW>() as u32,
@@ -125,41 +135,39 @@ impl WindowHandle {
                 cbClsExtra: 0,
                 cbWndExtra: 0,
                 hInstance: instance,
-                hIcon: LoadIconW(instance, 1u16 as _),
-                hCursor: LoadCursorW(std::ptr::null_mut(), IDC_ARROW),
-                hbrBackground: GetStockObject(WHITE_BRUSH) as _,
-                lpszMenuName: std::ptr::null(),
-                lpszClassName: class_name.as_ptr(),
-                hIconSm: LoadIconW(instance, 1u16 as _),
+                hIcon: icon,
+                hCursor: LoadCursorW(None, IDC_ARROW).unwrap_or(HCURSOR(std::ptr::null_mut())),
+                hbrBackground: windows::Win32::Graphics::Gdi::HBRUSH(GetStockObject(WHITE_BRUSH).0),
+                lpszMenuName: PCWSTR::null(),
+                lpszClassName: PCWSTR(class_name.as_ptr()),
+                hIconSm: icon,
             };
 
             RegisterClassExW(&wnd_class);
 
-            let hwnd = CreateWindowExW(
+            let Ok(hwnd) = CreateWindowExW(
                 WS_EX_TOOLWINDOW | WS_EX_TOPMOST,
-                class_name.as_ptr(),
-                title.as_ptr(),
+                &class_name,
+                &title,
                 WS_POPUP,
                 100,
                 100,
                 width,
                 height,
-                std::ptr::null_mut(),
-                std::ptr::null_mut(),
-                instance,
-                std::ptr::null(),
-            );
-
-            if hwnd.is_null() {
+                None,
+                None,
+                Some(instance),
+                None,
+            ) else {
                 return Err(std::io::Error::last_os_error());
-            }
+            };
 
             let handle = Self { hwnd };
 
             let backdrop = DWMSBT_TRANSIENTWINDOW;
             let _ = DwmSetWindowAttribute(
                 hwnd,
-                DWMWA_SYSTEMBACKDROP_TYPE as u32,
+                DWMWA_SYSTEMBACKDROP_TYPE,
                 &backdrop as *const _ as *const _,
                 std::mem::size_of_val(&backdrop) as u32,
             );
@@ -167,7 +175,7 @@ impl WindowHandle {
             let corner_pref = DWMWCP_ROUND;
             let _ = DwmSetWindowAttribute(
                 hwnd,
-                DWMWA_WINDOW_CORNER_PREFERENCE as u32,
+                DWMWA_WINDOW_CORNER_PREFERENCE,
                 &corner_pref as *const _ as *const _,
                 std::mem::size_of_val(&corner_pref) as u32,
             );
@@ -183,46 +191,46 @@ impl WindowHandle {
     pub fn run_message_loop(&self, hotkey: Hotkey) {
         const HOTKEY_ID: i32 = 1;
         unsafe {
-            if RegisterHotKey(self.hwnd, HOTKEY_ID, hotkey.modifiers, hotkey.vk) == 0 {
+            if RegisterHotKey(Some(self.hwnd), HOTKEY_ID, hotkey.modifiers, hotkey.vk).is_err() {
                 notify_hotkey_registration_failed(std::io::Error::last_os_error());
             }
 
             let mut msg = std::mem::zeroed::<MSG>();
-            while GetMessageW(&mut msg, std::ptr::null_mut(), 0, 0) > 0 {
-                TranslateMessage(&msg);
+            while GetMessageW(&mut msg, None, 0, 0).0 > 0 {
+                let _ = TranslateMessage(&msg);
                 DispatchMessageW(&msg);
             }
 
-            let _ = UnregisterHotKey(self.hwnd, HOTKEY_ID);
+            let _ = UnregisterHotKey(Some(self.hwnd), HOTKEY_ID);
         }
     }
 
     pub fn is_visible(&self) -> bool {
-        unsafe { IsWindowVisible(self.hwnd) != 0 }
+        unsafe { IsWindowVisible(self.hwnd) }.as_bool()
     }
 
     pub fn show(&self) {
         unsafe {
-            ShowWindow(self.hwnd, SW_SHOW);
-            SetForegroundWindow(self.hwnd);
+            let _ = ShowWindow(self.hwnd, SW_SHOW);
+            let _ = SetForegroundWindow(self.hwnd);
         }
     }
 
     pub fn hide(&self) {
         unsafe {
-            ShowWindow(self.hwnd, SW_HIDE);
+            let _ = ShowWindow(self.hwnd, SW_HIDE);
         }
     }
 
     pub fn close(&self) {
         unsafe {
-            DestroyWindow(self.hwnd);
+            let _ = DestroyWindow(self.hwnd);
         }
     }
 
     pub fn invalidate(&self) {
         unsafe {
-            InvalidateRect(self.hwnd, std::ptr::null(), 1);
+            let _ = InvalidateRect(Some(self.hwnd), None, true);
         }
     }
 
@@ -234,10 +242,10 @@ impl WindowHandle {
             let mut client_rect = std::mem::zeroed::<RECT>();
             let _ = GetClientRect(self.hwnd, &mut client_rect);
 
-            let mem_dc = CreateCompatibleDC(hdc);
+            let mem_dc = CreateCompatibleDC(Some(hdc));
             let mem_bmp = CreateCompatibleBitmap(hdc, client_rect.right, client_rect.bottom);
-            let old_bmp = SelectObject(mem_dc, mem_bmp);
-            SetBkMode(mem_dc, TRANSPARENT as i32);
+            let old_bmp = SelectObject(mem_dc, mem_bmp.into());
+            SetBkMode(mem_dc, TRANSPARENT);
 
             let canvas = Canvas::new(mem_dc);
             draw(
@@ -250,23 +258,23 @@ impl WindowHandle {
                 },
             );
 
-            BitBlt(
+            let _ = BitBlt(
                 hdc,
                 0,
                 0,
                 client_rect.right,
                 client_rect.bottom,
-                mem_dc,
+                Some(mem_dc),
                 0,
                 0,
                 SRCCOPY,
             );
 
             SelectObject(mem_dc, old_bmp);
-            DeleteObject(mem_bmp);
-            DeleteDC(mem_dc);
+            let _ = DeleteObject(mem_bmp.into());
+            let _ = DeleteDC(mem_dc);
 
-            EndPaint(self.hwnd, &ps);
+            let _ = EndPaint(self.hwnd, &ps);
         }
     }
 
@@ -278,7 +286,15 @@ impl WindowHandle {
             let x = (screen_width - width) / 2;
             let y = screen_height / 4;
 
-            SetWindowPos(self.hwnd, HWND_TOPMOST, x, y, width, height, SWP_NOACTIVATE);
+            let _ = SetWindowPos(
+                self.hwnd,
+                Some(HWND_TOPMOST),
+                x,
+                y,
+                width,
+                height,
+                SWP_NOACTIVATE,
+            );
         }
     }
 
@@ -286,9 +302,9 @@ impl WindowHandle {
         unsafe {
             let mut rect = std::mem::zeroed::<RECT>();
             let _ = GetWindowRect(self.hwnd, &mut rect);
-            SetWindowPos(
+            let _ = SetWindowPos(
                 self.hwnd,
-                HWND_TOPMOST,
+                Some(HWND_TOPMOST),
                 rect.left,
                 rect.top,
                 width,
@@ -305,7 +321,7 @@ impl WindowHandle {
         unsafe {
             let _ = DwmSetWindowAttribute(
                 self.hwnd,
-                DWMWA_USE_IMMERSIVE_DARK_MODE as u32,
+                DWMWA_USE_IMMERSIVE_DARK_MODE,
                 &dark_mode as *const _ as *const _,
                 std::mem::size_of_val(&dark_mode) as u32,
             );

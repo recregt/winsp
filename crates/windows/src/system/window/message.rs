@@ -1,6 +1,7 @@
 use std::sync::Mutex;
-use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
-    MOD_ALT, VK_BACK, VK_DOWN, VK_ESCAPE, VK_RETURN, VK_SPACE, VK_TAB, VK_UP,
+use windows::Win32::UI::Input::KeyboardAndMouse::{
+    HOT_KEY_MODIFIERS, MOD_ALT, VIRTUAL_KEY, VK_BACK, VK_DOWN, VK_ESCAPE, VK_RETURN, VK_SPACE,
+    VK_TAB, VK_UP,
 };
 
 use super::TrayCommand;
@@ -18,7 +19,7 @@ pub enum Key {
 }
 
 impl Key {
-    pub(super) fn from_vk(vk: u16) -> Self {
+    pub(super) fn from_vk(vk: VIRTUAL_KEY) -> Self {
         match vk {
             VK_BACK => Key::Back,
             VK_TAB => Key::Tab,
@@ -27,11 +28,11 @@ impl Key {
             VK_RETURN => Key::Enter,
             VK_ESCAPE => Key::Escape,
             VK_SPACE => Key::Space,
-            other => Key::Other(other),
+            other => Key::Other(other.0),
         }
     }
 
-    fn to_vk(self) -> u16 {
+    fn to_vk(self) -> VIRTUAL_KEY {
         match self {
             Key::Back => VK_BACK,
             Key::Tab => VK_TAB,
@@ -40,14 +41,14 @@ impl Key {
             Key::Enter => VK_RETURN,
             Key::Escape => VK_ESCAPE,
             Key::Space => VK_SPACE,
-            Key::Other(vk) => vk,
+            Key::Other(vk) => VIRTUAL_KEY(vk),
         }
     }
 }
 
 #[derive(Debug, Clone, Copy)]
 pub struct Hotkey {
-    pub(super) modifiers: u32,
+    pub(super) modifiers: HOT_KEY_MODIFIERS,
     pub(super) vk: u32,
 }
 
@@ -55,7 +56,7 @@ impl Hotkey {
     pub fn alt(key: Key) -> Self {
         Self {
             modifiers: MOD_ALT,
-            vk: key.to_vk() as u32,
+            vk: key.to_vk().0 as u32,
         }
     }
 }
@@ -147,6 +148,6 @@ mod tests {
 
     #[test]
     fn from_vk_falls_back_to_other_for_unmapped_codes() {
-        assert_eq!(Key::from_vk(0x41), Key::Other(0x41));
+        assert_eq!(Key::from_vk(VIRTUAL_KEY(0x41)), Key::Other(0x41));
     }
 }

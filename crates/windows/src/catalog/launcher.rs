@@ -12,61 +12,44 @@ pub fn run(target: &AppTarget) -> Result<(), String> {
 cfg_if::cfg_if! {
     if #[cfg(windows)] {
         fn launch_path(path: &str) -> Result<(), String> {
-            use std::ffi::OsStr;
-            use std::os::windows::ffi::OsStrExt;
-            use windows_sys::Win32::UI::Shell::ShellExecuteW;
-            use windows_sys::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
+            use windows::Win32::UI::Shell::ShellExecuteW;
+            use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
+            use windows::core::{HSTRING, w};
 
-            let path_wide: Vec<u16> = OsStr::new(path).encode_wide().chain(Some(0)).collect();
-            let op_wide: Vec<u16> = OsStr::new("open").encode_wide().chain(Some(0)).collect();
+            let path = HSTRING::from(path);
 
-            unsafe {
-                let instance = ShellExecuteW(
-                    std::ptr::null_mut(),
-                    op_wide.as_ptr(),
-                    path_wide.as_ptr(),
-                    std::ptr::null(),
-                    std::ptr::null(),
-                    SW_SHOWNORMAL,
-                );
+            let instance =
+                unsafe { ShellExecuteW(None, w!("open"), &path, None, None, SW_SHOWNORMAL) };
 
-                if (instance as usize) > 32 {
-                    Ok(())
-                } else {
-                    Err(format!("Failed to execute path with code: {:?}", instance))
-                }
+            if instance.0 as usize > 32 {
+                Ok(())
+            } else {
+                Err(format!("Failed to execute path with code: {instance:?}"))
             }
         }
 
         fn launch_aumid(aumid: &str) -> Result<(), String> {
-            use std::ffi::OsStr;
-            use std::os::windows::ffi::OsStrExt;
-            use windows_sys::Win32::UI::Shell::ShellExecuteW;
-            use windows_sys::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
+            use windows::Win32::UI::Shell::ShellExecuteW;
+            use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
+            use windows::core::{HSTRING, w};
 
-            let explorer_wide: Vec<u16> = OsStr::new("explorer.exe")
-                .encode_wide()
-                .chain(Some(0))
-                .collect();
-            let param = format!("shell:AppsFolder\\{}", aumid);
-            let param_wide: Vec<u16> = OsStr::new(&param).encode_wide().chain(Some(0)).collect();
-            let op_wide: Vec<u16> = OsStr::new("open").encode_wide().chain(Some(0)).collect();
+            let param = HSTRING::from(format!("shell:AppsFolder\\{aumid}"));
 
-            unsafe {
-                let instance = ShellExecuteW(
-                    std::ptr::null_mut(),
-                    op_wide.as_ptr(),
-                    explorer_wide.as_ptr(),
-                    param_wide.as_ptr(),
-                    std::ptr::null(),
+            let instance = unsafe {
+                ShellExecuteW(
+                    None,
+                    w!("open"),
+                    w!("explorer.exe"),
+                    &param,
+                    None,
                     SW_SHOWNORMAL,
-                );
+                )
+            };
 
-                if (instance as usize) > 32 {
-                    Ok(())
-                } else {
-                    Err(format!("Failed to launch UWP app: {}", aumid))
-                }
+            if instance.0 as usize > 32 {
+                Ok(())
+            } else {
+                Err(format!("Failed to launch UWP app: {aumid}"))
             }
         }
 
