@@ -7,6 +7,11 @@ pub fn show(title: &str, body: &str) {
 }
 
 fn try_show(title: &str, body: &str) -> windows::core::Result<()> {
+    let toast = build_toast(title, body)?;
+    ToastNotificationManager::CreateToastNotifier()?.Show(&toast)
+}
+
+fn build_toast(title: &str, body: &str) -> windows::core::Result<ToastNotification> {
     let xml = format!(
         "<toast><visual><binding template=\"ToastGeneric\"><text>{}</text><text>{}</text></binding></visual></toast>",
         escape_xml(title),
@@ -16,8 +21,7 @@ fn try_show(title: &str, body: &str) -> windows::core::Result<()> {
     let doc = XmlDocument::new()?;
     doc.LoadXml(&HSTRING::from(xml))?;
 
-    let toast = ToastNotification::CreateToastNotification(&doc)?;
-    ToastNotificationManager::CreateToastNotifier()?.Show(&toast)
+    ToastNotification::CreateToastNotification(&doc)
 }
 
 fn escape_xml(text: &str) -> String {
@@ -45,6 +49,21 @@ mod tests {
         assert_eq!(
             escape_xml("failed to launch notepad.exe"),
             "failed to launch notepad.exe"
+        );
+    }
+
+    #[test]
+    fn build_toast_produces_xml_the_real_parser_accepts() {
+        let result = build_toast("WinSP", "failed to launch notepad.exe");
+        assert!(result.is_ok(), "expected valid toast XML, got {result:?}");
+    }
+
+    #[test]
+    fn build_toast_escapes_reserved_characters_into_valid_xml() {
+        let result = build_toast("WinSP", r#"failed: <a> & "b" 'c'"#);
+        assert!(
+            result.is_ok(),
+            "unescaped reserved characters should not produce malformed XML, got {result:?}"
         );
     }
 }
