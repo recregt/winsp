@@ -27,7 +27,8 @@ pub(crate) fn run_terminal_demo(
 
         let start_search = std::time::Instant::now();
         let mut app_state = state.lock().unwrap();
-        app_state.set_query(query.to_string());
+        app_state.query = query.to_string();
+        app_state.refresh_results();
         let search_duration = start_search.elapsed();
 
         println!(

@@ -1,5 +1,6 @@
 use winsp_windows::window::Window;
 
+use super::interaction;
 use super::{APP_STATE, ITEM_ROW_HEIGHT, PADDING, RECONCILE_TX, SEARCH_BAR_HEIGHT, WINDOW_WIDTH};
 
 pub(super) fn toggle_visibility(handle: &Window) {
@@ -9,7 +10,7 @@ pub(super) fn toggle_visibility(handle: &Window) {
         handle.center(WINDOW_WIDTH, SEARCH_BAR_HEIGHT);
         if let Some(state_arc) = APP_STATE.get() {
             if let Ok(mut state) = state_arc.lock() {
-                state.clear_query();
+                interaction::clear_query(&mut state);
             }
         }
         if let Some(tx) = RECONCILE_TX.get() {

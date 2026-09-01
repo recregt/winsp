@@ -1,6 +1,5 @@
-use winsp_core::models::{SearchResult, SearchResultKind};
+use winsp_core::models::SearchResult;
 use winsp_core::search::Engine;
-use winsp_windows::catalog::launcher::run;
 
 #[derive(Debug)]
 pub struct AppState {
@@ -21,75 +20,9 @@ impl AppState {
         }
     }
 
-    #[cfg_attr(windows, allow(dead_code))]
-    pub fn set_query(&mut self, query: String) {
-        self.query = query;
-        self.refresh_results();
-    }
-
-    #[cfg_attr(not(windows), allow(dead_code))]
-    pub fn insert_char(&mut self, c: char) {
-        self.query.push(c);
-        self.refresh_results();
-    }
-
-    #[cfg_attr(not(windows), allow(dead_code))]
-    pub fn backspace(&mut self) {
-        self.query.pop();
-        self.refresh_results();
-    }
-
-    #[cfg_attr(not(windows), allow(dead_code))]
-    pub fn clear_query(&mut self) {
-        self.query.clear();
-        self.refresh_results();
-    }
-
-    #[cfg_attr(not(windows), allow(dead_code))]
-    pub fn select_next(&mut self) {
-        if !self.results.is_empty() {
-            self.selected_index = (self.selected_index + 1) % self.results.len();
-        }
-    }
-
-    #[cfg_attr(not(windows), allow(dead_code))]
-    pub fn select_prev(&mut self) {
-        if !self.results.is_empty() {
-            if self.selected_index == 0 {
-                self.selected_index = self.results.len() - 1;
-            } else {
-                self.selected_index -= 1;
-            }
-        }
-    }
-
     pub fn refresh_results(&mut self) {
         self.results = self.index.search(&self.query, 6);
         self.selected_index = 0;
-    }
-
-    #[cfg_attr(not(windows), allow(dead_code))]
-    pub fn execute_selected(&mut self) -> Result<Option<String>, String> {
-        let Some(selected) = self.results.get(self.selected_index) else {
-            return Ok(None);
-        };
-        match &selected.kind {
-            SearchResultKind::App(item) => {
-                run(&item.target)?;
-                Ok(None)
-            }
-            SearchResultKind::Calculation { result, .. } => Ok(Some(result.clone())),
-            SearchResultKind::WebSearch { url, .. } => {
-                run(&winsp_core::models::AppTarget::Path(url.clone()))?;
-                Ok(None)
-            }
-            SearchResultKind::SystemCommand { command, .. } => {
-                run(&winsp_core::models::AppTarget::SystemCommand(
-                    command.clone(),
-                ))?;
-                Ok(None)
-            }
-        }
     }
 }
 
@@ -99,26 +32,17 @@ mod tests {
     use crate::index::populate_search_index;
 
     #[test]
-    fn test_app_state_navigation() {
+    fn refresh_results_reflects_the_current_query() {
         let index = populate_search_index();
         let mut state = AppState::new(index);
 
-        state.set_query("calc".into());
+        state.query = "calc".into();
+        state.refresh_results();
         assert!(!state.results.is_empty());
         assert_eq!(state.selected_index, 0);
 
-        state.select_next();
-        if state.results.len() > 1 {
-            assert_eq!(state.selected_index, 1);
-        }
-
-        state.select_prev();
-        assert_eq!(state.selected_index, 0);
-
-        state.backspace();
-        assert_eq!(state.query, "cal");
-
-        state.clear_query();
+        state.query.clear();
+        state.refresh_results();
         assert_eq!(state.query, "");
     }
 }
