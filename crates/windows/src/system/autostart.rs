@@ -8,7 +8,12 @@ pub fn is_enabled() -> bool {
 }
 
 pub fn set_enabled(enabled: bool) {
-    let _ = startup_task_set_enabled(enabled);
+    if let Err(error) = startup_task_set_enabled(enabled) {
+        super::toast::show(
+            "WinSP",
+            &format!("Failed to update Start with Windows: {error}"),
+        );
+    }
 }
 
 fn startup_task() -> windows::core::Result<StartupTask> {

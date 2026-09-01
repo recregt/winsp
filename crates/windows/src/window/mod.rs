@@ -335,4 +335,8 @@ impl Window {
 
 fn notify_hotkey_registration_failed(error: std::io::Error) {
     eprintln!("failed to register global hotkey: {error}");
+    crate::system::toast::show(
+        "WinSP",
+        &format!("Failed to register global hotkey: {error}"),
+    );
 }
