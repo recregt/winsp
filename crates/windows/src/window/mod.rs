@@ -37,7 +37,7 @@ pub use tray::TrayCommand;
 #[cfg(feature = "test-support")]
 pub use canvas::testing;
 
-static HANDLER: OnceLock<fn(&WindowHandle, Message)> = OnceLock::new();
+static HANDLER: OnceLock<fn(&Window, Message)> = OnceLock::new();
 
 unsafe extern "system" fn dispatch(
     hwnd: HWND,
@@ -48,7 +48,7 @@ unsafe extern "system" fn dispatch(
     let Some(handler) = HANDLER.get() else {
         return unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) };
     };
-    let window = WindowHandle::new(hwnd);
+    let window = Window::new(hwnd);
     match msg {
         WM_HOTKEY => {
             handler(&window, Message::Hotkey);
@@ -100,11 +100,11 @@ unsafe extern "system" fn dispatch(
     }
 }
 
-pub struct WindowHandle {
+pub struct Window {
     hwnd: HWND,
 }
 
-impl WindowHandle {
+impl Window {
     fn new(hwnd: HWND) -> Self {
         Self { hwnd }
     }
@@ -114,7 +114,7 @@ impl WindowHandle {
         title: &str,
         width: i32,
         height: i32,
-        handler: fn(&WindowHandle, Message),
+        handler: fn(&Window, Message),
     ) -> Result<Self, std::io::Error> {
         let _ = HANDLER.set(handler);
         unsafe {

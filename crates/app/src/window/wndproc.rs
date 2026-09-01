@@ -1,10 +1,10 @@
-use winsp_windows::window::{Key, Message, TrayCommand, WindowHandle};
+use winsp_windows::window::{Key, Message, TrayCommand, Window};
 
 use super::APP_STATE;
 use super::geometry::{resize_window_for_results, toggle_visibility};
 use super::render::render_ui;
 
-pub(super) fn handle_message(window: &WindowHandle, message: Message) {
+pub(super) fn handle_message(window: &Window, message: Message) {
     match message {
         Message::Hotkey => toggle_visibility(window),
         Message::TrayRightClick => window.show_tray_menu(),
