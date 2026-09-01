@@ -99,7 +99,7 @@ impl AppState {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::populate_search_index;
+    use crate::index::populate_search_index;
 
     #[test]
     fn test_app_state_navigation() {
