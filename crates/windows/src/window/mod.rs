@@ -18,7 +18,7 @@ use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::HiDpi::{
     DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2, SetProcessDpiAwarenessContext,
 };
-use windows::Win32::UI::Input::KeyboardAndMouse::{RegisterHotKey, UnregisterHotKey};
+use windows::Win32::UI::Input::KeyboardAndMouse::{MOD_NOREPEAT, RegisterHotKey, UnregisterHotKey};
 use windows::Win32::UI::WindowsAndMessaging::{
     CS_HREDRAW, CS_VREDRAW, CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW,
     GetClientRect, GetMessageW, GetSystemMetrics, GetWindowRect, HCURSOR, HICON, HWND_TOPMOST,
@@ -31,7 +31,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
 use windows::core::{HSTRING, PCWSTR};
 
 pub use canvas::{Canvas, Color, Font, FontGuard, FontWeight, Rect, register_embedded_font};
-pub use message::{Hotkey, Key, Message};
+pub use message::{Hotkey, Key, Message, Modifiers};
 pub use tray::TrayCommand;
 
 #[cfg(feature = "test-support")]
@@ -187,7 +187,14 @@ impl Window {
     pub fn run_message_loop(&self, hotkey: Hotkey) {
         const HOTKEY_ID: i32 = 1;
         unsafe {
-            if RegisterHotKey(Some(self.hwnd), HOTKEY_ID, hotkey.modifiers, hotkey.vk).is_err() {
+            if RegisterHotKey(
+                Some(self.hwnd),
+                HOTKEY_ID,
+                hotkey.modifiers | MOD_NOREPEAT,
+                hotkey.vk,
+            )
+            .is_err()
+            {
                 notify_hotkey_registration_failed(std::io::Error::last_os_error());
             }
 

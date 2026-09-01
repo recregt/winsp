@@ -3,24 +3,46 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-const DEFAULT_HOTKEY_VK: u16 = 0x20; // VK_SPACE
+const DEFAULT_VK: u16 = 0x20; // VK_SPACE
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub(super) struct Settings {
-    #[serde(default = "default_hotkey_vk")]
-    pub(super) hotkey_vk: u16,
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub(super) struct HotkeyBinding {
+    #[serde(default)]
+    pub(super) ctrl: bool,
+    #[serde(default)]
+    pub(super) shift: bool,
+    #[serde(default = "default_alt")]
+    pub(super) alt: bool,
+    #[serde(default)]
+    pub(super) win: bool,
+    #[serde(default = "default_vk")]
+    pub(super) vk: u16,
 }
 
-fn default_hotkey_vk() -> u16 {
-    DEFAULT_HOTKEY_VK
+fn default_alt() -> bool {
+    true
 }
 
-impl Default for Settings {
+fn default_vk() -> u16 {
+    DEFAULT_VK
+}
+
+impl Default for HotkeyBinding {
     fn default() -> Self {
         Self {
-            hotkey_vk: DEFAULT_HOTKEY_VK,
+            ctrl: false,
+            shift: false,
+            alt: default_alt(),
+            win: false,
+            vk: default_vk(),
         }
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub(super) struct Settings {
+    #[serde(default)]
+    pub(super) hotkey: HotkeyBinding,
 }
 
 fn config_path() -> Option<PathBuf> {
@@ -88,7 +110,15 @@ mod tests {
     fn save_then_load_round_trips() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("nested").join("settings.msgpack");
-        let settings = Settings { hotkey_vk: 0x41 };
+        let settings = Settings {
+            hotkey: HotkeyBinding {
+                ctrl: true,
+                shift: false,
+                alt: true,
+                win: false,
+                vk: 0x41,
+            },
+        };
 
         settings.save_to(&path).unwrap();
 
@@ -99,9 +129,21 @@ mod tests {
     fn save_to_replaces_an_existing_file() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("settings.msgpack");
-        Settings { hotkey_vk: 0x41 }.save_to(&path).unwrap();
+        Settings {
+            hotkey: HotkeyBinding {
+                vk: 0x41,
+                ..Default::default()
+            },
+        }
+        .save_to(&path)
+        .unwrap();
 
-        let replacement = Settings { hotkey_vk: 0x42 };
+        let replacement = Settings {
+            hotkey: HotkeyBinding {
+                vk: 0x42,
+                ..Default::default()
+            },
+        };
         replacement.save_to(&path).unwrap();
 
         assert_eq!(Settings::load_from(&path), replacement);
@@ -130,5 +172,38 @@ mod tests {
 
         assert!(!path.with_extension("tmp").exists());
         assert!(path.exists());
+    }
+
+    #[test]
+    fn an_empty_map_with_no_hotkey_key_defaults_to_alt_space() {
+        #[derive(Serialize)]
+        struct Empty {}
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.msgpack");
+        let bytes = rmp_serde::to_vec_named(&Empty {}).unwrap();
+        std::fs::write(&path, bytes).unwrap();
+
+        assert_eq!(Settings::load_from(&path), Settings::default());
+    }
+
+    #[test]
+    fn a_136_shaped_file_is_treated_as_having_no_hotkey_configured() {
+        // This is the exact on-disk shape shipped by #136, before `hotkey_vk` was
+        // folded into the nested `HotkeyBinding`. No writer ever persisted a
+        // non-default value for it, so treating an old file as "unconfigured"
+        // (falling back to the current default) is a deliberate choice, not an
+        // accident of `#[serde(default)]` — it does not migrate the old field.
+        #[derive(Serialize)]
+        struct LegacySettings {
+            hotkey_vk: u16,
+        }
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.msgpack");
+        let bytes = rmp_serde::to_vec_named(&LegacySettings { hotkey_vk: 0x20 }).unwrap();
+        std::fs::write(&path, bytes).unwrap();
+
+        assert_eq!(Settings::load_from(&path), Settings::default());
     }
 }

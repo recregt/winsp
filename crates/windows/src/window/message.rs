@@ -1,7 +1,7 @@
 use std::sync::Mutex;
 use windows::Win32::UI::Input::KeyboardAndMouse::{
-    HOT_KEY_MODIFIERS, MOD_ALT, VIRTUAL_KEY, VK_BACK, VK_DOWN, VK_ESCAPE, VK_RETURN, VK_SPACE,
-    VK_TAB, VK_UP,
+    HOT_KEY_MODIFIERS, MOD_ALT, MOD_CONTROL, MOD_SHIFT, MOD_WIN, VIRTUAL_KEY, VK_BACK, VK_DOWN,
+    VK_ESCAPE, VK_RETURN, VK_SPACE, VK_TAB, VK_UP,
 };
 
 use super::TrayCommand;
@@ -46,6 +46,16 @@ impl Key {
     }
 }
 
+/// The modifier keys held alongside a hotkey's trigger key, expressed the way a caller
+/// selects them, not the way Windows represents them on the wire.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct Modifiers {
+    pub ctrl: bool,
+    pub shift: bool,
+    pub alt: bool,
+    pub win: bool,
+}
+
 #[derive(Debug, Clone, Copy)]
 pub struct Hotkey {
     pub(super) modifiers: HOT_KEY_MODIFIERS,
@@ -53,9 +63,22 @@ pub struct Hotkey {
 }
 
 impl Hotkey {
-    pub fn alt(key: Key) -> Self {
+    pub fn new(modifiers: Modifiers, key: Key) -> Self {
+        let mut bits = HOT_KEY_MODIFIERS(0);
+        if modifiers.ctrl {
+            bits |= MOD_CONTROL;
+        }
+        if modifiers.shift {
+            bits |= MOD_SHIFT;
+        }
+        if modifiers.alt {
+            bits |= MOD_ALT;
+        }
+        if modifiers.win {
+            bits |= MOD_WIN;
+        }
         Self {
-            modifiers: MOD_ALT,
+            modifiers: bits,
             vk: key.to_vk().0 as u32,
         }
     }
@@ -149,5 +172,86 @@ mod tests {
     #[test]
     fn from_vk_falls_back_to_other_for_unmapped_codes() {
         assert_eq!(Key::from_vk(VIRTUAL_KEY(0x41)), Key::Other(0x41));
+    }
+
+    #[test]
+    fn no_modifiers_produce_an_empty_mask() {
+        let hotkey = Hotkey::new(Modifiers::default(), Key::Space);
+        assert_eq!(hotkey.modifiers, HOT_KEY_MODIFIERS(0));
+    }
+
+    #[test]
+    fn each_modifier_maps_to_its_own_bit() {
+        let ctrl = Hotkey::new(
+            Modifiers {
+                ctrl: true,
+                ..Default::default()
+            },
+            Key::Space,
+        );
+        assert_eq!(ctrl.modifiers, MOD_CONTROL);
+
+        let shift = Hotkey::new(
+            Modifiers {
+                shift: true,
+                ..Default::default()
+            },
+            Key::Space,
+        );
+        assert_eq!(shift.modifiers, MOD_SHIFT);
+
+        let alt = Hotkey::new(
+            Modifiers {
+                alt: true,
+                ..Default::default()
+            },
+            Key::Space,
+        );
+        assert_eq!(alt.modifiers, MOD_ALT);
+
+        let win = Hotkey::new(
+            Modifiers {
+                win: true,
+                ..Default::default()
+            },
+            Key::Space,
+        );
+        assert_eq!(win.modifiers, MOD_WIN);
+    }
+
+    #[test]
+    fn modifiers_combine_into_a_single_mask() {
+        let hotkey = Hotkey::new(
+            Modifiers {
+                ctrl: true,
+                shift: true,
+                ..Default::default()
+            },
+            Key::Space,
+        );
+        assert_eq!(hotkey.modifiers, MOD_CONTROL | MOD_SHIFT);
+    }
+
+    #[test]
+    fn all_modifiers_combine_into_a_single_mask() {
+        let hotkey = Hotkey::new(
+            Modifiers {
+                ctrl: true,
+                shift: true,
+                alt: true,
+                win: true,
+            },
+            Key::Space,
+        );
+        assert_eq!(
+            hotkey.modifiers,
+            MOD_CONTROL | MOD_SHIFT | MOD_ALT | MOD_WIN
+        );
+    }
+
+    #[test]
+    fn new_carries_the_keys_virtual_key_code() {
+        let hotkey = Hotkey::new(Modifiers::default(), Key::Other(0x41));
+        assert_eq!(hotkey.vk, 0x41);
     }
 }
