@@ -20,7 +20,10 @@ embed-resource = "3"
 
 [target.'cfg(windows)'.dependencies]
 mimalloc = "0.1.52"
+rmp-serde = "1.3"
+serde = { version = "1", features = ["derive"] }
 
 [dev-dependencies]
 winsp-windows = { path = "../windows", features = ["test-support"] }
+tempfile = "3.27.0"
 
