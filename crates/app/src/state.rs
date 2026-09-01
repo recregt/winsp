@@ -72,26 +72,27 @@ impl AppState {
     }
 
     #[allow(dead_code)]
-    pub fn execute_selected(&mut self) -> Result<(), String> {
-        if let Some(selected) = self.results.get(self.selected_index) {
-            match &selected.kind {
-                SearchResultKind::App(item) => {
-                    run(&item.target)?;
-                }
-                SearchResultKind::Calculation { result, .. } => {
-                    println!("[WinSP] Calculation result: {}", result);
-                }
-                SearchResultKind::WebSearch { url, .. } => {
-                    run(&winsp_core::models::AppTarget::Path(url.clone()))?;
-                }
-                SearchResultKind::SystemCommand { command, .. } => {
-                    run(&winsp_core::models::AppTarget::SystemCommand(
-                        command.clone(),
-                    ))?;
-                }
+    pub fn execute_selected(&mut self) -> Result<Option<String>, String> {
+        let Some(selected) = self.results.get(self.selected_index) else {
+            return Ok(None);
+        };
+        match &selected.kind {
+            SearchResultKind::App(item) => {
+                run(&item.target)?;
+                Ok(None)
+            }
+            SearchResultKind::Calculation { result, .. } => Ok(Some(result.clone())),
+            SearchResultKind::WebSearch { url, .. } => {
+                run(&winsp_core::models::AppTarget::Path(url.clone()))?;
+                Ok(None)
+            }
+            SearchResultKind::SystemCommand { command, .. } => {
+                run(&winsp_core::models::AppTarget::SystemCommand(
+                    command.clone(),
+                ))?;
+                Ok(None)
             }
         }
-        Ok(())
     }
 }
 

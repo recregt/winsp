@@ -46,8 +46,16 @@ pub(super) fn handle_message(window: &Window, message: Message) {
                             state.select_prev();
                         }
                         Key::Enter => {
-                            if let Err(error) = state.execute_selected() {
-                                winsp_windows::system::toast::show("WinSP", &error);
+                            match state.execute_selected() {
+                                Ok(Some(result)) => {
+                                    winsp_windows::system::clipboard::copy(&result);
+                                    winsp_windows::system::toast::show(
+                                        "WinSP",
+                                        &format!("Copied: {result}"),
+                                    );
+                                }
+                                Ok(None) => {}
+                                Err(error) => winsp_windows::system::toast::show("WinSP", &error),
                             }
                             should_hide = true;
                         }
