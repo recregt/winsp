@@ -2,6 +2,7 @@ use winsp_windows::window::{Key, Message, TrayCommand, Window};
 
 use super::APP_STATE;
 use super::geometry::{resize_window_for_results, toggle_visibility};
+use super::interaction;
 use super::render::render_ui;
 
 pub(super) fn handle_message(window: &Window, message: Message) {
@@ -20,7 +21,7 @@ pub(super) fn handle_message(window: &Window, message: Message) {
         Message::Char(c) => {
             if let Some(state_arc) = APP_STATE.get() {
                 if let Ok(mut state) = state_arc.lock() {
-                    state.insert_char(c);
+                    interaction::insert_char(&mut state, c);
                     resize_window_for_results(window, state.results.len());
                 }
             }
@@ -35,18 +36,18 @@ pub(super) fn handle_message(window: &Window, message: Message) {
                 if let Ok(mut state) = state_arc.lock() {
                     match key {
                         Key::Back => {
-                            state.backspace();
+                            interaction::backspace(&mut state);
                             should_resize = true;
                             results_count = state.results.len();
                         }
                         Key::Down | Key::Tab => {
-                            state.select_next();
+                            interaction::select_next(&mut state);
                         }
                         Key::Up => {
-                            state.select_prev();
+                            interaction::select_prev(&mut state);
                         }
                         Key::Enter => {
-                            match state.execute_selected() {
+                            match interaction::execute_selected(&state) {
                                 Ok(Some(result)) => {
                                     winsp_windows::system::clipboard::copy(&result);
                                     winsp_windows::system::toast::show(

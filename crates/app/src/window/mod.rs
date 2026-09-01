@@ -1,6 +1,7 @@
 #![cfg(windows)]
 
 mod geometry;
+mod interaction;
 mod render;
 mod wndproc;
 

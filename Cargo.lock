@@ -1652,6 +1652,7 @@ dependencies = [
 name = "winsp-app"
 version = "0.2.1"
 dependencies = [
+ "cfg-if",
  "embed-resource",
  "mimalloc",
  "winsp-core",
