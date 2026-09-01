@@ -3,6 +3,7 @@
 mod geometry;
 mod interaction;
 mod render;
+mod settings;
 mod wndproc;
 
 use std::sync::mpsc::Sender;
@@ -11,6 +12,7 @@ use std::sync::{Arc, Mutex, OnceLock};
 use winsp_windows::window::{Hotkey, Key, Window};
 
 use crate::state::AppState;
+use settings::Settings;
 use wndproc::handle_message;
 
 pub const WINDOW_WIDTH: i32 = 680;
@@ -29,6 +31,11 @@ pub fn set_reconcile_hook(tx: Sender<()>) {
 pub fn run_app(state: Arc<Mutex<AppState>>) -> Result<(), String> {
     let _ = APP_STATE.set(state);
 
+    let settings = Settings::load();
+    if let Err(err) = settings.save() {
+        eprintln!("failed to save settings: {err}");
+    }
+
     winsp_windows::system::theme::allow_dark_mode_for_app();
 
     let window_handle = Window::create(
@@ -43,7 +50,7 @@ pub fn run_app(state: Arc<Mutex<AppState>>) -> Result<(), String> {
 
     window_handle.center(WINDOW_WIDTH, SEARCH_BAR_HEIGHT);
     window_handle.add_tray_icon();
-    window_handle.run_message_loop(Hotkey::alt(Key::Space));
+    window_handle.run_message_loop(Hotkey::alt(Key::Other(settings.hotkey_vk)));
 
     Ok(())
 }
