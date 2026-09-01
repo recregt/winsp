@@ -66,13 +66,20 @@ cfg_if::cfg_if! {
             }
         }
 
-        fn build_initial_catalog(test_watch_mode: bool) -> Option<StartMenuCatalog> {
-            if test_watch_mode {
-                return None;
+        enum StartupMode {
+            TestWatch(std::path::PathBuf),
+            Real(StartMenuCatalog),
+        }
+
+        fn startup_mode() -> StartupMode {
+            match test_watch_dir() {
+                Some(dir) => StartupMode::TestWatch(dir),
+                None => {
+                    let catalog = StartMenuCatalog::for_start_menu();
+                    notify_if_scan_incomplete(&catalog);
+                    StartupMode::Real(catalog)
+                }
             }
-            let catalog = StartMenuCatalog::for_start_menu();
-            notify_if_scan_incomplete(&catalog);
-            Some(catalog)
         }
 
         fn spawn_reconciler(
@@ -135,13 +142,11 @@ cfg_if::cfg_if! {
                 }
             };
 
-            let watch_dir = test_watch_dir();
-
             let start_init = std::time::Instant::now();
-            let initial_catalog = build_initial_catalog(watch_dir.is_some());
-            let index = match &initial_catalog {
-                Some(catalog) => engine_from_catalog(catalog),
-                None => populate_search_index(),
+            let mode = startup_mode();
+            let index = match &mode {
+                StartupMode::Real(catalog) => engine_from_catalog(catalog),
+                StartupMode::TestWatch(_) => populate_search_index(),
             };
             let init_duration = start_init.elapsed();
             println!(
@@ -152,30 +157,31 @@ cfg_if::cfg_if! {
 
             let state = Arc::new(Mutex::new(AppState::new(index)));
 
-            let _reindex_watcher = if let Some(dir) = watch_dir {
-                println!("Test mode: watching {} for changes", dir.display());
-                let state = Arc::clone(&state);
-                winsp_windows::catalog::sources::watcher::for_dirs(&[dir], move |_event| {
-                    let index = populate_search_index();
-                    println!("Reindex triggered: {} items", index.len());
-                    if let Ok(mut app_state) = state.lock() {
-                        app_state.index = index;
-                        app_state.refresh_results();
-                    }
-                })
-                .ok()
-            } else {
-                let catalog = Arc::new(Mutex::new(
-                    initial_catalog.expect("built above when not running in test-watch mode"),
-                ));
-                let reconcile_tx = spawn_reconciler(Arc::clone(&state), Arc::clone(&catalog));
-                window::set_reconcile_hook(reconcile_tx.clone());
+            let _reindex_watcher = match mode {
+                StartupMode::TestWatch(dir) => {
+                    println!("Test mode: watching {} for changes", dir.display());
+                    let state = Arc::clone(&state);
+                    winsp_windows::catalog::sources::watcher::for_dirs(&[dir], move |_event| {
+                        let index = populate_search_index();
+                        println!("Reindex triggered: {} items", index.len());
+                        if let Ok(mut app_state) = state.lock() {
+                            app_state.index = index;
+                            app_state.refresh_results();
+                        }
+                    })
+                    .ok()
+                }
+                StartupMode::Real(catalog) => {
+                    let catalog = Arc::new(Mutex::new(catalog));
+                    let reconcile_tx = spawn_reconciler(Arc::clone(&state), Arc::clone(&catalog));
+                    window::set_reconcile_hook(reconcile_tx.clone());
 
-                let state = Arc::clone(&state);
-                winsp_windows::catalog::sources::watcher::for_start_menu(move |event| {
-                    handle_watch_event(event, &state, &catalog, &reconcile_tx);
-                })
-                .ok()
+                    let state = Arc::clone(&state);
+                    winsp_windows::catalog::sources::watcher::for_start_menu(move |event| {
+                        handle_watch_event(event, &state, &catalog, &reconcile_tx);
+                    })
+                    .ok()
+                }
             };
 
             println!("Press Alt+Space to toggle the search bar, Esc to dismiss.");
