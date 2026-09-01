@@ -15,10 +15,12 @@ fn resolve_shortcut_target(path: &std::path::Path, ext_lower: &str) -> Option<St
 cfg_if::cfg_if! {
     if #[cfg(windows)] {
         mod builtin;
+        mod catalog;
         mod discovery;
         mod start_menu;
 
-        pub use discovery::list_installed_apps;
+        pub use catalog::StartMenuCatalog;
+        pub use discovery::{list_installed_apps, merge_with_built_ins};
         pub(crate) use start_menu::start_menu_dirs;
     } else {
         mod fallback;

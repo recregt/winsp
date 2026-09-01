@@ -31,6 +31,24 @@ fn test_watch_dir() -> Option<std::path::PathBuf> {
         .map(std::path::PathBuf::from)
 }
 
+#[cfg(windows)]
+const RECONCILE_INTERVAL: std::time::Duration = std::time::Duration::from_secs(600);
+#[cfg(windows)]
+const MIN_RECONCILE_GAP: std::time::Duration = std::time::Duration::from_secs(30);
+
+#[cfg(windows)]
+fn engine_from_catalog(
+    catalog: &winsp_windows::catalog::sources::apps::StartMenuCatalog,
+) -> Engine {
+    let mut index = Engine::new();
+    let mut all_items: Vec<AppItem> =
+        winsp_windows::catalog::sources::apps::merge_with_built_ins(catalog.items());
+    all_items.extend(winsp_windows::catalog::sources::settings::list_settings());
+
+    index.set_items(all_items);
+    index
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     #[cfg(windows)]
     let _instance_mutex = match winsp_windows::system::single_instance::acquire(
@@ -55,25 +73,74 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let state = Arc::new(Mutex::new(AppState::new(index)));
 
-    let reindex_callback = {
+    let _reindex_watcher = if let Some(dir) = test_watch_dir() {
+        println!("Test mode: watching {} for changes", dir.display());
         let state = Arc::clone(&state);
-        move || {
+        winsp_windows::catalog::sources::watcher::for_dirs(&[dir], move |_event| {
             let index = populate_search_index();
             println!("Reindex triggered: {} items", index.len());
             if let Ok(mut app_state) = state.lock() {
                 app_state.index = index;
                 app_state.refresh_results();
             }
-        }
-    };
-
-    let _reindex_watcher = if let Some(dir) = test_watch_dir() {
-        println!("Test mode: watching {} for changes", dir.display());
-        winsp_windows::catalog::sources::watcher::for_dirs(&[dir], reindex_callback).ok()
+        })
+        .ok()
     } else {
         #[cfg(windows)]
         {
-            winsp_windows::catalog::sources::watcher::for_start_menu(reindex_callback).ok()
+            use std::sync::mpsc;
+            use std::time::Instant;
+            use winsp_windows::catalog::sources::apps::StartMenuCatalog;
+            use winsp_windows::catalog::sources::watcher::WatchEvent;
+
+            let catalog = Arc::new(Mutex::new(StartMenuCatalog::for_start_menu()));
+            let (reconcile_tx, reconcile_rx) = mpsc::channel::<()>();
+
+            {
+                let state = Arc::clone(&state);
+                let catalog = Arc::clone(&catalog);
+                std::thread::spawn(move || {
+                    let mut last_rescan = Instant::now();
+                    loop {
+                        let _ = reconcile_rx.recv_timeout(RECONCILE_INTERVAL);
+                        while reconcile_rx.try_recv().is_ok() {}
+
+                        if last_rescan.elapsed() < MIN_RECONCILE_GAP {
+                            continue;
+                        }
+
+                        if let Ok(mut cat) = catalog.lock() {
+                            cat.rescan();
+                            let index = engine_from_catalog(&cat);
+                            if let Ok(mut app_state) = state.lock() {
+                                app_state.index = index;
+                                app_state.refresh_results();
+                            }
+                        }
+                        last_rescan = Instant::now();
+                    }
+                });
+            }
+
+            window::set_reconcile_hook(reconcile_tx.clone());
+
+            let state = Arc::clone(&state);
+            winsp_windows::catalog::sources::watcher::for_start_menu(move |event| match event {
+                WatchEvent::Changed(paths) => {
+                    if let Ok(mut cat) = catalog.lock() {
+                        cat.apply_changes(&paths);
+                        let index = engine_from_catalog(&cat);
+                        if let Ok(mut app_state) = state.lock() {
+                            app_state.index = index;
+                            app_state.refresh_results();
+                        }
+                    }
+                }
+                WatchEvent::Uncertain => {
+                    let _ = reconcile_tx.send(());
+                }
+            })
+            .ok()
         }
         #[cfg(not(windows))]
         {

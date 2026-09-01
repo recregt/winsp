@@ -4,6 +4,7 @@ mod geometry;
 mod render;
 mod wndproc;
 
+use std::sync::mpsc::Sender;
 use std::sync::{Arc, Mutex, OnceLock};
 
 use winsp_windows::window::{Hotkey, Key, Window};
@@ -18,6 +19,11 @@ pub const PADDING: i32 = 12;
 pub(crate) const WINDOW_CLASS_NAME: &str = "WinSP_Spotlight_Window";
 
 static APP_STATE: OnceLock<Arc<Mutex<AppState>>> = OnceLock::new();
+static RECONCILE_TX: OnceLock<Sender<()>> = OnceLock::new();
+
+pub fn set_reconcile_hook(tx: Sender<()>) {
+    let _ = RECONCILE_TX.set(tx);
+}
 
 pub fn run_app(state: Arc<Mutex<AppState>>) -> Result<(), String> {
     let _ = APP_STATE.set(state);
