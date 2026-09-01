@@ -75,8 +75,26 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     };
 
+    let watch_dir = test_watch_dir();
+
     let start_init = std::time::Instant::now();
+
+    #[cfg(windows)]
+    let initial_catalog = if watch_dir.is_none() {
+        let catalog = winsp_windows::catalog::sources::apps::StartMenuCatalog::for_start_menu();
+        notify_if_scan_incomplete(&catalog);
+        Some(catalog)
+    } else {
+        None
+    };
+    #[cfg(windows)]
+    let index = match &initial_catalog {
+        Some(catalog) => engine_from_catalog(catalog),
+        None => populate_search_index(),
+    };
+    #[cfg(not(windows))]
     let index = populate_search_index();
+
     let init_duration = start_init.elapsed();
     println!(
         "Indexed {} applications & settings in {:.2?}",
@@ -86,7 +104,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let state = Arc::new(Mutex::new(AppState::new(index)));
 
-    let _reindex_watcher = if let Some(dir) = test_watch_dir() {
+    let _reindex_watcher = if let Some(dir) = watch_dir {
         println!("Test mode: watching {} for changes", dir.display());
         let state = Arc::clone(&state);
         winsp_windows::catalog::sources::watcher::for_dirs(&[dir], move |_event| {
@@ -103,12 +121,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         {
             use std::sync::mpsc;
             use std::time::Instant;
-            use winsp_windows::catalog::sources::apps::StartMenuCatalog;
             use winsp_windows::catalog::sources::watcher::WatchEvent;
 
-            let initial_catalog = StartMenuCatalog::for_start_menu();
-            notify_if_scan_incomplete(&initial_catalog);
-            let catalog = Arc::new(Mutex::new(initial_catalog));
+            let catalog = Arc::new(Mutex::new(
+                initial_catalog.expect("built above when not running in test-watch mode"),
+            ));
             let (reconcile_tx, reconcile_rx) = mpsc::channel::<()>();
 
             {
