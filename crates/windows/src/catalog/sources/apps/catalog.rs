@@ -124,7 +124,7 @@ fn insert_if_shortcut(
         return;
     }
 
-    let identity = resolved.unwrap_or_else(|| stem_lower.clone());
+    let identity = resolved.unwrap_or_else(|| path.to_string_lossy().into_owned());
     let id = format!("shortcut:{identity}");
     let item = AppItem::new(id, stem, AppTarget::Path(path.to_string_lossy().into()))
         .with_description(path.to_string_lossy().to_string());
@@ -292,7 +292,7 @@ mod tests {
     }
 
     #[test]
-    fn dedupes_by_stem_when_target_cannot_be_resolved() {
+    fn keeps_unresolvable_shortcuts_with_the_same_stem_as_distinct_entries() {
         let per_user = tempfile::tempdir().unwrap();
         let system_wide = tempfile::tempdir().unwrap();
 
@@ -303,8 +303,8 @@ mod tests {
             StartMenuCatalog::scan(vec![per_user.path().into(), system_wide.path().into()]);
         let items = catalog.items();
 
-        assert_eq!(items.len(), 1);
-        assert_eq!(items[0].name.as_ref(), "Chrome");
+        assert_eq!(items.len(), 2);
+        assert!(items.iter().all(|item| item.name.as_ref() == "Chrome"));
     }
 
     #[test]
