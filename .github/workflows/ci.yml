@@ -46,7 +46,7 @@ jobs:
         run: cargo machete
 
       - name: Test
-        run: cargo test --workspace --locked
+        run: cargo test --workspace --locked -- --show-output
 
   coverage:
     name: Coverage
@@ -84,7 +84,7 @@ jobs:
         run: cargo clippy --workspace --all-targets --locked -- -D warnings
 
       - name: Test
-        run: cargo test --workspace --locked
+        run: cargo test --workspace --locked -- --show-output
 
       - name: Build release binary
         run: cargo build -p winsp-app --release --locked
