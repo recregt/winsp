@@ -39,10 +39,19 @@ impl Default for HotkeyBinding {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub(super) enum WindowPosition {
+    #[default]
+    Top,
+    Center,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub(super) struct Settings {
     #[serde(default)]
     pub(super) hotkey: HotkeyBinding,
+    #[serde(default)]
+    pub(super) position: WindowPosition,
 }
 
 fn config_path() -> Option<PathBuf> {
@@ -118,6 +127,7 @@ mod tests {
                 win: false,
                 vk: 0x41,
             },
+            position: WindowPosition::Center,
         };
 
         settings.save_to(&path).unwrap();
@@ -134,6 +144,7 @@ mod tests {
                 vk: 0x41,
                 ..Default::default()
             },
+            position: WindowPosition::Top,
         }
         .save_to(&path)
         .unwrap();
@@ -143,6 +154,7 @@ mod tests {
                 vk: 0x42,
                 ..Default::default()
             },
+            position: WindowPosition::Center,
         };
         replacement.save_to(&path).unwrap();
 
@@ -214,5 +226,28 @@ mod tests {
         std::fs::write(&path, bytes).unwrap();
 
         assert_eq!(Settings::load_from(&path), Settings::default());
+    }
+
+    #[test]
+    fn the_default_position_is_top() {
+        assert_eq!(WindowPosition::default(), WindowPosition::Top);
+    }
+
+    #[test]
+    fn a_file_with_no_position_key_defaults_to_top() {
+        #[derive(Serialize)]
+        struct HotkeyOnlySettings {
+            hotkey: HotkeyBinding,
+        }
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.msgpack");
+        let bytes = rmp_serde::to_vec_named(&HotkeyOnlySettings {
+            hotkey: HotkeyBinding::default(),
+        })
+        .unwrap();
+        std::fs::write(&path, bytes).unwrap();
+
+        assert_eq!(Settings::load_from(&path).position, WindowPosition::Top);
     }
 }

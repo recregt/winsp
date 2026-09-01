@@ -24,8 +24,8 @@ use windows::Win32::UI::WindowsAndMessaging::{
     GetClientRect, GetMessageW, GetSystemMetrics, GetWindowRect, HCURSOR, HICON, HWND_TOPMOST,
     IDC_ARROW, IsWindowVisible, LoadCursorW, LoadIconW, MSG, PM_REMOVE, PeekMessageW,
     PostQuitMessage, RegisterClassExW, SM_CXSCREEN, SM_CYSCREEN, SW_HIDE, SW_SHOW, SWP_NOACTIVATE,
-    SWP_NOMOVE, SetForegroundWindow, SetWindowPos, ShowWindow, TranslateMessage, WM_CHAR,
-    WM_COMMAND, WM_DESTROY, WM_HOTKEY, WM_KEYDOWN, WM_KILLFOCUS, WM_PAINT, WM_RBUTTONUP,
+    SWP_NOMOVE, SWP_NOSIZE, SetForegroundWindow, SetWindowPos, ShowWindow, TranslateMessage,
+    WM_CHAR, WM_COMMAND, WM_DESTROY, WM_HOTKEY, WM_KEYDOWN, WM_KILLFOCUS, WM_PAINT, WM_RBUTTONUP,
     WM_SYSKEYDOWN, WNDCLASSEXW, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP,
 };
 use windows::core::{HSTRING, PCWSTR};
@@ -100,6 +100,28 @@ unsafe extern "system" fn dispatch(
             LRESULT(0)
         }
         _ => unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) },
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Anchor {
+    Top,
+    Center,
+}
+
+impl Anchor {
+    fn position_for(self, width: i32, height: i32) -> (i32, i32) {
+        unsafe {
+            let screen_width = GetSystemMetrics(SM_CXSCREEN);
+            let screen_height = GetSystemMetrics(SM_CYSCREEN);
+
+            let x = (screen_width - width) / 2;
+            let y = match self {
+                Anchor::Top => screen_height / 4,
+                Anchor::Center => (screen_height - height) / 2,
+            };
+            (x, y)
+        }
     }
 }
 
@@ -301,14 +323,9 @@ impl Window {
         }
     }
 
-    pub fn center(&self, width: i32, height: i32) {
+    pub fn center(&self, width: i32, height: i32, anchor: Anchor) {
+        let (x, y) = anchor.position_for(width, height);
         unsafe {
-            let screen_width = GetSystemMetrics(SM_CXSCREEN);
-            let screen_height = GetSystemMetrics(SM_CYSCREEN);
-
-            let x = (screen_width - width) / 2;
-            let y = screen_height / 4;
-
             let _ = SetWindowPos(
                 self.hwnd,
                 Some(HWND_TOPMOST),
@@ -337,6 +354,23 @@ impl Window {
         }
     }
 
+    pub fn reposition(&self, anchor: Anchor) {
+        unsafe {
+            let mut rect = std::mem::zeroed::<RECT>();
+            let _ = GetWindowRect(self.hwnd, &mut rect);
+            let (x, y) = anchor.position_for(rect.right - rect.left, rect.bottom - rect.top);
+            let _ = SetWindowPos(
+                self.hwnd,
+                Some(HWND_TOPMOST),
+                x,
+                y,
+                0,
+                0,
+                SWP_NOSIZE | SWP_NOACTIVATE,
+            );
+        }
+    }
+
     pub fn enable_dark_mode(&self) {
         crate::system::theme::allow_dark_mode_for_window(self.hwnd);
 
@@ -355,8 +389,8 @@ impl Window {
         tray::add(self.hwnd);
     }
 
-    pub fn show_tray_menu(&self) {
-        tray::show_menu(self.hwnd);
+    pub fn show_tray_menu(&self, current_position: Anchor) {
+        tray::show_menu(self.hwnd, current_position);
     }
 }
 

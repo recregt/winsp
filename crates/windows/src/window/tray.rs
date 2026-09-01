@@ -7,6 +7,8 @@ use windows::Win32::UI::Shell::{
 use windows::Win32::UI::WindowsAndMessaging::*;
 use windows::core::{PCWSTR, w};
 
+use super::Anchor;
+
 pub(super) const WM_TRAYICON: u32 = WM_APP + 1;
 
 #[repr(usize)]
@@ -16,6 +18,8 @@ pub enum TrayCommand {
     Autostart = 1002,
     Exit = 1003,
     ChangeHotkey = 1004,
+    PositionTop = 1005,
+    PositionCenter = 1006,
 }
 
 const TRAY_ICON_ID: u32 = 1;
@@ -57,7 +61,7 @@ pub(super) fn remove(hwnd: HWND) {
     }
 }
 
-pub(super) fn show_menu(hwnd: HWND) {
+pub(super) fn show_menu(hwnd: HWND, current_position: Anchor) {
     if !unsafe { IsWindow(Some(hwnd)) }.as_bool() {
         return;
     }
@@ -66,6 +70,16 @@ pub(super) fn show_menu(hwnd: HWND) {
             return;
         };
         let autostart_flags = if crate::system::autostart::is_enabled() {
+            MF_STRING | MF_CHECKED
+        } else {
+            MF_STRING | MF_UNCHECKED
+        };
+        let top_flags = if current_position == Anchor::Top {
+            MF_STRING | MF_CHECKED
+        } else {
+            MF_STRING | MF_UNCHECKED
+        };
+        let center_flags = if current_position == Anchor::Center {
             MF_STRING | MF_CHECKED
         } else {
             MF_STRING | MF_UNCHECKED
@@ -87,6 +101,18 @@ pub(super) fn show_menu(hwnd: HWND) {
             MF_STRING,
             TrayCommand::ChangeHotkey as usize,
             w!("Change Hotkey…"),
+        );
+        let _ = AppendMenuW(
+            menu,
+            top_flags,
+            TrayCommand::PositionTop as usize,
+            w!("Position: Top"),
+        );
+        let _ = AppendMenuW(
+            menu,
+            center_flags,
+            TrayCommand::PositionCenter as usize,
+            w!("Position: Center"),
         );
         let _ = AppendMenuW(menu, MF_STRING, TrayCommand::Exit as usize, w!("Exit"));
 

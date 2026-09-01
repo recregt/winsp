@@ -1,15 +1,18 @@
 use winsp_windows::window::{Key, Message, Modifiers, TrayCommand, Window};
 
-use super::geometry::{begin_hotkey_capture, resize_window_for_results, toggle_visibility};
+use super::geometry::{
+    begin_hotkey_capture, resize_window_for_results, to_anchor, toggle_visibility,
+};
 use super::hotkey_capture::{self, CaptureOutcome, CommitResult};
 use super::interaction;
 use super::render::render_ui;
+use super::settings::WindowPosition;
 use super::{APP_STATE, SETTINGS};
 
 pub(super) fn handle_message(window: &Window, message: Message) {
     match message {
         Message::Hotkey => toggle_visibility(window),
-        Message::TrayRightClick => window.show_tray_menu(),
+        Message::TrayRightClick => window.show_tray_menu(to_anchor(current_position())),
         Message::Command(cmd) => match cmd {
             TrayCommand::Toggle => toggle_visibility(window),
             TrayCommand::Autostart => {
@@ -24,6 +27,8 @@ pub(super) fn handle_message(window: &Window, message: Message) {
                 }
                 begin_hotkey_capture(window);
             }
+            TrayCommand::PositionTop => set_position(window, WindowPosition::Top),
+            TrayCommand::PositionCenter => set_position(window, WindowPosition::Center),
             TrayCommand::Exit => window.close(),
         },
         Message::KillFocus => {
@@ -113,6 +118,35 @@ pub(super) fn handle_message(window: &Window, message: Message) {
             }
         }
         Message::Paint => window.paint(render_ui),
+    }
+}
+
+fn current_position() -> WindowPosition {
+    SETTINGS
+        .get()
+        .and_then(|settings| settings.lock().ok().map(|settings| settings.position))
+        .unwrap_or_default()
+}
+
+fn set_position(window: &Window, position: WindowPosition) {
+    let Some(settings_mutex) = SETTINGS.get() else {
+        return;
+    };
+    let Ok(mut settings) = settings_mutex.lock() else {
+        return;
+    };
+
+    let previous = settings.position;
+    settings.position = position;
+    if let Err(err) = settings.save() {
+        settings.position = previous;
+        winsp_windows::system::toast::show("WinSP", &format!("Failed to save position: {err}"));
+        return;
+    }
+    drop(settings);
+
+    if window.is_visible() {
+        window.reposition(to_anchor(position));
     }
 }
 
