@@ -1,13 +1,9 @@
 name: Nightly
 
 on:
-  schedule:
-    - cron: "0 0 * * *"
+  push:
+    branches: [main]
   workflow_dispatch:
-
-concurrency:
-  group: nightly
-  cancel-in-progress: false
 
 permissions:
   contents: read
@@ -20,6 +16,9 @@ jobs:
   check:
     name: Check for new commits
     runs-on: ubuntu-latest
+    concurrency:
+      group: nightly-check
+      cancel-in-progress: true
     outputs:
       skip: ${{ steps.check.outputs.skip }}
     steps:
@@ -55,6 +54,9 @@ jobs:
     needs: check
     if: needs.check.outputs.skip != 'true'
     runs-on: windows-latest
+    concurrency:
+      group: nightly-publish
+      cancel-in-progress: false
     permissions:
       contents: write
     steps:
