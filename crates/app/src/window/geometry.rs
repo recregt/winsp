@@ -13,7 +13,7 @@ pub(super) fn to_anchor(position: WindowPosition) -> Anchor {
     }
 }
 
-fn current_anchor() -> Anchor {
+pub(super) fn current_anchor() -> Anchor {
     SETTINGS
         .get()
         .and_then(|settings| settings.lock().ok().map(|settings| settings.position))
