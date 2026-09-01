@@ -1,8 +1,11 @@
 mod canvas;
+mod message;
 mod tray;
 
+use std::sync::OnceLock;
+
 use crate::system::registry::to_wide;
-use windows_sys::Win32::Foundation::{HWND, RECT};
+use windows_sys::Win32::Foundation::{HWND, LPARAM, LRESULT, RECT, WPARAM};
 use windows_sys::Win32::Graphics::Dwm::{
     DWMSBT_TRANSIENTWINDOW, DWMWA_SYSTEMBACKDROP_TYPE, DWMWA_USE_IMMERSIVE_DARK_MODE,
     DWMWA_WINDOW_CORNER_PREFERENCE, DWMWCP_ROUND, DwmSetWindowAttribute,
@@ -18,15 +21,75 @@ use windows_sys::Win32::UI::HiDpi::{
 };
 use windows_sys::Win32::UI::Input::KeyboardAndMouse::{RegisterHotKey, UnregisterHotKey};
 use windows_sys::Win32::UI::WindowsAndMessaging::{
-    CS_HREDRAW, CS_VREDRAW, CreateWindowExW, DispatchMessageW, GetClientRect, GetMessageW,
-    GetSystemMetrics, GetWindowRect, HWND_TOPMOST, IDC_ARROW, IsWindowVisible, LoadCursorW,
-    LoadIconW, MSG, RegisterClassExW, SM_CXSCREEN, SM_CYSCREEN, SW_HIDE, SW_SHOW, SWP_NOACTIVATE,
-    SWP_NOMOVE, SetForegroundWindow, SetWindowPos, ShowWindow, TranslateMessage, WNDCLASSEXW,
-    WNDPROC, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP,
+    CS_HREDRAW, CS_VREDRAW, CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW,
+    GetClientRect, GetMessageW, GetSystemMetrics, GetWindowRect, HWND_TOPMOST, IDC_ARROW,
+    IsWindowVisible, LoadCursorW, LoadIconW, MSG, PostQuitMessage, RegisterClassExW, SM_CXSCREEN,
+    SM_CYSCREEN, SW_HIDE, SW_SHOW, SWP_NOACTIVATE, SWP_NOMOVE, SetForegroundWindow, SetWindowPos,
+    ShowWindow, TranslateMessage, WM_CHAR, WM_COMMAND, WM_DESTROY, WM_HOTKEY, WM_KEYDOWN,
+    WM_KILLFOCUS, WM_PAINT, WM_RBUTTONUP, WNDCLASSEXW, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP,
 };
 
 pub use canvas::{Canvas, Color, Font, FontGuard, FontWeight, Rect, register_embedded_font};
-pub use tray::{TrayCommand, WM_TRAYICON};
+pub use message::{Hotkey, Key, Message};
+pub use tray::TrayCommand;
+
+static HANDLER: OnceLock<fn(&WindowHandle, Message)> = OnceLock::new();
+
+unsafe extern "system" fn dispatch(
+    hwnd: HWND,
+    msg: u32,
+    wparam: WPARAM,
+    lparam: LPARAM,
+) -> LRESULT {
+    let Some(handler) = HANDLER.get() else {
+        return unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) };
+    };
+    let window = WindowHandle::new(hwnd);
+    match msg {
+        WM_HOTKEY => {
+            handler(&window, Message::Hotkey);
+            0
+        }
+        tray::WM_TRAYICON => {
+            if lparam as u32 == WM_RBUTTONUP {
+                handler(&window, Message::TrayRightClick);
+            }
+            0
+        }
+        WM_COMMAND => {
+            if let Ok(cmd) = TrayCommand::try_from(wparam & 0xffff) {
+                handler(&window, Message::Command(cmd));
+            }
+            0
+        }
+        WM_KILLFOCUS => {
+            handler(&window, Message::KillFocus);
+            0
+        }
+        WM_CHAR => {
+            if let Some(c) = message::decode_wm_char(wparam as u16) {
+                if !c.is_control() {
+                    handler(&window, Message::Char(c));
+                }
+            }
+            0
+        }
+        WM_KEYDOWN => {
+            handler(&window, Message::KeyDown(Key::from_vk(wparam as u16)));
+            0
+        }
+        WM_PAINT => {
+            handler(&window, Message::Paint);
+            0
+        }
+        WM_DESTROY => {
+            tray::remove(hwnd);
+            unsafe { PostQuitMessage(0) };
+            0
+        }
+        _ => unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) },
+    }
+}
 
 pub struct WindowHandle {
     hwnd: HWND,
@@ -42,8 +105,9 @@ impl WindowHandle {
         title: &str,
         width: i32,
         height: i32,
-        wnd_proc: WNDPROC,
+        handler: fn(&WindowHandle, Message),
     ) -> Result<Self, std::io::Error> {
+        let _ = HANDLER.set(handler);
         unsafe {
             SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
 
@@ -54,7 +118,7 @@ impl WindowHandle {
             let wnd_class = WNDCLASSEXW {
                 cbSize: std::mem::size_of::<WNDCLASSEXW>() as u32,
                 style: CS_HREDRAW | CS_VREDRAW,
-                lpfnWndProc: wnd_proc,
+                lpfnWndProc: Some(dispatch),
                 cbClsExtra: 0,
                 cbWndExtra: 0,
                 hInstance: instance,
@@ -113,10 +177,10 @@ impl WindowHandle {
         self.hwnd
     }
 
-    pub fn run_message_loop(&self, hotkey_modifiers: u32, hotkey_vk: u32) {
+    pub fn run_message_loop(&self, hotkey: Hotkey) {
         const HOTKEY_ID: i32 = 1;
         unsafe {
-            if RegisterHotKey(self.hwnd, HOTKEY_ID, hotkey_modifiers, hotkey_vk) == 0 {
+            if RegisterHotKey(self.hwnd, HOTKEY_ID, hotkey.modifiers, hotkey.vk) == 0 {
                 notify_hotkey_registration_failed(std::io::Error::last_os_error());
             }
 
@@ -144,6 +208,12 @@ impl WindowHandle {
     pub fn hide(&self) {
         unsafe {
             ShowWindow(self.hwnd, SW_HIDE);
+        }
+    }
+
+    pub fn close(&self) {
+        unsafe {
+            DestroyWindow(self.hwnd);
         }
     }
 
@@ -241,10 +311,6 @@ impl WindowHandle {
 
     pub fn add_tray_icon(&self) {
         tray::add(self.hwnd);
-    }
-
-    pub fn remove_tray_icon(&self) {
-        tray::remove(self.hwnd);
     }
 
     pub fn show_tray_menu(&self) {

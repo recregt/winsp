@@ -1,15 +1,15 @@
 #![cfg(windows)]
 
 mod geometry;
-mod input;
 mod render;
 mod wndproc;
 
 use std::sync::{Arc, Mutex, OnceLock};
-use windows_sys::Win32::UI::Input::KeyboardAndMouse::*;
+
+use winsp_windows::system::{Hotkey, Key};
 
 use crate::state::AppState;
-use wndproc::wnd_proc;
+use wndproc::handle_message;
 
 pub const WINDOW_WIDTH: i32 = 680;
 pub const SEARCH_BAR_HEIGHT: i32 = 64;
@@ -29,14 +29,14 @@ pub fn run_app(state: Arc<Mutex<AppState>>) -> Result<(), String> {
         "WinSP",
         WINDOW_WIDTH,
         SEARCH_BAR_HEIGHT,
-        Some(wnd_proc),
+        handle_message,
     )
     .map_err(|e| format!("failed to create window: {e}"))?;
     window_handle.enable_dark_mode();
 
     window_handle.center(WINDOW_WIDTH, SEARCH_BAR_HEIGHT);
     window_handle.add_tray_icon();
-    window_handle.run_message_loop(MOD_ALT, VK_SPACE as u32);
+    window_handle.run_message_loop(Hotkey::alt(Key::Space));
 
     Ok(())
 }
