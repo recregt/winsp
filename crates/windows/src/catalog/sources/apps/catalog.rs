@@ -109,16 +109,63 @@ fn insert_if_shortcut(
         return;
     };
     let stem_lower = stem.to_lowercase();
-    if stem_lower.contains("uninstall") || stem_lower.contains("help") {
+
+    let resolved = resolve_shortcut_target(path, &ext_lower);
+
+    if ext_lower == "lnk" {
+        if let Some(identity) = &resolved {
+            if let Some((target, arguments)) = identity.split_once('|') {
+                if targets_uninstaller(target, arguments) {
+                    return;
+                }
+            }
+        }
+    } else if matches!(stem_lower.as_str(), "uninstall" | "remove") {
         return;
     }
 
-    let identity = resolve_shortcut_target(path, &ext_lower).unwrap_or_else(|| stem_lower.clone());
+    let identity = resolved.unwrap_or_else(|| stem_lower.clone());
     let id = format!("shortcut:{identity}");
     let item = AppItem::new(id, stem, AppTarget::Path(path.to_string_lossy().into()))
         .with_description(path.to_string_lossy().to_string());
 
     shortcuts.insert(path.to_path_buf(), ScannedShortcut { item, priority });
+}
+
+const KNOWN_UNINSTALLER_EXE_NAMES: &[&str] = &[
+    "uninstall.exe",
+    "uninstaller.exe",
+    "unwise.exe",
+    "unwise32.exe",
+];
+const NUMBERED_UNINSTALLER_PREFIXES: &[&str] = &["unins", "uninst"];
+
+fn targets_uninstaller(target: &str, arguments: &str) -> bool {
+    let exe_name = Path::new(target)
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or_default();
+
+    if is_uninstaller_exe_name(exe_name) {
+        return true;
+    }
+
+    exe_name == "msiexec.exe" && (arguments.contains("/x") || arguments.contains("/uninstall"))
+}
+
+fn is_uninstaller_exe_name(exe_name: &str) -> bool {
+    if KNOWN_UNINSTALLER_EXE_NAMES.contains(&exe_name) {
+        return true;
+    }
+
+    let Some(stem) = exe_name.strip_suffix(".exe") else {
+        return false;
+    };
+
+    NUMBERED_UNINSTALLER_PREFIXES.iter().any(|prefix| {
+        stem.strip_prefix(prefix)
+            .is_some_and(|digits| !digits.is_empty() && digits.bytes().all(|b| b.is_ascii_digit()))
+    })
 }
 
 #[cfg(test)]
@@ -453,5 +500,119 @@ mod tests {
         catalog.rescan();
 
         assert_eq!(names(&catalog.items()), vec!["App"]);
+    }
+
+    #[test]
+    fn filters_out_shortcuts_targeting_a_known_uninstaller_exe() {
+        let dir = tempfile::tempdir().unwrap();
+        {
+            let _com = ComInit::new();
+            create_test_lnk(dir.path(), "Remove Foo", r"C:\Apps\Foo\unins000.exe", "");
+        }
+
+        let catalog = StartMenuCatalog::scan(vec![dir.path().into()]);
+
+        assert_eq!(catalog.items().len(), 0);
+    }
+
+    #[test]
+    fn filters_out_msiexec_uninstall_shortcuts() {
+        let dir = tempfile::tempdir().unwrap();
+        {
+            let _com = ComInit::new();
+            create_test_lnk(
+                dir.path(),
+                "Modify or Remove Foo",
+                r"C:\Windows\System32\msiexec.exe",
+                "/x {12345678-1234-1234-1234-123456789012}",
+            );
+        }
+
+        let catalog = StartMenuCatalog::scan(vec![dir.path().into()]);
+
+        assert_eq!(catalog.items().len(), 0);
+    }
+
+    #[test]
+    fn does_not_filter_shortcuts_targeting_similarly_named_but_different_exes() {
+        let dir = tempfile::tempdir().unwrap();
+        {
+            let _com = ComInit::new();
+            create_test_lnk(dir.path(), "Installer", r"C:\Apps\Foo\installer.exe", "");
+        }
+
+        let catalog = StartMenuCatalog::scan(vec![dir.path().into()]);
+
+        assert_eq!(catalog.items().len(), 1);
+    }
+
+    #[test]
+    fn keeps_real_apps_whose_name_merely_contains_uninstall_or_help() {
+        let dir = tempfile::tempdir().unwrap();
+        {
+            let _com = ComInit::new();
+            create_test_lnk(
+                dir.path(),
+                "Help Scout",
+                r"C:\Apps\HelpScout\helpscout.exe",
+                "",
+            );
+            create_test_lnk(
+                dir.path(),
+                "Uninstall Manager",
+                r"C:\Apps\UninstallManager\app.exe",
+                "",
+            );
+        }
+
+        let catalog = StartMenuCatalog::scan(vec![dir.path().into()]);
+
+        let scanned = catalog.items();
+        let mut items = names(&scanned);
+        items.sort_unstable();
+        assert_eq!(items, vec!["Help Scout", "Uninstall Manager"]);
+    }
+
+    #[test]
+    fn keeps_unresolvable_lnk_even_if_named_like_an_uninstaller() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(dir.path().join("Uninstall Foo.lnk"), []).unwrap();
+
+        let catalog = StartMenuCatalog::scan(vec![dir.path().into()]);
+
+        assert_eq!(names(&catalog.items()), vec!["Uninstall Foo"]);
+    }
+
+    #[test]
+    fn keeps_url_shortcut_named_help() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(
+            dir.path().join("Help.url"),
+            "[InternetShortcut]\nURL=https://example.com/help\n",
+        )
+        .unwrap();
+
+        let catalog = StartMenuCatalog::scan(vec![dir.path().into()]);
+
+        assert_eq!(names(&catalog.items()), vec!["Help"]);
+    }
+
+    #[test]
+    fn filters_out_url_shortcuts_named_exactly_uninstall_or_remove() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(
+            dir.path().join("Uninstall.url"),
+            "[InternetShortcut]\nURL=https://example.com/uninstall\n",
+        )
+        .unwrap();
+        fs::write(
+            dir.path().join("Remove.url"),
+            "[InternetShortcut]\nURL=https://example.com/remove\n",
+        )
+        .unwrap();
+
+        let catalog = StartMenuCatalog::scan(vec![dir.path().into()]);
+
+        assert_eq!(catalog.items().len(), 0);
     }
 }
