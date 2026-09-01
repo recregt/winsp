@@ -1,8 +1,6 @@
 use winsp_core::models::{AppItem, AppTarget};
 
 use super::builtin::built_in_tools;
-use super::com::ComGuard;
-use super::lnk::LnkResolver;
 use super::resolve_shortcut_target;
 use super::start_menu::start_menu_dirs;
 
@@ -26,11 +24,8 @@ fn scan_start_menu(
     apps: &mut Vec<AppItem>,
     seen_ids: &mut std::collections::HashSet<String>,
 ) {
-    let _com_guard = ComGuard::new();
-    let lnk_resolver = LnkResolver::new();
-
     for dir_path in dirs {
-        scan_directory_for_shortcuts(dir_path, apps, seen_ids, lnk_resolver.as_ref());
+        scan_directory_for_shortcuts(dir_path, apps, seen_ids);
     }
 }
 
@@ -38,13 +33,12 @@ fn scan_directory_for_shortcuts(
     dir: &std::path::Path,
     apps: &mut Vec<AppItem>,
     seen_ids: &mut std::collections::HashSet<String>,
-    lnk_resolver: Option<&LnkResolver>,
 ) {
     if let Ok(entries) = std::fs::read_dir(dir) {
         for entry in entries.flatten() {
             let path = entry.path();
             if path.is_dir() {
-                scan_directory_for_shortcuts(&path, apps, seen_ids, lnk_resolver);
+                scan_directory_for_shortcuts(&path, apps, seen_ids);
             } else if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
                 let ext_lower = ext.to_lowercase();
                 if ext_lower == "lnk" || ext_lower == "url" {
@@ -54,7 +48,7 @@ fn scan_directory_for_shortcuts(
                             continue;
                         }
 
-                        let identity = resolve_shortcut_target(&path, &ext_lower, lnk_resolver)
+                        let identity = resolve_shortcut_target(&path, &ext_lower)
                             .unwrap_or_else(|| stem_lower.clone());
                         let id = format!("shortcut:{}", identity);
                         if seen_ids.insert(id.clone()) {
@@ -80,15 +74,24 @@ mod tests {
     use std::fs;
     use std::os::windows::ffi::OsStrExt;
     use windows::Win32::System::Com::{
-        CLSCTX_INPROC_SERVER, COINIT_MULTITHREADED, CoCreateInstance, CoInitializeEx,
+        CLSCTX_INPROC_SERVER, COINIT_APARTMENTTHREADED, CoCreateInstance, CoInitializeEx,
         CoUninitialize, IPersistFile,
     };
     use windows::Win32::UI::Shell::{IShellLinkW, ShellLink};
     use windows::core::{Interface, PCWSTR};
 
-    struct ConflictingApartmentGuard;
+    struct ComInit;
 
-    impl Drop for ConflictingApartmentGuard {
+    impl ComInit {
+        fn new() -> Self {
+            unsafe {
+                CoInitializeEx(None, COINIT_APARTMENTTHREADED).ok().unwrap();
+            }
+            Self
+        }
+    }
+
+    impl Drop for ComInit {
         fn drop(&mut self) {
             unsafe {
                 CoUninitialize();
@@ -125,79 +128,64 @@ mod tests {
 
     #[test]
     fn dedupes_real_lnk_shortcuts_with_same_target() {
-        let _guard = ComGuard::new();
-        let resolver = LnkResolver::new();
         let per_user = tempfile::tempdir().unwrap();
         let system_wide = tempfile::tempdir().unwrap();
-
-        create_test_lnk(per_user.path(), "App", r"C:\Apps\App\app.exe", "");
-        create_test_lnk(system_wide.path(), "App", r"C:\Apps\App\app.exe", "");
+        {
+            let _com = ComInit::new();
+            create_test_lnk(per_user.path(), "App", r"C:\Apps\App\app.exe", "");
+            create_test_lnk(system_wide.path(), "App", r"C:\Apps\App\app.exe", "");
+        }
 
         let mut apps = Vec::new();
         let mut seen_ids = std::collections::HashSet::new();
-        scan_directory_for_shortcuts(per_user.path(), &mut apps, &mut seen_ids, resolver.as_ref());
-        scan_directory_for_shortcuts(
-            system_wide.path(),
-            &mut apps,
-            &mut seen_ids,
-            resolver.as_ref(),
-        );
+        scan_directory_for_shortcuts(per_user.path(), &mut apps, &mut seen_ids);
+        scan_directory_for_shortcuts(system_wide.path(), &mut apps, &mut seen_ids);
 
         assert_eq!(apps.len(), 1);
     }
 
     #[test]
     fn keeps_real_lnk_shortcuts_with_different_targets_same_name() {
-        let _guard = ComGuard::new();
-        let resolver = LnkResolver::new();
         let per_user = tempfile::tempdir().unwrap();
         let system_wide = tempfile::tempdir().unwrap();
-
-        create_test_lnk(per_user.path(), "App", r"C:\VendorA\app.exe", "");
-        create_test_lnk(system_wide.path(), "App", r"C:\VendorB\app.exe", "");
+        {
+            let _com = ComInit::new();
+            create_test_lnk(per_user.path(), "App", r"C:\VendorA\app.exe", "");
+            create_test_lnk(system_wide.path(), "App", r"C:\VendorB\app.exe", "");
+        }
 
         let mut apps = Vec::new();
         let mut seen_ids = std::collections::HashSet::new();
-        scan_directory_for_shortcuts(per_user.path(), &mut apps, &mut seen_ids, resolver.as_ref());
-        scan_directory_for_shortcuts(
-            system_wide.path(),
-            &mut apps,
-            &mut seen_ids,
-            resolver.as_ref(),
-        );
+        scan_directory_for_shortcuts(per_user.path(), &mut apps, &mut seen_ids);
+        scan_directory_for_shortcuts(system_wide.path(), &mut apps, &mut seen_ids);
 
         assert_eq!(apps.len(), 2);
     }
 
     #[test]
     fn keeps_real_lnk_shortcuts_with_same_target_different_arguments() {
-        let _guard = ComGuard::new();
-        let resolver = LnkResolver::new();
         let per_user = tempfile::tempdir().unwrap();
         let system_wide = tempfile::tempdir().unwrap();
-
-        create_test_lnk(
-            per_user.path(),
-            "App",
-            r"C:\Apps\App\app.exe",
-            "--profile=work",
-        );
-        create_test_lnk(
-            system_wide.path(),
-            "App",
-            r"C:\Apps\App\app.exe",
-            "--profile=personal",
-        );
+        {
+            let _com = ComInit::new();
+            create_test_lnk(
+                per_user.path(),
+                "App",
+                r"C:\Apps\App\app.exe",
+                "--profile=work",
+            );
+            create_test_lnk(
+                system_wide.path(),
+                "App",
+                r"C:\Apps\App\app.exe",
+                "--profile=personal",
+            );
+        }
 
         let mut apps = Vec::new();
         let mut seen_ids = std::collections::HashSet::new();
-        scan_directory_for_shortcuts(per_user.path(), &mut apps, &mut seen_ids, resolver.as_ref());
-        scan_directory_for_shortcuts(
-            system_wide.path(),
-            &mut apps,
-            &mut seen_ids,
-            resolver.as_ref(),
-        );
+        scan_directory_for_shortcuts(per_user.path(), &mut apps, &mut seen_ids);
+        scan_directory_for_shortcuts(system_wide.path(), &mut apps, &mut seen_ids);
 
         assert_eq!(apps.len(), 2);
     }
@@ -212,8 +200,8 @@ mod tests {
 
         let mut apps = Vec::new();
         let mut seen_ids = std::collections::HashSet::new();
-        scan_directory_for_shortcuts(per_user.path(), &mut apps, &mut seen_ids, None);
-        scan_directory_for_shortcuts(system_wide.path(), &mut apps, &mut seen_ids, None);
+        scan_directory_for_shortcuts(per_user.path(), &mut apps, &mut seen_ids);
+        scan_directory_for_shortcuts(system_wide.path(), &mut apps, &mut seen_ids);
 
         assert_eq!(apps.len(), 1);
         assert_eq!(apps[0].name.as_ref(), "Chrome");
@@ -229,8 +217,8 @@ mod tests {
 
         let mut apps = Vec::new();
         let mut seen_ids = std::collections::HashSet::new();
-        scan_directory_for_shortcuts(per_user.path(), &mut apps, &mut seen_ids, None);
-        scan_directory_for_shortcuts(system_wide.path(), &mut apps, &mut seen_ids, None);
+        scan_directory_for_shortcuts(per_user.path(), &mut apps, &mut seen_ids);
+        scan_directory_for_shortcuts(system_wide.path(), &mut apps, &mut seen_ids);
 
         assert_eq!(apps.len(), 2);
     }
@@ -246,8 +234,8 @@ mod tests {
 
         let mut apps = Vec::new();
         let mut seen_ids = std::collections::HashSet::new();
-        scan_directory_for_shortcuts(per_user.path(), &mut apps, &mut seen_ids, None);
-        scan_directory_for_shortcuts(system_wide.path(), &mut apps, &mut seen_ids, None);
+        scan_directory_for_shortcuts(per_user.path(), &mut apps, &mut seen_ids);
+        scan_directory_for_shortcuts(system_wide.path(), &mut apps, &mut seen_ids);
 
         assert_eq!(apps.len(), 1);
     }
@@ -270,8 +258,8 @@ mod tests {
 
         let mut apps = Vec::new();
         let mut seen_ids = std::collections::HashSet::new();
-        scan_directory_for_shortcuts(per_user.path(), &mut apps, &mut seen_ids, None);
-        scan_directory_for_shortcuts(system_wide.path(), &mut apps, &mut seen_ids, None);
+        scan_directory_for_shortcuts(per_user.path(), &mut apps, &mut seen_ids);
+        scan_directory_for_shortcuts(system_wide.path(), &mut apps, &mut seen_ids);
 
         assert_eq!(apps.len(), 2);
     }
@@ -294,8 +282,8 @@ mod tests {
 
         let mut apps = Vec::new();
         let mut seen_ids = std::collections::HashSet::new();
-        scan_directory_for_shortcuts(per_user.path(), &mut apps, &mut seen_ids, None);
-        scan_directory_for_shortcuts(system_wide.path(), &mut apps, &mut seen_ids, None);
+        scan_directory_for_shortcuts(per_user.path(), &mut apps, &mut seen_ids);
+        scan_directory_for_shortcuts(system_wide.path(), &mut apps, &mut seen_ids);
 
         assert_eq!(apps.len(), 1);
     }
@@ -318,34 +306,9 @@ mod tests {
 
         let mut apps = Vec::new();
         let mut seen_ids = std::collections::HashSet::new();
-        scan_directory_for_shortcuts(per_user.path(), &mut apps, &mut seen_ids, None);
-        scan_directory_for_shortcuts(system_wide.path(), &mut apps, &mut seen_ids, None);
+        scan_directory_for_shortcuts(per_user.path(), &mut apps, &mut seen_ids);
+        scan_directory_for_shortcuts(system_wide.path(), &mut apps, &mut seen_ids);
 
         assert_eq!(apps.len(), 2);
-    }
-
-    #[test]
-    fn recovers_from_shortcut_scan_when_com_apartment_conflicts() {
-        let dir = tempfile::tempdir().unwrap();
-        {
-            let _guard = ComGuard::new();
-            create_test_lnk(
-                dir.path(),
-                "Chrome",
-                r"C:\Program Files\Chrome\chrome.exe",
-                "",
-            );
-        }
-
-        unsafe {
-            CoInitializeEx(None, COINIT_MULTITHREADED).ok().unwrap();
-        }
-        let _cleanup = ConflictingApartmentGuard;
-
-        let mut apps = Vec::new();
-        let mut seen_ids = std::collections::HashSet::new();
-        scan_start_menu(&[dir.path().to_path_buf()], &mut apps, &mut seen_ids);
-
-        assert_eq!(apps.len(), 1);
     }
 }
