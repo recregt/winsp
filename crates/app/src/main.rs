@@ -32,10 +32,6 @@ fn test_watch_dir() -> Option<std::path::PathBuf> {
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    println!("====================================================");
-    println!("  WinSP - Lightning-Fast Windows Spotlight Launcher ");
-    println!("====================================================");
-
     #[cfg(windows)]
     let _instance_mutex = match winsp_windows::system::single_instance::acquire(
         "WinSP_SingleInstance_Mutex",
@@ -43,17 +39,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     ) {
         Some(mutex) => mutex,
         None => {
-            println!("WinSP is already running — focusing the existing window.");
+            println!("WinSP is already running, focusing the existing window.");
             return Ok(());
         }
     };
 
-    // 1. Initialize & populate in-memory search index
     let start_init = std::time::Instant::now();
     let index = populate_search_index();
     let init_duration = start_init.elapsed();
     println!(
-        "⚡ Indexed {} applications & settings in {:.2?}",
+        "Indexed {} applications & settings in {:.2?}",
         index.len(),
         init_duration
     );
@@ -64,7 +59,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let state = Arc::clone(&state);
         move || {
             let index = populate_search_index();
-            println!("[WinSP] Reindex triggered: {} items", index.len());
+            println!("Reindex triggered: {} items", index.len());
             if let Ok(mut app_state) = state.lock() {
                 app_state.index = index;
                 app_state.refresh_results();
@@ -73,7 +68,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     let _reindex_watcher = if let Some(dir) = test_watch_dir() {
-        println!("[WinSP] Test mode: watching {} for changes", dir.display());
+        println!("Test mode: watching {} for changes", dir.display());
         winsp_windows::catalog::sources::watcher::for_dirs(&[dir], reindex_callback).ok()
     } else {
         #[cfg(windows)]
@@ -88,8 +83,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     #[cfg(windows)]
     {
-        println!("🚀 Starting WinSP native floating search bar...");
-        println!("Press Alt+Space to toggle Spotlight, Esc to dismiss.");
+        println!("Press Alt+Space to toggle the search bar, Esc to dismiss.");
         window::run_app(state).map_err(|e| e.into())
     }
 
@@ -101,8 +95,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 #[cfg(not(windows))]
 fn run_terminal_demo(state: Arc<Mutex<AppState>>) -> Result<(), Box<dyn std::error::Error>> {
-    println!("\n[Running in Cross-Platform Interactive Demo Mode]");
-    println!("Type a query to search, '=expr' for math, or ':q' to quit.\n");
+    println!("Cross-platform interactive demo mode.");
+    println!("Type a query to search, '=expr' for math, or ':q' to quit.");
 
     loop {
         print!("Spotlight > ");
@@ -115,7 +109,6 @@ fn run_terminal_demo(state: Arc<Mutex<AppState>>) -> Result<(), Box<dyn std::err
 
         let query = input.trim();
         if query == ":q" || query == "exit" {
-            println!("Goodbye!");
             break;
         }
 
@@ -125,7 +118,7 @@ fn run_terminal_demo(state: Arc<Mutex<AppState>>) -> Result<(), Box<dyn std::err
         let search_duration = start_search.elapsed();
 
         println!(
-            "---------------------------------------------------- (Found {} in {:.3?})",
+            "Found {} in {:.3?}",
             app_state.results.len(),
             search_duration
         );
@@ -138,7 +131,7 @@ fn run_terminal_demo(state: Arc<Mutex<AppState>>) -> Result<(), Box<dyn std::err
                 println!("  [{}] {:<25} | {}", i + 1, res.title, sub);
             }
         }
-        println!("----------------------------------------------------\n");
+        println!();
     }
 
     Ok(())
