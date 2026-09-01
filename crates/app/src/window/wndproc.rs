@@ -1,7 +1,8 @@
 use winsp_windows::window::{Key, Message, Modifiers, TrayCommand, Window};
 
 use super::geometry::{
-    begin_hotkey_capture, current_anchor, resize_window_for_results, to_anchor, toggle_visibility,
+    begin_hotkey_capture, current_anchor, resize_window_for_results, show_fresh, to_anchor,
+    toggle_visibility,
 };
 use super::hotkey_capture::{self, CaptureOutcome, CommitResult};
 use super::interaction;
@@ -12,6 +13,7 @@ use super::{APP_STATE, SETTINGS};
 pub(super) fn handle_message(window: &Window, message: Message) {
     match message {
         Message::Hotkey => toggle_visibility(window),
+        Message::ShowRequest => show_fresh(window),
         Message::TrayRightClick => window.show_tray_menu(current_anchor()),
         Message::Command(cmd) => match cmd {
             TrayCommand::Toggle => toggle_visibility(window),

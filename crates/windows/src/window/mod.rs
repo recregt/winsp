@@ -25,8 +25,8 @@ use windows::Win32::UI::WindowsAndMessaging::{
     IDC_ARROW, IsWindowVisible, LoadCursorW, LoadIconW, MSG, PM_REMOVE, PeekMessageW,
     PostQuitMessage, RegisterClassExW, SM_CXSCREEN, SM_CYSCREEN, SW_HIDE, SW_SHOW, SWP_NOACTIVATE,
     SWP_NOMOVE, SWP_NOSIZE, SetForegroundWindow, SetWindowPos, ShowWindow, TranslateMessage,
-    WM_CHAR, WM_COMMAND, WM_DESTROY, WM_HOTKEY, WM_KEYDOWN, WM_KILLFOCUS, WM_PAINT, WM_RBUTTONUP,
-    WM_SYSKEYDOWN, WNDCLASSEXW, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP,
+    WM_APP, WM_CHAR, WM_COMMAND, WM_DESTROY, WM_HOTKEY, WM_KEYDOWN, WM_KILLFOCUS, WM_PAINT,
+    WM_RBUTTONUP, WM_SYSKEYDOWN, WNDCLASSEXW, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP,
 };
 use windows::core::{HSTRING, PCWSTR};
 
@@ -38,6 +38,8 @@ pub use tray::TrayCommand;
 pub use canvas::testing;
 
 static HANDLER: OnceLock<fn(&Window, Message)> = OnceLock::new();
+
+pub(crate) const WM_SHOW_REQUEST: u32 = WM_APP + 2;
 
 unsafe extern "system" fn dispatch(
     hwnd: HWND,
@@ -88,6 +90,10 @@ unsafe extern "system" fn dispatch(
                     message::current_modifiers(),
                 ),
             );
+            LRESULT(0)
+        }
+        WM_SHOW_REQUEST => {
+            handler(&window, Message::ShowRequest);
             LRESULT(0)
         }
         WM_PAINT => {
@@ -518,7 +524,7 @@ mod tests {
 
     #[test]
     fn discard_pending_char_leaves_unrelated_messages_alone() {
-        use windows::Win32::UI::WindowsAndMessaging::{PostMessageW, WM_APP};
+        use windows::Win32::UI::WindowsAndMessaging::PostMessageW;
 
         let class_name = HSTRING::from("WinSpTest_DiscardPendingCharUnrelatedWindow");
         let hwnd = create_test_window(&class_name);
