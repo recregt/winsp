@@ -16,13 +16,13 @@ pub struct Rect {
     pub bottom: i32,
 }
 
-impl From<Rect> for RECT {
-    fn from(rect: Rect) -> RECT {
+impl Rect {
+    fn to_win32(self) -> RECT {
         RECT {
-            left: rect.left,
-            top: rect.top,
-            right: rect.right,
-            bottom: rect.bottom,
+            left: self.left,
+            top: self.top,
+            right: self.right,
+            bottom: self.bottom,
         }
     }
 }
@@ -54,16 +54,15 @@ impl Canvas {
         Self { hdc }
     }
 
-    /// # Safety
-    /// `hdc` must be a valid device context handle for the lifetime of the returned `Canvas`.
-    pub unsafe fn from_raw(hdc: HDC) -> Self {
+    #[cfg(feature = "test-support")]
+    unsafe fn from_raw(hdc: HDC) -> Self {
         Self { hdc }
     }
 
     pub fn fill_rect(&self, rect: Rect, color: Color) {
         unsafe {
             let brush = CreateSolidBrush(COLORREF(color.0));
-            FillRect(self.hdc, &rect.into(), brush);
+            FillRect(self.hdc, &rect.to_win32(), brush);
             let _ = DeleteObject(brush.into());
         }
     }
@@ -77,7 +76,7 @@ impl Canvas {
     pub fn draw_text(&self, text: &str, rect: Rect) {
         unsafe {
             let mut wide: Vec<u16> = text.encode_utf16().collect();
-            let mut gdi_rect: RECT = rect.into();
+            let mut gdi_rect: RECT = rect.to_win32();
             DrawTextW(
                 self.hdc,
                 &mut wide,
@@ -90,7 +89,7 @@ impl Canvas {
     pub fn draw_text_measured(&self, text: &str, rect: Rect) -> i32 {
         unsafe {
             let mut wide: Vec<u16> = text.encode_utf16().collect();
-            let mut gdi_rect: RECT = rect.into();
+            let mut gdi_rect: RECT = rect.to_win32();
             DrawTextW(
                 self.hdc,
                 &mut wide,
