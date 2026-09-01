@@ -121,10 +121,6 @@ pub(super) fn handle_message(window: &Window, message: Message) {
     }
 }
 
-fn is_a_change(previous: WindowPosition, next: WindowPosition) -> bool {
-    previous != next
-}
-
 fn set_position(window: &Window, position: WindowPosition) {
     let Some(settings_mutex) = SETTINGS.get() else {
         return;
@@ -134,7 +130,7 @@ fn set_position(window: &Window, position: WindowPosition) {
     };
 
     let previous = settings.position;
-    if !is_a_change(previous, position) {
+    if previous == position {
         return;
     }
     settings.position = position;
@@ -185,21 +181,4 @@ fn end_capture(window: &Window) {
     }
     window.discard_pending_char();
     window.hide();
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn switching_position_is_a_change() {
-        assert!(is_a_change(WindowPosition::Top, WindowPosition::Center));
-        assert!(is_a_change(WindowPosition::Center, WindowPosition::Top));
-    }
-
-    #[test]
-    fn reselecting_the_same_position_is_not_a_change() {
-        assert!(!is_a_change(WindowPosition::Top, WindowPosition::Top));
-        assert!(!is_a_change(WindowPosition::Center, WindowPosition::Center));
-    }
 }
