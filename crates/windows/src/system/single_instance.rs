@@ -1,36 +1,29 @@
-use super::registry::to_wide;
-use windows_sys::Win32::Foundation::{CloseHandle, ERROR_ALREADY_EXISTS, HANDLE};
-use windows_sys::Win32::System::Threading::CreateMutexW;
-use windows_sys::Win32::UI::WindowsAndMessaging::{
+use windows::Win32::Foundation::{CloseHandle, ERROR_ALREADY_EXISTS, HANDLE};
+use windows::Win32::System::Threading::CreateMutexW;
+use windows::Win32::UI::WindowsAndMessaging::{
     FindWindowW, SW_SHOW, SetForegroundWindow, ShowWindow,
 };
+use windows::core::HSTRING;
 
 pub struct InstanceGuard(HANDLE);
 
 impl Drop for InstanceGuard {
     fn drop(&mut self) {
         unsafe {
-            CloseHandle(self.0);
+            let _ = CloseHandle(self.0);
         }
     }
 }
 
 pub fn acquire(mutex_name: &str, window_class_name: &str) -> Option<InstanceGuard> {
-    let name = to_wide(mutex_name);
-    let (handle, already_exists) = unsafe {
-        let handle = CreateMutexW(std::ptr::null(), 0, name.as_ptr());
-        let already_exists =
-            std::io::Error::last_os_error().raw_os_error() == Some(ERROR_ALREADY_EXISTS as i32);
-        (handle, already_exists)
-    };
-
-    if handle.is_null() {
-        return None;
-    }
+    let name = HSTRING::from(mutex_name);
+    let handle = unsafe { CreateMutexW(None, false, &name) }.ok()?;
+    let already_exists =
+        std::io::Error::last_os_error().raw_os_error() == Some(ERROR_ALREADY_EXISTS.0 as i32);
 
     if already_exists {
         unsafe {
-            CloseHandle(handle);
+            let _ = CloseHandle(handle);
         }
         focus_existing_window(window_class_name);
         return None;
@@ -40,12 +33,11 @@ pub fn acquire(mutex_name: &str, window_class_name: &str) -> Option<InstanceGuar
 }
 
 fn focus_existing_window(window_class_name: &str) {
-    let class_name = to_wide(window_class_name);
+    let class_name = HSTRING::from(window_class_name);
     unsafe {
-        let existing = FindWindowW(class_name.as_ptr(), std::ptr::null());
-        if !existing.is_null() {
-            ShowWindow(existing, SW_SHOW);
-            SetForegroundWindow(existing);
+        if let Ok(existing) = FindWindowW(&class_name, None) {
+            let _ = ShowWindow(existing, SW_SHOW);
+            let _ = SetForegroundWindow(existing);
         }
     }
 }
