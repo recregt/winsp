@@ -127,6 +127,7 @@ pub enum Message {
     KillFocus,
     Char(char),
     KeyDown(Key, Modifiers),
+    ShowRequest,
     Paint,
 }
 

@@ -27,7 +27,7 @@ cfg_if::cfg_if! {
             ) {
                 Some(mutex) => mutex,
                 None => {
-                    println!("WinSP is already running, focusing the existing window.");
+                    println!("WinSP is already running, showing the existing window.");
                     return Ok(());
                 }
             };

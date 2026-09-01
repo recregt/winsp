@@ -21,21 +21,25 @@ pub(super) fn current_anchor() -> Anchor {
         .unwrap_or(Anchor::Top)
 }
 
+pub(super) fn show_fresh(handle: &Window) {
+    handle.center(WINDOW_WIDTH, SEARCH_BAR_HEIGHT, current_anchor());
+    if let Some(state_arc) = APP_STATE.get() {
+        if let Ok(mut state) = state_arc.lock() {
+            interaction::clear_query(&mut state);
+        }
+    }
+    if let Some(tx) = RECONCILE_TX.get() {
+        let _ = tx.send(());
+    }
+    handle.show();
+    handle.invalidate();
+}
+
 pub(super) fn toggle_visibility(handle: &Window) {
     if handle.is_visible() {
         handle.hide();
     } else {
-        handle.center(WINDOW_WIDTH, SEARCH_BAR_HEIGHT, current_anchor());
-        if let Some(state_arc) = APP_STATE.get() {
-            if let Ok(mut state) = state_arc.lock() {
-                interaction::clear_query(&mut state);
-            }
-        }
-        if let Some(tx) = RECONCILE_TX.get() {
-            let _ = tx.send(());
-        }
-        handle.show();
-        handle.invalidate();
+        show_fresh(handle);
     }
 }
 
