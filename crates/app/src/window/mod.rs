@@ -1,6 +1,7 @@
 #![cfg(windows)]
 
 mod geometry;
+mod hotkey_capture;
 mod interaction;
 mod render;
 mod settings;
@@ -23,6 +24,7 @@ pub(crate) const WINDOW_CLASS_NAME: &str = "WinSP_Spotlight_Window";
 
 static APP_STATE: OnceLock<Arc<Mutex<AppState>>> = OnceLock::new();
 static RECONCILE_TX: OnceLock<Sender<()>> = OnceLock::new();
+static SETTINGS: OnceLock<Mutex<Settings>> = OnceLock::new();
 
 pub fn set_reconcile_hook(tx: Sender<()>) {
     let _ = RECONCILE_TX.set(tx);
@@ -35,6 +37,15 @@ pub fn run_app(state: Arc<Mutex<AppState>>) -> Result<(), String> {
     if let Err(err) = settings.save() {
         eprintln!("failed to save settings: {err}");
     }
+
+    let modifiers = Modifiers {
+        ctrl: settings.hotkey.ctrl,
+        shift: settings.hotkey.shift,
+        alt: settings.hotkey.alt,
+        win: settings.hotkey.win,
+    };
+    let hotkey = Hotkey::new(modifiers, Key::Other(settings.hotkey.vk));
+    let _ = SETTINGS.set(Mutex::new(settings));
 
     winsp_windows::system::theme::allow_dark_mode_for_app();
 
@@ -50,14 +61,7 @@ pub fn run_app(state: Arc<Mutex<AppState>>) -> Result<(), String> {
 
     window_handle.center(WINDOW_WIDTH, SEARCH_BAR_HEIGHT);
     window_handle.add_tray_icon();
-
-    let modifiers = Modifiers {
-        ctrl: settings.hotkey.ctrl,
-        shift: settings.hotkey.shift,
-        alt: settings.hotkey.alt,
-        win: settings.hotkey.win,
-    };
-    window_handle.run_message_loop(Hotkey::new(modifiers, Key::Other(settings.hotkey.vk)));
+    window_handle.run_message_loop(hotkey);
 
     Ok(())
 }

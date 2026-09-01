@@ -22,16 +22,16 @@ use windows::Win32::UI::Input::KeyboardAndMouse::{MOD_NOREPEAT, RegisterHotKey, 
 use windows::Win32::UI::WindowsAndMessaging::{
     CS_HREDRAW, CS_VREDRAW, CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW,
     GetClientRect, GetMessageW, GetSystemMetrics, GetWindowRect, HCURSOR, HICON, HWND_TOPMOST,
-    IDC_ARROW, IsWindowVisible, LoadCursorW, LoadIconW, MSG, PostQuitMessage, RegisterClassExW,
-    SM_CXSCREEN, SM_CYSCREEN, SW_HIDE, SW_SHOW, SWP_NOACTIVATE, SWP_NOMOVE, SetForegroundWindow,
-    SetWindowPos, ShowWindow, TranslateMessage, WM_CHAR, WM_COMMAND, WM_DESTROY, WM_HOTKEY,
-    WM_KEYDOWN, WM_KILLFOCUS, WM_PAINT, WM_RBUTTONUP, WNDCLASSEXW, WS_EX_TOOLWINDOW, WS_EX_TOPMOST,
-    WS_POPUP,
+    IDC_ARROW, IsWindowVisible, LoadCursorW, LoadIconW, MSG, PM_REMOVE, PeekMessageW,
+    PostQuitMessage, RegisterClassExW, SM_CXSCREEN, SM_CYSCREEN, SW_HIDE, SW_SHOW, SWP_NOACTIVATE,
+    SWP_NOMOVE, SetForegroundWindow, SetWindowPos, ShowWindow, TranslateMessage, WM_CHAR,
+    WM_COMMAND, WM_DESTROY, WM_HOTKEY, WM_KEYDOWN, WM_KILLFOCUS, WM_PAINT, WM_RBUTTONUP,
+    WM_SYSKEYDOWN, WNDCLASSEXW, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP,
 };
 use windows::core::{HSTRING, PCWSTR};
 
 pub use canvas::{Canvas, Color, Font, FontGuard, FontWeight, Rect, register_embedded_font};
-pub use message::{Hotkey, Key, Message, Modifiers};
+pub use message::{Hotkey, HotkeySlot, Key, Message, Modifiers};
 pub use tray::TrayCommand;
 
 #[cfg(feature = "test-support")]
@@ -78,12 +78,15 @@ unsafe extern "system" fn dispatch(
             }
             LRESULT(0)
         }
-        WM_KEYDOWN => {
+        WM_KEYDOWN | WM_SYSKEYDOWN => {
             handler(
                 &window,
-                Message::KeyDown(Key::from_vk(
-                    windows::Win32::UI::Input::KeyboardAndMouse::VIRTUAL_KEY(wparam.0 as u16),
-                )),
+                Message::KeyDown(
+                    Key::from_vk(windows::Win32::UI::Input::KeyboardAndMouse::VIRTUAL_KEY(
+                        wparam.0 as u16,
+                    )),
+                    message::current_modifiers(),
+                ),
             );
             LRESULT(0)
         }
@@ -184,27 +187,44 @@ impl Window {
         }
     }
 
-    pub fn run_message_loop(&self, hotkey: Hotkey) {
-        const HOTKEY_ID: i32 = 1;
+    pub fn register_hotkey(&self, slot: HotkeySlot, hotkey: Hotkey) -> bool {
         unsafe {
-            if RegisterHotKey(
+            RegisterHotKey(
                 Some(self.hwnd),
-                HOTKEY_ID,
+                slot.id(),
                 hotkey.modifiers | MOD_NOREPEAT,
                 hotkey.vk,
             )
-            .is_err()
-            {
-                notify_hotkey_registration_failed(std::io::Error::last_os_error());
-            }
+            .is_ok()
+        }
+    }
 
+    pub fn unregister_hotkey(&self, slot: HotkeySlot) {
+        unsafe {
+            let _ = UnregisterHotKey(Some(self.hwnd), slot.id());
+        }
+    }
+
+    pub fn run_message_loop(&self, hotkey: Hotkey) {
+        if !self.register_hotkey(HotkeySlot::Primary, hotkey) {
+            notify_hotkey_registration_failed(std::io::Error::last_os_error());
+        }
+
+        unsafe {
             let mut msg = std::mem::zeroed::<MSG>();
             while GetMessageW(&mut msg, None, 0, 0).0 > 0 {
                 let _ = TranslateMessage(&msg);
                 DispatchMessageW(&msg);
             }
+        }
 
-            let _ = UnregisterHotKey(Some(self.hwnd), HOTKEY_ID);
+        self.unregister_hotkey(HotkeySlot::Primary);
+    }
+
+    pub fn discard_pending_char(&self) {
+        unsafe {
+            let mut msg = std::mem::zeroed::<MSG>();
+            while PeekMessageW(&mut msg, Some(self.hwnd), WM_CHAR, WM_CHAR, PM_REMOVE).as_bool() {}
         }
     }
 
@@ -345,4 +365,150 @@ fn notify_hotkey_registration_failed(error: std::io::Error) {
         "WinSP",
         &format!("Failed to register global hotkey: {error}"),
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use windows::Win32::Foundation::{LPARAM, LRESULT, WPARAM};
+    use windows::Win32::UI::WindowsAndMessaging::{
+        CreateWindowExW, DefWindowProcW, DestroyWindow, RegisterClassExW, UnregisterClassW,
+        WNDCLASSEXW,
+    };
+    use windows::core::HSTRING;
+
+    const VK_F13: u16 = 0x7C;
+    const VK_F14: u16 = 0x7D;
+
+    unsafe extern "system" fn noop_wnd_proc(
+        hwnd: HWND,
+        msg: u32,
+        wparam: WPARAM,
+        lparam: LPARAM,
+    ) -> LRESULT {
+        unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) }
+    }
+
+    fn create_test_window(class_name: &HSTRING) -> HWND {
+        unsafe {
+            let instance: HINSTANCE = GetModuleHandleW(None).unwrap().into();
+            let wnd_class = WNDCLASSEXW {
+                cbSize: std::mem::size_of::<WNDCLASSEXW>() as u32,
+                lpfnWndProc: Some(noop_wnd_proc),
+                hInstance: instance,
+                lpszClassName: PCWSTR(class_name.as_ptr()),
+                ..std::mem::zeroed()
+            };
+            RegisterClassExW(&wnd_class);
+            CreateWindowExW(
+                Default::default(),
+                class_name,
+                PCWSTR::null(),
+                Default::default(),
+                0,
+                0,
+                0,
+                0,
+                None,
+                None,
+                Some(instance),
+                None,
+            )
+            .unwrap_or(HWND(std::ptr::null_mut()))
+        }
+    }
+
+    #[test]
+    fn primary_and_secondary_slots_hold_independent_registrations() {
+        let class_name = HSTRING::from("WinSpTest_HotkeySlotsWindow");
+        let hwnd = create_test_window(&class_name);
+        assert!(!hwnd.is_invalid(), "test window creation should succeed");
+        let window = Window::new(hwnd);
+
+        let primary = Hotkey::new(
+            Modifiers {
+                ctrl: true,
+                ..Default::default()
+            },
+            Key::Other(VK_F13),
+        );
+        let secondary = Hotkey::new(
+            Modifiers {
+                shift: true,
+                ..Default::default()
+            },
+            Key::Other(VK_F14),
+        );
+
+        assert!(window.register_hotkey(HotkeySlot::Primary, primary));
+        assert!(window.register_hotkey(HotkeySlot::Secondary, secondary));
+
+        window.unregister_hotkey(HotkeySlot::Primary);
+        window.unregister_hotkey(HotkeySlot::Secondary);
+
+        unsafe {
+            let _ = DestroyWindow(hwnd);
+            let _ = UnregisterClassW(&class_name, Some(GetModuleHandleW(None).unwrap().into()));
+        }
+    }
+
+    #[test]
+    fn discard_pending_char_removes_a_queued_char_message() {
+        use windows::Win32::UI::WindowsAndMessaging::PostMessageW;
+
+        let class_name = HSTRING::from("WinSpTest_DiscardPendingCharWindow");
+        let hwnd = create_test_window(&class_name);
+        assert!(!hwnd.is_invalid(), "test window creation should succeed");
+        let window = Window::new(hwnd);
+
+        unsafe {
+            let _ = PostMessageW(Some(hwnd), WM_CHAR, WPARAM('a' as usize), LPARAM(0));
+        }
+
+        window.discard_pending_char();
+
+        let still_pending = unsafe {
+            let mut msg = std::mem::zeroed::<MSG>();
+            PeekMessageW(&mut msg, Some(hwnd), WM_CHAR, WM_CHAR, PM_REMOVE).as_bool()
+        };
+        assert!(
+            !still_pending,
+            "expected the queued WM_CHAR to have been discarded"
+        );
+
+        unsafe {
+            let _ = DestroyWindow(hwnd);
+            let _ = UnregisterClassW(&class_name, Some(GetModuleHandleW(None).unwrap().into()));
+        }
+    }
+
+    #[test]
+    fn discard_pending_char_leaves_unrelated_messages_alone() {
+        use windows::Win32::UI::WindowsAndMessaging::{PostMessageW, WM_APP};
+
+        let class_name = HSTRING::from("WinSpTest_DiscardPendingCharUnrelatedWindow");
+        let hwnd = create_test_window(&class_name);
+        assert!(!hwnd.is_invalid(), "test window creation should succeed");
+        let window = Window::new(hwnd);
+
+        unsafe {
+            let _ = PostMessageW(Some(hwnd), WM_APP, WPARAM(0), LPARAM(0));
+        }
+
+        window.discard_pending_char();
+
+        let still_pending = unsafe {
+            let mut msg = std::mem::zeroed::<MSG>();
+            PeekMessageW(&mut msg, Some(hwnd), WM_APP, WM_APP, PM_REMOVE).as_bool()
+        };
+        assert!(
+            still_pending,
+            "discard_pending_char should not remove messages other than WM_CHAR"
+        );
+
+        unsafe {
+            let _ = DestroyWindow(hwnd);
+            let _ = UnregisterClassW(&class_name, Some(GetModuleHandleW(None).unwrap().into()));
+        }
+    }
 }

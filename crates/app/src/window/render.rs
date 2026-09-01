@@ -87,6 +87,19 @@ pub(super) fn render_ui(canvas: &Canvas, client_rect: Rect) {
         return;
     };
 
+    if state.capturing_hotkey {
+        let _font = canvas.select_font(&fonts().search);
+        canvas.set_text_color(Color(0x00FFFFFF));
+        let prompt_rect = Rect {
+            left: 24,
+            top: 14,
+            right: WINDOW_WIDTH - 24,
+            bottom: SEARCH_BAR_HEIGHT - 10,
+        };
+        canvas.draw_text("Press a key combination... Esc to cancel", prompt_rect);
+        return;
+    }
+
     {
         let _font = canvas.select_font(&fonts().search);
         let display_text = if state.query.is_empty() {
