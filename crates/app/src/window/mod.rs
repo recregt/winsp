@@ -9,7 +9,7 @@ mod wndproc;
 use std::sync::mpsc::Sender;
 use std::sync::{Arc, Mutex, OnceLock};
 
-use winsp_windows::window::{Hotkey, Key, Window};
+use winsp_windows::window::{Hotkey, Key, Modifiers, Window};
 
 use crate::state::AppState;
 use settings::Settings;
@@ -50,7 +50,14 @@ pub fn run_app(state: Arc<Mutex<AppState>>) -> Result<(), String> {
 
     window_handle.center(WINDOW_WIDTH, SEARCH_BAR_HEIGHT);
     window_handle.add_tray_icon();
-    window_handle.run_message_loop(Hotkey::alt(Key::Other(settings.hotkey_vk)));
+
+    let modifiers = Modifiers {
+        ctrl: settings.hotkey.ctrl,
+        shift: settings.hotkey.shift,
+        alt: settings.hotkey.alt,
+        win: settings.hotkey.win,
+    };
+    window_handle.run_message_loop(Hotkey::new(modifiers, Key::Other(settings.hotkey.vk)));
 
     Ok(())
 }
