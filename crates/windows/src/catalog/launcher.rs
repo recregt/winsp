@@ -24,7 +24,34 @@ cfg_if::cfg_if! {
             if instance.0 as usize > 32 {
                 Ok(())
             } else {
-                Err(format!("Failed to execute path with code: {instance:?}"))
+                Err(shell_execute_error_message(instance.0 as usize))
+            }
+        }
+
+        fn shell_execute_error_message(code: usize) -> String {
+            use windows::Win32::Foundation::ERROR_BAD_FORMAT;
+            use windows::Win32::UI::Shell::{
+                SE_ERR_ACCESSDENIED, SE_ERR_ASSOCINCOMPLETE, SE_ERR_DDEBUSY, SE_ERR_DDEFAIL,
+                SE_ERR_DDETIMEOUT, SE_ERR_DLLNOTFOUND, SE_ERR_FNF, SE_ERR_NOASSOC, SE_ERR_OOM,
+                SE_ERR_PNF, SE_ERR_SHARE,
+            };
+            const BAD_FORMAT: u32 = ERROR_BAD_FORMAT.0;
+
+            match code as u32 {
+                0 | SE_ERR_OOM => "The system is out of memory or resources.".into(),
+                SE_ERR_FNF => "File not found.".into(),
+                SE_ERR_PNF => "Path not found.".into(),
+                BAD_FORMAT => "This file is not a valid Windows program.".into(),
+                SE_ERR_ACCESSDENIED => "Access denied.".into(),
+                SE_ERR_ASSOCINCOMPLETE | SE_ERR_NOASSOC => {
+                    "No app is associated with this file type.".into()
+                }
+                SE_ERR_DLLNOTFOUND => "A required component is missing.".into(),
+                SE_ERR_SHARE => "The file is in use by another program.".into(),
+                SE_ERR_DDEBUSY | SE_ERR_DDEFAIL | SE_ERR_DDETIMEOUT => {
+                    "The other application didn't respond in time.".into()
+                }
+                _ => format!("Failed to open this item (code {code})."),
             }
         }
 
@@ -84,5 +111,33 @@ cfg_if::cfg_if! {
             println!("[WinSP Stub Launch] Launching command: {}", cmd);
             Ok(())
         }
+    }
+}
+
+#[cfg(all(test, windows))]
+mod tests {
+    use super::shell_execute_error_message;
+
+    #[test]
+    fn maps_documented_codes_to_readable_messages() {
+        assert_eq!(shell_execute_error_message(2), "File not found.");
+        assert_eq!(shell_execute_error_message(3), "Path not found.");
+        assert_eq!(shell_execute_error_message(5), "Access denied.");
+        assert_eq!(
+            shell_execute_error_message(31),
+            "No app is associated with this file type."
+        );
+        assert_eq!(
+            shell_execute_error_message(32),
+            "A required component is missing."
+        );
+    }
+
+    #[test]
+    fn falls_back_to_the_raw_code_for_unmapped_values() {
+        assert_eq!(
+            shell_execute_error_message(9),
+            "Failed to open this item (code 9)."
+        );
     }
 }
