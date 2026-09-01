@@ -1433,7 +1433,6 @@ dependencies = [
  "num_enum",
  "tempfile",
  "windows",
- "windows-sys 0.61.2",
  "winsp-core",
 ]
 

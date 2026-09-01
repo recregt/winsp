@@ -1,9 +1,10 @@
 use super::registry::read_dword;
 use std::sync::OnceLock;
-use windows_sys::Win32::Foundation::{FARPROC, HMODULE, HWND};
-use windows_sys::Win32::System::LibraryLoader::{GetProcAddress, LoadLibraryA};
-use windows_sys::Win32::System::Registry::HKEY_CURRENT_USER;
-use windows_sys::Win32::UI::WindowsAndMessaging::IsWindow;
+use windows::Win32::Foundation::{FARPROC, HMODULE, HWND};
+use windows::Win32::System::LibraryLoader::{GetProcAddress, LoadLibraryA};
+use windows::Win32::System::Registry::HKEY_CURRENT_USER;
+use windows::Win32::UI::WindowsAndMessaging::IsWindow;
+use windows::core::{PCSTR, s};
 
 pub(crate) fn system_uses_dark_mode() -> bool {
     read_dword(
@@ -16,16 +17,20 @@ pub(crate) fn system_uses_dark_mode() -> bool {
 
 fn uxtheme() -> HMODULE {
     static HANDLE: OnceLock<isize> = OnceLock::new();
-    *HANDLE.get_or_init(|| unsafe { LoadLibraryA(c"uxtheme.dll".as_ptr() as *const u8) as isize })
-        as HMODULE
+    let ptr = *HANDLE.get_or_init(|| unsafe {
+        LoadLibraryA(s!("uxtheme.dll"))
+            .map(|h| h.0 as isize)
+            .unwrap_or(0)
+    });
+    HMODULE(ptr as *mut core::ffi::c_void)
 }
 
 fn proc_by_ordinal(ordinal: u16) -> FARPROC {
     let module = uxtheme();
-    if module.is_null() {
+    if module.is_invalid() {
         return None;
     }
-    unsafe { GetProcAddress(module, ordinal as usize as *const u8) }
+    unsafe { GetProcAddress(module, PCSTR(ordinal as usize as *const u8)) }
 }
 
 pub fn allow_dark_mode_for_app() {
@@ -39,7 +44,8 @@ pub fn allow_dark_mode_for_app() {
 }
 
 pub(crate) fn allow_dark_mode_for_window(hwnd: HWND) {
-    if unsafe { IsWindow(hwnd) } == 0 {
+    let exists = unsafe { IsWindow(Some(hwnd)) };
+    if !exists.as_bool() {
         return;
     }
     type AllowDarkModeForWindow = unsafe extern "system" fn(HWND, bool) -> bool;
