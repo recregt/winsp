@@ -7,7 +7,7 @@ use windows_sys::Win32::UI::Shell::{
 };
 use windows_sys::Win32::UI::WindowsAndMessaging::*;
 
-pub const WM_TRAYICON: u32 = WM_APP + 1;
+pub(super) const WM_TRAYICON: u32 = WM_APP + 1;
 
 #[repr(usize)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, TryFromPrimitive)]

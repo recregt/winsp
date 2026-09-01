@@ -5,6 +5,6 @@ pub mod theme;
 mod window;
 
 pub use window::{
-    Canvas, Color, Font, FontGuard, FontWeight, Rect, TrayCommand, WM_TRAYICON, WindowHandle,
-    register_embedded_font,
+    Canvas, Color, Font, FontGuard, FontWeight, Hotkey, Key, Message, Rect, TrayCommand,
+    WindowHandle, register_embedded_font,
 };
