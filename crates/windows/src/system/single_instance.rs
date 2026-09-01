@@ -25,19 +25,25 @@ pub fn acquire(mutex_name: &str, window_class_name: &str) -> Option<InstanceGuar
         unsafe {
             let _ = CloseHandle(handle);
         }
-        request_show(window_class_name);
+        if !request_show(window_class_name) {
+            crate::system::toast::show(
+                "WinSP",
+                "WinSP is already running but couldn't be brought to the front.",
+            );
+        }
         return None;
     }
 
     Some(InstanceGuard(handle))
 }
 
-fn request_show(window_class_name: &str) {
+fn request_show(window_class_name: &str) -> bool {
     let class_name = HSTRING::from(window_class_name);
     unsafe {
-        if let Ok(existing) = FindWindowW(&class_name, None) {
-            let _ = PostMessageW(Some(existing), WM_SHOW_REQUEST, WPARAM(0), LPARAM(0));
-        }
+        let Ok(existing) = FindWindowW(&class_name, None) else {
+            return false;
+        };
+        PostMessageW(Some(existing), WM_SHOW_REQUEST, WPARAM(0), LPARAM(0)).is_ok()
     }
 }
 
@@ -99,7 +105,8 @@ mod tests {
         let hwnd = create_test_window(&class_name);
         assert!(!hwnd.is_invalid(), "test window creation should succeed");
 
-        request_show("WinSpTest_RequestShowWindow");
+        let posted = request_show("WinSpTest_RequestShowWindow");
+        assert!(posted, "expected request_show to report success");
 
         let received = unsafe {
             let mut msg = std::mem::zeroed::<MSG>();
@@ -124,8 +131,12 @@ mod tests {
     }
 
     #[test]
-    fn request_show_is_a_no_op_when_no_window_matches() {
-        request_show("WinSpTest_NoSuchWindowClassEither");
+    fn request_show_reports_failure_when_no_window_matches() {
+        let posted = request_show("WinSpTest_NoSuchWindowClassEither");
+        assert!(
+            !posted,
+            "expected request_show to report failure when no window matches"
+        );
     }
 
     #[test]

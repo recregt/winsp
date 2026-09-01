@@ -24,7 +24,9 @@ where
     )?;
 
     for dir in dirs {
-        let _ = debouncer.watcher().watch(dir, RecursiveMode::Recursive);
+        if let Err(err) = debouncer.watcher().watch(dir, RecursiveMode::Recursive) {
+            eprintln!("failed to watch {}: {err}", dir.display());
+        }
     }
 
     Ok(debouncer)

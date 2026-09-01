@@ -29,7 +29,9 @@ pub(super) fn show_fresh(handle: &Window) {
         }
     }
     if let Some(tx) = RECONCILE_TX.get() {
-        let _ = tx.send(());
+        if tx.send(()).is_err() {
+            crate::watch::notify_reconcile_channel_broken();
+        }
     }
     handle.show();
     handle.invalidate();
