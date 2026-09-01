@@ -306,7 +306,7 @@ mod tests {
     }
 
     #[test]
-    fn skips_shortcut_scan_when_com_apartment_conflicts() {
+    fn recovers_from_shortcut_scan_when_com_apartment_conflicts() {
         let dir = tempfile::tempdir().unwrap();
         {
             let _guard = ComGuard::new();
@@ -327,6 +327,6 @@ mod tests {
         let mut seen_ids = std::collections::HashSet::new();
         scan_start_menu(&[dir.path().to_path_buf()], &mut apps, &mut seen_ids);
 
-        assert!(apps.is_empty());
+        assert_eq!(apps.len(), 1);
     }
 }
