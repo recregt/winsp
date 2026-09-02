@@ -1,5 +1,7 @@
 use winsp_core::models::{AppItem, AppTarget};
 
+use super::apps::resolve_system_exe;
+
 /// Returns a curated collection of standard Windows Settings shortcuts.
 pub fn list_settings() -> Vec<AppItem> {
     vec![
@@ -9,6 +11,7 @@ pub fn list_settings() -> Vec<AppItem> {
             AppTarget::SettingUri("ms-settings:".into()),
         )
         .with_description("Windows System Settings")
+        .with_icon_glyph('\u{E713}')
         .with_keywords(vec![
             "config".into(),
             "control".into(),
@@ -20,6 +23,7 @@ pub fn list_settings() -> Vec<AppItem> {
             AppTarget::SettingUri("ms-settings:display".into()),
         )
         .with_description("Resolution, scaling, brightness, multiple displays")
+        .with_icon_glyph('\u{E7F4}')
         .with_keywords(vec![
             "monitor".into(),
             "screen".into(),
@@ -32,6 +36,7 @@ pub fn list_settings() -> Vec<AppItem> {
             AppTarget::SettingUri("ms-settings:sound".into()),
         )
         .with_description("Audio output, microphone, volume mixer")
+        .with_icon_glyph('\u{E7F5}')
         .with_keywords(vec![
             "audio".into(),
             "volume".into(),
@@ -44,6 +49,7 @@ pub fn list_settings() -> Vec<AppItem> {
             AppTarget::SettingUri("ms-settings:bluetooth".into()),
         )
         .with_description("Pair devices, mouse, keyboard, printers")
+        .with_icon_glyph('\u{E702}')
         .with_keywords(vec!["device".into(), "pair".into(), "wireless".into()]),
         AppItem::new(
             "win-network",
@@ -51,6 +57,7 @@ pub fn list_settings() -> Vec<AppItem> {
             AppTarget::SettingUri("ms-settings:network".into()),
         )
         .with_description("Wi-Fi, Ethernet, VPN, Proxy")
+        .with_icon_glyph('\u{E968}')
         .with_keywords(vec![
             "wifi".into(),
             "ethernet".into(),
@@ -63,6 +70,7 @@ pub fn list_settings() -> Vec<AppItem> {
             AppTarget::SettingUri("ms-settings:appsfeatures".into()),
         )
         .with_description("Uninstall and manage installed software")
+        .with_icon_glyph('\u{ED35}')
         .with_keywords(vec!["uninstall".into(), "programs".into(), "remove".into()]),
         AppItem::new(
             "win-update",
@@ -70,6 +78,7 @@ pub fn list_settings() -> Vec<AppItem> {
             AppTarget::SettingUri("ms-settings:windowsupdate".into()),
         )
         .with_description("Check for system updates and patches")
+        .with_icon_glyph('\u{E777}')
         .with_keywords(vec!["patch".into(), "upgrade".into(), "version".into()]),
         AppItem::new(
             "win-power",
@@ -77,6 +86,7 @@ pub fn list_settings() -> Vec<AppItem> {
             AppTarget::SettingUri("ms-settings:powersleep".into()),
         )
         .with_description("Battery, sleep timeout, power mode")
+        .with_icon_glyph('\u{E7E8}')
         .with_keywords(vec!["battery".into(), "energy".into(), "hibernate".into()]),
         AppItem::new(
             "win-personalization",
@@ -84,17 +94,24 @@ pub fn list_settings() -> Vec<AppItem> {
             AppTarget::SettingUri("ms-settings:personalization".into()),
         )
         .with_description("Wallpaper, themes, colors, lock screen")
+        .with_icon_glyph('\u{E771}')
         .with_keywords(vec![
             "theme".into(),
             "wallpaper".into(),
             "background".into(),
             "dark mode".into(),
         ]),
-        AppItem::new(
-            "win-taskmanager",
-            "Task Manager",
-            AppTarget::Path("taskmgr.exe".into()),
-        )
+        {
+            let mut item = AppItem::new(
+                "win-taskmanager",
+                "Task Manager",
+                AppTarget::Path("taskmgr.exe".into()),
+            );
+            if let Some(icon) = resolve_system_exe("taskmgr.exe") {
+                item = item.with_icon(icon);
+            }
+            item
+        }
         .with_description("View running processes, performance, startup apps")
         .with_keywords(vec![
             "processes".into(),
@@ -103,4 +120,23 @@ pub fn list_settings() -> Vec<AppItem> {
             "memory".into(),
         ]),
     ]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use winsp_core::models::IconSource;
+
+    #[test]
+    fn every_setting_uri_entry_carries_a_glyph_icon() {
+        for item in list_settings() {
+            if matches!(item.target, AppTarget::SettingUri(_)) {
+                assert!(
+                    matches!(item.icon, Some(IconSource::Glyph(_))),
+                    "{} has no glyph icon",
+                    item.name
+                );
+            }
+        }
+    }
 }

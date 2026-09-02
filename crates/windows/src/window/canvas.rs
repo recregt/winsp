@@ -1,11 +1,12 @@
 use windows::Win32::Foundation::{COLORREF, RECT, SIZE};
 use windows::Win32::Graphics::Gdi::{
-    AddFontMemResourceEx, CreateFontW, CreatePen, CreateSolidBrush, DEFAULT_GUI_FONT, DT_LEFT,
-    DT_SINGLELINE, DT_VCENTER, DeleteObject, DrawTextW, FONT_CHARSET, FONT_CLIP_PRECISION,
+    AddFontMemResourceEx, CreateFontW, CreatePen, CreateSolidBrush, DEFAULT_GUI_FONT, DT_CENTER,
+    DT_LEFT, DT_SINGLELINE, DT_VCENTER, DeleteObject, DrawTextW, FONT_CHARSET, FONT_CLIP_PRECISION,
     FONT_OUTPUT_PRECISION, FONT_QUALITY, FW_NORMAL, FW_SEMIBOLD, FillRect, GetStockObject,
     GetTextExtentPoint32W, HDC, HFONT, HGDIOBJ, LineTo, MoveToEx, PS_SOLID, SelectObject,
     SetTextColor,
 };
+use windows::Win32::UI::WindowsAndMessaging::{DI_NORMAL, DrawIconEx, HICON};
 use windows::core::HSTRING;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -110,6 +111,36 @@ impl Canvas {
             let _ = LineTo(self.hdc, to.0, to.1);
             SelectObject(self.hdc, old_pen);
             let _ = DeleteObject(pen.into());
+        }
+    }
+
+    pub fn draw_icon(&self, icon: HICON, rect: Rect) {
+        unsafe {
+            let _ = DrawIconEx(
+                self.hdc,
+                rect.left,
+                rect.top,
+                icon,
+                rect.right - rect.left,
+                rect.bottom - rect.top,
+                0,
+                None,
+                DI_NORMAL,
+            );
+        }
+    }
+
+    pub fn draw_icon_glyph(&self, glyph: char, rect: Rect) {
+        unsafe {
+            let mut buf = [0u16; 2];
+            let wide = glyph.encode_utf16(&mut buf);
+            let mut gdi_rect: RECT = rect.to_win32();
+            DrawTextW(
+                self.hdc,
+                wide,
+                &mut gdi_rect,
+                DT_CENTER | DT_SINGLELINE | DT_VCENTER,
+            );
         }
     }
 
@@ -257,6 +288,19 @@ pub mod testing {
             }
             false
         }
+
+        pub fn contains_pixel_other_than(&self, color: Color) -> bool {
+            unsafe {
+                for y in 0..self.height {
+                    for x in 0..self.width {
+                        if GetPixel(self.hdc, x, y) != COLORREF(color.0) {
+                            return true;
+                        }
+                    }
+                }
+            }
+            false
+        }
     }
 
     impl Drop for OffscreenSurface {
@@ -267,5 +311,51 @@ pub mod testing {
                 let _ = DeleteDC(self.hdc);
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::testing::OffscreenSurface;
+    use super::*;
+    use windows::Win32::UI::WindowsAndMessaging::{IDI_APPLICATION, LoadIconW};
+
+    #[test]
+    fn draw_icon_paints_pixels_into_its_rect() {
+        let surface = OffscreenSurface::new(40, 40);
+        let icon = unsafe { LoadIconW(None, IDI_APPLICATION) }.unwrap();
+
+        surface.canvas().draw_icon(
+            icon,
+            Rect {
+                left: 4,
+                top: 4,
+                right: 36,
+                bottom: 36,
+            },
+        );
+
+        assert!(surface.contains_pixel_other_than(Color(0x00000000)));
+    }
+
+    #[test]
+    fn draw_icon_glyph_paints_the_selected_text_color() {
+        let surface = OffscreenSurface::new(40, 40);
+        let canvas = surface.canvas();
+        let font = Font::new("Arial", 24, FontWeight::Normal);
+
+        let _font_guard = canvas.select_font(&font);
+        canvas.set_text_color(Color(0x00FF00FF));
+        canvas.draw_icon_glyph(
+            'A',
+            Rect {
+                left: 0,
+                top: 0,
+                right: 40,
+                bottom: 40,
+            },
+        );
+
+        assert!(surface.contains_pixel(Color(0x00FF00FF)));
     }
 }
