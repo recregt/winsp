@@ -46,7 +46,7 @@ fn draw_result_icon(canvas: &Canvas, result: &SearchResult, rect: Rect) {
     match &item.icon {
         Some(IconSource::Path(path)) => {
             if let Some(icon) = icon_for_path(path) {
-                canvas.draw_icon(icon, rect);
+                canvas.draw_icon(icon.handle(), rect);
             }
         }
         Some(IconSource::Glyph(glyph)) => {

@@ -1,6 +1,6 @@
 use std::collections::{HashMap, VecDeque};
 use std::ffi::c_void;
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
 
 use windows::Win32::Foundation::HWND;
 use windows::Win32::Graphics::Gdi::InvalidateRect;
@@ -13,9 +13,16 @@ use windows::core::HSTRING;
 
 const MAX_CACHED_ICONS: usize = 512;
 
-struct CachedIcon(HICON);
+pub struct CachedIcon(HICON);
 
 unsafe impl Send for CachedIcon {}
+unsafe impl Sync for CachedIcon {}
+
+impl CachedIcon {
+    pub fn handle(&self) -> HICON {
+        self.0
+    }
+}
 
 impl Drop for CachedIcon {
     fn drop(&mut self) {
@@ -27,7 +34,7 @@ impl Drop for CachedIcon {
 
 enum IconState {
     Pending,
-    Ready(Option<CachedIcon>),
+    Ready(Option<Arc<CachedIcon>>),
 }
 
 fn cache() -> &'static Mutex<HashMap<String, IconState>> {
@@ -66,7 +73,7 @@ unsafe extern "system" fn run_extraction(_instance: PTP_CALLBACK_INSTANCE, conte
     }
 
     if let Ok(mut cache) = cache().lock() {
-        cache.insert(path, IconState::Ready(icon.map(CachedIcon)));
+        cache.insert(path, IconState::Ready(icon.map(CachedIcon).map(Arc::new)));
     }
     request_repaint();
 }
@@ -84,11 +91,11 @@ fn dispatch_extraction(path: String) {
     }
 }
 
-pub fn icon_for_path(path: &str) -> Option<HICON> {
+pub fn icon_for_path(path: &str) -> Option<Arc<CachedIcon>> {
     {
         let cache = cache().lock().ok()?;
         match cache.get(path) {
-            Some(IconState::Ready(icon)) => return icon.as_ref().map(|i| i.0),
+            Some(IconState::Ready(icon)) => return icon.clone(),
             Some(IconState::Pending) => return None,
             None => {}
         }
@@ -153,7 +160,7 @@ mod tests {
         guard
     }
 
-    fn wait_for_icon(path: &str) -> HICON {
+    fn wait_for_icon(path: &str) -> Arc<CachedIcon> {
         for _ in 0..200 {
             if let Some(icon) = icon_for_path(path) {
                 return icon;
@@ -172,10 +179,8 @@ mod tests {
     #[test]
     fn repeated_lookups_of_the_same_missing_path_stay_consistent() {
         let _guard = reset_for_test();
-        assert_eq!(
-            icon_for_path(r"C:\also\not\real.exe"),
-            icon_for_path(r"C:\also\not\real.exe")
-        );
+        assert!(icon_for_path(r"C:\also\not\real.exe").is_none());
+        assert!(icon_for_path(r"C:\also\not\real.exe").is_none());
     }
 
     #[test]
@@ -202,6 +207,39 @@ mod tests {
         assert!(
             !real_path_still_cached,
             "the oldest entry (holding a real icon handle) should have been evicted first"
+        );
+    }
+
+    #[test]
+    fn a_caller_holding_an_arc_keeps_the_icon_valid_after_cache_eviction() {
+        let _guard = reset_for_test();
+        let real_path = std::env::current_exe()
+            .unwrap()
+            .to_string_lossy()
+            .into_owned();
+        let held = wait_for_icon(&real_path);
+
+        cache().lock().unwrap().remove(&real_path);
+
+        assert_eq!(
+            Arc::strong_count(&held),
+            1,
+            "the cache's own reference should be gone, proving eviction doesn't wait on callers"
+        );
+
+        let surface = super::super::testing::OffscreenSurface::new(40, 40);
+        surface.canvas().draw_icon(
+            held.handle(),
+            super::super::Rect {
+                left: 4,
+                top: 4,
+                right: 36,
+                bottom: 36,
+            },
+        );
+        assert!(
+            surface.contains_pixel_other_than(super::super::Color(0x00000000)),
+            "the icon handle must still be valid and drawable after the cache dropped its copy"
         );
     }
 }
