@@ -72,12 +72,12 @@ fn dispatch_extraction(path: String) {
     let submitted = spawn_on_threadpool(move || {
         let icon = {
             let _com = ComGuard::new();
-            extract_icon(&path)
+            extract_icon(&path).map(CachedIcon).map(Arc::new)
         };
 
         let still_wanted = if let Ok(mut cache) = cache().lock() {
             if matches!(cache.peek(&path), Some(IconState::Pending)) {
-                cache.put(path, IconState::Ready(icon.map(CachedIcon).map(Arc::new)));
+                cache.put(path, IconState::Ready(icon));
                 true
             } else {
                 false
