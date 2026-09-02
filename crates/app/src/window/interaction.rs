@@ -47,7 +47,7 @@ pub(super) fn execute_selected(state: &AppState) -> ExecuteOutcome {
         SearchResultKind::App(item) => ExecuteOutcome::Launch(item.target.clone()),
         SearchResultKind::Calculation { result, .. } => ExecuteOutcome::Copy(result.clone()),
         SearchResultKind::WebSearch { url, .. } => {
-            ExecuteOutcome::Launch(AppTarget::Path(url.clone()))
+            ExecuteOutcome::Launch(AppTarget::Uri(url.clone()))
         }
         SearchResultKind::SystemCommand { command, .. } => {
             ExecuteOutcome::Launch(AppTarget::SystemCommand(command.clone()))

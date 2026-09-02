@@ -4,7 +4,7 @@ pub fn run(target: &AppTarget) -> Result<(), String> {
     match target {
         AppTarget::Path(path) => launch_path(path),
         AppTarget::Aumid(aumid) => launch_aumid(aumid),
-        AppTarget::SettingUri(uri) => launch_uri(uri),
+        AppTarget::Uri(uri) => launch_uri(uri),
         AppTarget::SystemCommand(cmd) => launch_command(cmd),
     }
 }

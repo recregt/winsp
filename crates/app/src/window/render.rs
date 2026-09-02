@@ -253,8 +253,8 @@ mod tests {
     #[test]
     fn draw_result_icon_paints_the_glyph_color_for_a_glyph_icon() {
         let surface = OffscreenSurface::new(40, 40);
-        let item = AppItem::new("id", "Name", AppTarget::SettingUri("ms-settings:".into()))
-            .with_icon_glyph('A');
+        let item =
+            AppItem::new("id", "Name", AppTarget::Uri("ms-settings:".into())).with_icon_glyph('A');
 
         draw_result_icon(&surface.canvas(), &app_result(item), ICON_BOUNDS);
 
