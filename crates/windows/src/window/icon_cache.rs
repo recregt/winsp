@@ -8,18 +8,37 @@ use windows::core::HSTRING;
 
 const MAX_CACHED_ICONS: usize = 512;
 
+struct CachedIcon(HICON);
+
+impl Drop for CachedIcon {
+    fn drop(&mut self) {
+        unsafe {
+            let _ = DestroyIcon(self.0);
+        }
+    }
+}
+
 thread_local! {
-    static CACHE: RefCell<HashMap<String, Option<HICON>>> = RefCell::new(HashMap::new());
+    static CACHE: RefCell<HashMap<String, Option<CachedIcon>>> = RefCell::new(HashMap::new());
     static INSERTION_ORDER: RefCell<VecDeque<String>> = const { RefCell::new(VecDeque::new()) };
 }
 
 pub fn icon_for_path(path: &str) -> Option<HICON> {
-    if let Some(icon) = CACHE.with(|cache| cache.borrow().get(path).copied()) {
+    if let Some(icon) = CACHE.with(|cache| {
+        cache
+            .borrow()
+            .get(path)
+            .map(|icon| icon.as_ref().map(|i| i.0))
+    }) {
         return icon;
     }
 
     let icon = extract_icon(path);
-    CACHE.with(|cache| cache.borrow_mut().insert(path.to_string(), icon));
+    CACHE.with(|cache| {
+        cache
+            .borrow_mut()
+            .insert(path.to_string(), icon.map(CachedIcon))
+    });
     INSERTION_ORDER.with(|order| order.borrow_mut().push_back(path.to_string()));
     evict_oldest_if_over_capacity();
     icon
@@ -32,12 +51,7 @@ fn evict_oldest_if_over_capacity() {
             let Some(evicted_path) = order.pop_front() else {
                 break;
             };
-            let evicted_icon = CACHE.with(|cache| cache.borrow_mut().remove(&evicted_path));
-            if let Some(Some(icon)) = evicted_icon {
-                unsafe {
-                    let _ = DestroyIcon(icon);
-                }
-            }
+            CACHE.with(|cache| cache.borrow_mut().remove(&evicted_path));
         }
     });
 }
