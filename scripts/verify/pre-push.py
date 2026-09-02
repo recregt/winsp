@@ -15,14 +15,29 @@ WINE_TEST_SKIPS = [
 ]
 
 
+class HookError(Exception):
+    pass
+
+
+def run_tool(cmd: list, *, check: bool = False, **kwargs) -> subprocess.CompletedProcess:
+    try:
+        return subprocess.run(cmd, check=check, **kwargs)
+    except FileNotFoundError as e:
+        raise HookError(f"'{cmd[0]}' not found on PATH ({e}).") from e
+
+
 def has_uncommitted_changes() -> bool:
-    out = subprocess.run(
-        ["git", "status", "--porcelain"],
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        check=True,
-    )
+    try:
+        out = run_tool(
+            ["git", "status", "--porcelain"],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            check=True,
+        )
+    except subprocess.CalledProcessError as e:
+        detail = e.stderr.strip() if e.stderr else str(e)
+        raise HookError(f"'git status' failed: {detail}") from e
     return bool(out.stdout.strip())
 
 
@@ -33,14 +48,29 @@ def stash_worktree() -> None:
         file=sys.stderr,
         flush=True,
     )
-    subprocess.run(
-        ["git", "stash", "push", "--include-untracked", "-m", STASH_MESSAGE],
-        check=True,
-    )
+    try:
+        run_tool(
+            ["git", "stash", "push", "--include-untracked", "-m", STASH_MESSAGE],
+            check=True,
+        )
+    except subprocess.CalledProcessError as e:
+        raise HookError(
+            "failed to stash uncommitted changes (see git output above); "
+            "aborting before running checks against a mixed working tree."
+        ) from e
 
 
 def restore_worktree() -> None:
-    pop = subprocess.run(["git", "stash", "pop"], check=False)
+    try:
+        pop = run_tool(["git", "stash", "pop"], check=False)
+    except HookError as e:
+        print(
+            f"warning: could not restore stashed changes ({e}); run "
+            "`git stash pop` manually to recover them "
+            f"(look for a stash entry named '{STASH_MESSAGE}').",
+            file=sys.stderr,
+        )
+        return
     if pop.returncode != 0:
         print(
             "warning: could not restore stashed changes automatically; "
@@ -91,7 +121,7 @@ def select_profile() -> tuple:
 
 
 def run_checks(package_args: list, target_args: list, test_extra_args: list) -> int:
-    fmt = subprocess.run(["cargo", "fmt", "--all", "--", "--check"], check=False)
+    fmt = run_tool(["cargo", "fmt", "--all", "--", "--check"], check=False)
     if fmt.returncode != 0:
         print(
             "\ncargo fmt check failed. If this is just formatting drift, run: "
@@ -102,7 +132,7 @@ def run_checks(package_args: list, target_args: list, test_extra_args: list) -> 
         )
         return fmt.returncode
 
-    clippy = subprocess.run(
+    clippy = run_tool(
         [
             "cargo",
             "clippy",
@@ -122,7 +152,7 @@ def run_checks(package_args: list, target_args: list, test_extra_args: list) -> 
     test_cmd = ["cargo", "test", *package_args, *target_args, "--locked"]
     if test_extra_args:
         test_cmd += ["--", *test_extra_args]
-    test = subprocess.run(test_cmd, check=False)
+    test = run_tool(test_cmd, check=False)
     return test.returncode
 
 
@@ -133,15 +163,7 @@ def main() -> int:
 
     stashed = has_uncommitted_changes()
     if stashed:
-        try:
-            stash_worktree()
-        except subprocess.CalledProcessError:
-            print(
-                "error: failed to stash uncommitted changes; aborting before "
-                "running checks against a mixed working tree.",
-                file=sys.stderr,
-            )
-            return 1
+        stash_worktree()
 
     try:
         return run_checks(package_args, target_args, test_extra_args)
@@ -155,3 +177,6 @@ if __name__ == "__main__":
         sys.exit(main())
     except KeyboardInterrupt:
         sys.exit(130)
+    except HookError as e:
+        print(f"error: {e}", file=sys.stderr)
+        sys.exit(1)
