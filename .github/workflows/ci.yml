@@ -32,7 +32,7 @@ jobs:
 
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
 
-      - uses: taiki-e/install-action@1ed6d7be6168f6c9046541087ff549b6bc581fdf # v2.87.2
+      - uses: taiki-e/install-action@e67fa11c4b9316fa714ddf0abed07a0c3143b95b # v2.87.4
         with:
           tool: cargo-machete
 
@@ -60,7 +60,7 @@ jobs:
 
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
 
-      - uses: taiki-e/install-action@1ed6d7be6168f6c9046541087ff549b6bc581fdf # v2.87.2
+      - uses: taiki-e/install-action@e67fa11c4b9316fa714ddf0abed07a0c3143b95b # v2.87.4
         with:
           tool: cargo-tarpaulin
 
@@ -89,9 +89,9 @@ jobs:
       - name: Build release binary
         run: cargo build -p winsp-app --release --locked
 
-      - uses: ./.github/actions/package-msix
+      - uses: ./.github/actions/package-msix # zizmor: ignore[self-repository]
 
-      - uses: ./.github/actions/sign-test-msix
+      - uses: ./.github/actions/sign-test-msix # zizmor: ignore[self-repository]
         with:
           pfx-base64: ${{ secrets.TEST_SIGNING_CERT_PFX }}
           pfx-password: ${{ secrets.TEST_SIGNING_CERT_PASSWORD }}
