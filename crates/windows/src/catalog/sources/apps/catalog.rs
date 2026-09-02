@@ -132,12 +132,11 @@ fn insert_if_shortcut(
     let resolved = resolve_shortcut_target(path, &ext_lower);
 
     if ext_lower == "lnk" {
-        if let Some(identity) = &resolved {
-            if let Some((target, arguments)) = identity.split_once('|') {
-                if targets_uninstaller(target, arguments) {
-                    return;
-                }
-            }
+        if let Some(identity) = &resolved
+            && let Some((target, arguments)) = identity.split_once('|')
+            && targets_uninstaller(target, arguments)
+        {
+            return;
         }
     } else if matches!(stem_lower.as_str(), "uninstall" | "remove") {
         return;

@@ -73,10 +73,10 @@ unsafe extern "system" fn dispatch(
             LRESULT(0)
         }
         WM_CHAR => {
-            if let Some(c) = message::decode_wm_char(wparam.0 as u16) {
-                if !c.is_control() {
-                    handler(&window, Message::Char(c));
-                }
+            if let Some(c) = message::decode_wm_char(wparam.0 as u16)
+                && !c.is_control()
+            {
+                handler(&window, Message::Char(c));
             }
             LRESULT(0)
         }
