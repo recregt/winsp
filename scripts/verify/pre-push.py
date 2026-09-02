@@ -27,12 +27,13 @@ def main() -> None:
             "--",
             "-D",
             "warnings",
-        ]
+        ],
+        check=False,
     )
     if clippy.returncode != 0:
         sys.exit(clippy.returncode)
 
-    test = subprocess.run(["cargo", "test", *package_args, "--locked"])
+    test = subprocess.run(["cargo", "test", *package_args, "--locked"], check=False)
     sys.exit(test.returncode)
 
 

@@ -4,7 +4,7 @@ import sys
 
 
 def main() -> None:
-    result = subprocess.run(["cargo", "fmt", "--all", "--", "--check"])
+    result = subprocess.run(["cargo", "fmt", "--all", "--", "--check"], check=False)
     sys.exit(result.returncode)
 
 
