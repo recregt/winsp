@@ -1,4 +1,3 @@
-use std::ffi::c_void;
 use std::num::NonZeroUsize;
 use std::sync::{Arc, Mutex, OnceLock};
 
@@ -7,10 +6,11 @@ use windows::Win32::Foundation::HWND;
 use windows::Win32::Graphics::Gdi::InvalidateRect;
 use windows::Win32::Storage::FileSystem::FILE_FLAGS_AND_ATTRIBUTES;
 use windows::Win32::System::Com::{COINIT_APARTMENTTHREADED, CoInitializeEx, CoUninitialize};
-use windows::Win32::System::Threading::{PTP_CALLBACK_INSTANCE, TrySubmitThreadpoolCallback};
 use windows::Win32::UI::Shell::{SHFILEINFOW, SHGFI_ICON, SHGFI_LARGEICON, SHGetFileInfoW};
 use windows::Win32::UI::WindowsAndMessaging::{DestroyIcon, HICON};
 use windows::core::HSTRING;
+
+use crate::system::threadpool::spawn_on_threadpool;
 
 const MAX_CACHED_ICONS: usize = 512;
 
@@ -57,33 +57,26 @@ fn request_repaint() {
     }
 }
 
-unsafe extern "system" fn run_extraction(_instance: PTP_CALLBACK_INSTANCE, context: *mut c_void) {
-    let path = *unsafe { Box::from_raw(context as *mut String) };
-
-    unsafe {
-        let _ = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
-    }
-    let icon = extract_icon(&path);
-    unsafe {
-        CoUninitialize();
-    }
-
-    if let Ok(mut cache) = cache().lock() {
-        cache.put(path, IconState::Ready(icon.map(CachedIcon).map(Arc::new)));
-    }
-    request_repaint();
-}
-
 fn dispatch_extraction(path: String) {
-    let context = Box::into_raw(Box::new(path)) as *mut c_void;
-    let submitted =
-        unsafe { TrySubmitThreadpoolCallback(Some(run_extraction), Some(context), None) };
+    let cleanup_path = path.clone();
 
-    if submitted.is_err() {
-        let path = *unsafe { Box::from_raw(context as *mut String) };
-        if let Ok(mut cache) = cache().lock() {
-            cache.pop(&path);
+    let submitted = spawn_on_threadpool(move || {
+        unsafe {
+            let _ = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
         }
+        let icon = extract_icon(&path);
+        unsafe {
+            CoUninitialize();
+        }
+
+        if let Ok(mut cache) = cache().lock() {
+            cache.put(path, IconState::Ready(icon.map(CachedIcon).map(Arc::new)));
+        }
+        request_repaint();
+    });
+
+    if !submitted && let Ok(mut cache) = cache().lock() {
+        cache.pop(&cleanup_path);
     }
 }
 
