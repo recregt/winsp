@@ -492,8 +492,11 @@ mod tests {
 
     #[test]
     fn dispatch_survives_a_panicking_handler_and_keeps_working() {
+        let class_name = HSTRING::from("WinSpTest_DispatchPanicWindow");
+        let hwnd = create_test_window(&class_name);
+        assert!(!hwnd.is_invalid(), "test window creation should succeed");
+
         let _ = HANDLER.set(panicking_test_handler);
-        let hwnd = HWND(std::ptr::null_mut());
 
         let panicked_result = unsafe {
             dispatch(
@@ -511,6 +514,11 @@ mod tests {
             SURVIVED_HANDLER_CALLED.load(std::sync::atomic::Ordering::SeqCst),
             "the handler must still run on a later message after an earlier one panicked"
         );
+
+        unsafe {
+            let _ = DestroyWindow(hwnd);
+            let _ = UnregisterClassW(&class_name, Some(GetModuleHandleW(None).unwrap().into()));
+        }
     }
 
     #[test]
