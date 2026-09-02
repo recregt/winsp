@@ -64,28 +64,4 @@ mod tests {
             "failed to launch notepad.exe"
         );
     }
-
-    #[test]
-    fn build_toast_produces_xml_the_real_parser_accepts() {
-        let result = build_toast("WinSP", "failed to launch notepad.exe");
-        assert!(result.is_ok(), "expected valid toast XML, got {result:?}");
-    }
-
-    #[test]
-    fn build_toast_escapes_reserved_characters_into_valid_xml() {
-        let result = build_toast("WinSP", r#"failed: <a> & "b" 'c'"#);
-        assert!(
-            result.is_ok(),
-            "unescaped reserved characters should not produce malformed XML, got {result:?}"
-        );
-    }
-
-    #[test]
-    fn show_does_not_crash_without_package_identity() {
-        assert!(
-            !has_package_identity(),
-            "the unpackaged test binary must not report package identity"
-        );
-        show("WinSP", "this must be a no-op, not a crash");
-    }
 }

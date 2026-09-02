@@ -65,9 +65,6 @@ jobs:
       - name: Clippy
         run: cargo clippy --workspace --all-targets --locked -- -D warnings
 
-      - name: Diagnostic - skip system module tests
-        run: "cargo test -p winsp-windows --lib --features test-support --locked -- --skip system::"
-
       - name: Test
         run: cargo test --workspace --locked -- --show-output
 
