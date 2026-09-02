@@ -41,6 +41,16 @@ pub(crate) fn notify_if_scan_incomplete(catalog: &StartMenuCatalog) {
     }
 }
 
+pub(crate) fn notify_reconcile_channel_broken() {
+    static NOTIFIED: std::sync::Once = std::sync::Once::new();
+    NOTIFIED.call_once(|| {
+        winsp_windows::system::toast::show(
+            "WinSP",
+            "Background reindexing stopped responding. Restart WinSP to restore it.",
+        );
+    });
+}
+
 pub(crate) fn refresh_state(state: &Arc<Mutex<AppState>>, catalog: &StartMenuCatalog) {
     let index = engine_from_catalog(catalog);
     if let Ok(mut app_state) = state.lock() {
@@ -92,7 +102,9 @@ pub(crate) fn handle_watch_event(
             }
         }
         WatchEvent::Uncertain => {
-            let _ = reconcile_tx.send(());
+            if reconcile_tx.send(()).is_err() {
+                notify_reconcile_channel_broken();
+            }
         }
     }
 }
