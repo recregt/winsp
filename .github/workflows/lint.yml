@@ -27,7 +27,7 @@ jobs:
         run: python3 scripts/install/actionlint.py
 
       - name: Check workflow files
-        run: '"$HOME/.cargo/bin/actionlint" -color -ignore "specifying action \"\$/"'
+        run: '"$HOME/.cargo/bin/actionlint" -color -ignore "specifying action \"\\$/"'
 
   ruff:
     name: ruff
