@@ -38,6 +38,25 @@ enum IconState {
     Ready(Option<Arc<CachedIcon>>),
 }
 
+struct ComGuard;
+
+impl ComGuard {
+    fn new() -> Self {
+        unsafe {
+            let _ = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
+        }
+        Self
+    }
+}
+
+impl Drop for ComGuard {
+    fn drop(&mut self) {
+        unsafe {
+            CoUninitialize();
+        }
+    }
+}
+
 fn cache() -> &'static Mutex<LruCache<String, IconState>> {
     static CACHE: OnceLock<Mutex<LruCache<String, IconState>>> = OnceLock::new();
     CACHE.get_or_init(|| Mutex::new(LruCache::new(NonZeroUsize::new(MAX_CACHED_ICONS).unwrap())))
@@ -61,13 +80,10 @@ fn dispatch_extraction(path: String) {
     let cleanup_path = path.clone();
 
     let submitted = spawn_on_threadpool(move || {
-        unsafe {
-            let _ = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
-        }
-        let icon = extract_icon(&path);
-        unsafe {
-            CoUninitialize();
-        }
+        let icon = {
+            let _com = ComGuard::new();
+            extract_icon(&path)
+        };
 
         if let Ok(mut cache) = cache().lock() {
             cache.put(path, IconState::Ready(icon.map(CachedIcon).map(Arc::new)));
@@ -76,7 +92,7 @@ fn dispatch_extraction(path: String) {
     });
 
     if !submitted && let Ok(mut cache) = cache().lock() {
-        cache.pop(&cleanup_path);
+        cache.put(cleanup_path, IconState::Ready(None));
     }
 }
 
