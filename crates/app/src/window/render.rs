@@ -250,6 +250,18 @@ mod tests {
     }
 
     #[test]
+    fn draw_result_icon_paints_a_real_shell_icon_for_a_resolvable_path() {
+        let surface = OffscreenSurface::new(40, 40);
+        let exe = std::env::current_exe().unwrap();
+        let item = AppItem::new("id", "Name", AppTarget::Path(exe.to_string_lossy().into()))
+            .with_icon(exe.to_string_lossy());
+
+        draw_result_icon(&surface.canvas(), &app_result(item), ICON_BOUNDS);
+
+        assert!(surface.contains_pixel_other_than(Color(0x00000000)));
+    }
+
+    #[test]
     fn draw_result_icon_paints_nothing_for_a_missing_path_icon() {
         let surface = OffscreenSurface::new(40, 40);
         let item = AppItem::new("id", "Name", AppTarget::Path("missing.exe".into()))
