@@ -37,8 +37,6 @@ where
             "Some folders couldn't be watched for changes. New apps there may not appear until WinSP restarts.",
         );
     }
-    #[cfg(not(windows))]
-    let _ = &failed_dirs;
 
     Ok(debouncer)
 }
