@@ -83,9 +83,9 @@ jobs:
       - name: Build release binary
         run: cargo build -p winsp-app --release --locked
 
-      - uses: ./.github/actions/package-msix
+      - uses: $/.github/actions/package-msix
 
-      - uses: ./.github/actions/sign-test-msix
+      - uses: $/.github/actions/sign-test-msix
         with:
           pfx-base64: ${{ secrets.TEST_SIGNING_CERT_PFX }}
           pfx-password: ${{ secrets.TEST_SIGNING_CERT_PASSWORD }}
