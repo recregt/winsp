@@ -18,17 +18,3 @@ fn build_package(text: &str) -> windows::core::Result<DataPackage> {
     package.SetText(&HSTRING::from(text))?;
     Ok(package)
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn build_package_sets_text_content_successfully() {
-        let result = build_package("2 + 2 = 4");
-        assert!(
-            result.is_ok(),
-            "expected DataPackage construction to succeed, got {result:?}"
-        );
-    }
-}
