@@ -57,7 +57,7 @@ unsafe extern "system" fn dispatch(
         return unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) };
     };
     let window = Window::new(hwnd);
-    match msg {
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| match msg {
         WM_HOTKEY => {
             handler(&window, Message::Hotkey);
             LRESULT(0)
@@ -112,7 +112,9 @@ unsafe extern "system" fn dispatch(
             LRESULT(0)
         }
         _ => unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) },
-    }
+    }));
+
+    result.unwrap_or_else(|_| unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) })
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -476,6 +478,39 @@ mod tests {
             )
         };
         assert_eq!(result, LRESULT(1));
+    }
+
+    static SURVIVED_HANDLER_CALLED: std::sync::atomic::AtomicBool =
+        std::sync::atomic::AtomicBool::new(false);
+
+    fn panicking_test_handler(_window: &Window, message: Message) {
+        if matches!(message, Message::TrayRightClick) {
+            panic!("deliberate panic to prove dispatch recovers from it");
+        }
+        SURVIVED_HANDLER_CALLED.store(true, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    #[test]
+    fn dispatch_survives_a_panicking_handler_and_keeps_working() {
+        let _ = HANDLER.set(panicking_test_handler);
+        let hwnd = HWND(std::ptr::null_mut());
+
+        let panicked_result = unsafe {
+            dispatch(
+                hwnd,
+                tray::WM_TRAYICON,
+                WPARAM(0),
+                LPARAM(WM_RBUTTONUP as isize),
+            )
+        };
+        assert_eq!(panicked_result, LRESULT(0));
+
+        SURVIVED_HANDLER_CALLED.store(false, std::sync::atomic::Ordering::SeqCst);
+        let _ = unsafe { dispatch(hwnd, WM_HOTKEY, WPARAM(0), LPARAM(0)) };
+        assert!(
+            SURVIVED_HANDLER_CALLED.load(std::sync::atomic::Ordering::SeqCst),
+            "the handler must still run on a later message after an earlier one panicked"
+        );
     }
 
     #[test]
