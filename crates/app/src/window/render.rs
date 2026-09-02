@@ -221,10 +221,54 @@ pub(super) fn render_ui(canvas: &Canvas, client_rect: Rect) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use winsp_core::models::{AppItem, AppTarget};
     use winsp_windows::window::testing::OffscreenSurface;
 
     const BITMAP_WIDTH: i32 = 300;
     const BITMAP_HEIGHT: i32 = 40;
+
+    const ICON_BOUNDS: Rect = Rect {
+        left: 4,
+        top: 4,
+        right: 36,
+        bottom: 36,
+    };
+
+    fn app_result(item: AppItem) -> SearchResult {
+        SearchResult::from_app(std::sync::Arc::new(item), 0, Vec::new())
+    }
+
+    #[test]
+    fn draw_result_icon_paints_the_glyph_color_for_a_glyph_icon() {
+        let surface = OffscreenSurface::new(40, 40);
+        let item = AppItem::new("id", "Name", AppTarget::SettingUri("ms-settings:".into()))
+            .with_icon_glyph('A');
+
+        draw_result_icon(&surface.canvas(), &app_result(item), ICON_BOUNDS);
+
+        assert!(surface.contains_pixel(Color(0x00CCCCCC)));
+    }
+
+    #[test]
+    fn draw_result_icon_paints_nothing_for_a_missing_path_icon() {
+        let surface = OffscreenSurface::new(40, 40);
+        let item = AppItem::new("id", "Name", AppTarget::Path("missing.exe".into()))
+            .with_icon(r"C:\definitely\not\a\real\path.exe");
+
+        draw_result_icon(&surface.canvas(), &app_result(item), ICON_BOUNDS);
+
+        assert!(!surface.contains_pixel_other_than(Color(0x00000000)));
+    }
+
+    #[test]
+    fn draw_result_icon_paints_nothing_for_a_non_app_result() {
+        let surface = OffscreenSurface::new(40, 40);
+        let result = SearchResult::calculation("1+1".into(), "2".into());
+
+        draw_result_icon(&surface.canvas(), &result, ICON_BOUNDS);
+
+        assert!(!surface.contains_pixel_other_than(Color(0x00000000)));
+    }
 
     const BASE_COLOR: Color = Color(0x00E0E0E0);
 
