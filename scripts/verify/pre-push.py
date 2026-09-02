@@ -26,10 +26,10 @@ def run_tool(cmd: list, *, check: bool = False, **kwargs) -> subprocess.Complete
         raise HookError(f"'{cmd[0]}' not found on PATH ({e}).") from e
 
 
-def has_uncommitted_changes() -> bool:
+def has_uncommitted_tracked_changes() -> bool:
     try:
         out = run_tool(
-            ["git", "status", "--porcelain"],
+            ["git", "status", "--porcelain", "--untracked-files=no"],
             capture_output=True,
             text=True,
             encoding="utf-8",
@@ -41,41 +41,71 @@ def has_uncommitted_changes() -> bool:
     return bool(out.stdout.strip())
 
 
-def stash_worktree() -> None:
+def stash_worktree() -> str:
     print(
-        "Uncommitted changes detected: stashing them so checks run against "
-        "exactly what's being pushed (restored automatically afterward).",
+        "Uncommitted changes to tracked files detected: stashing them so "
+        "checks run against exactly what's being pushed (untracked files are "
+        "left alone; restored automatically afterward).",
         file=sys.stderr,
         flush=True,
     )
     try:
-        run_tool(
-            ["git", "stash", "push", "--include-untracked", "-m", STASH_MESSAGE],
+        run_tool(["git", "stash", "push", "-m", STASH_MESSAGE], check=True)
+        sha = run_tool(
+            ["git", "rev-parse", "--verify", "refs/stash"],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
             check=True,
-        )
+        ).stdout.strip()
     except subprocess.CalledProcessError as e:
         raise HookError(
             "failed to stash uncommitted changes (see git output above); "
             "aborting before running checks against a mixed working tree."
         ) from e
+    return sha
 
 
-def restore_worktree() -> None:
-    try:
-        pop = run_tool(["git", "stash", "pop"], check=False)
-    except HookError as e:
+def find_stash_ref(sha: str) -> str | None:
+    out = run_tool(
+        ["git", "stash", "list", "--format=%H %gd"],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=False,
+    )
+    for line in out.stdout.splitlines():
+        commit, _, ref = line.partition(" ")
+        if commit == sha:
+            return ref
+    return None
+
+
+def restore_worktree(sha: str) -> None:
+    apply_result = run_tool(["git", "stash", "apply", sha], check=False)
+    if apply_result.returncode != 0:
         print(
-            f"warning: could not restore stashed changes ({e}); run "
-            "`git stash pop` manually to recover them "
-            f"(look for a stash entry named '{STASH_MESSAGE}').",
+            "warning: could not restore stashed changes automatically; run "
+            f"`git stash apply {sha}` manually to recover them.",
             file=sys.stderr,
         )
         return
-    if pop.returncode != 0:
+
+    ref = find_stash_ref(sha)
+    if ref is None:
         print(
-            "warning: could not restore stashed changes automatically; "
-            "run `git stash pop` manually to recover them "
-            f"(look for a stash entry named '{STASH_MESSAGE}').",
+            "warning: restored stashed changes but could not find the stash "
+            f"entry to drop it; run `git stash list` and drop the entry for "
+            f"commit {sha} manually.",
+            file=sys.stderr,
+        )
+        return
+
+    drop_result = run_tool(["git", "stash", "drop", ref], check=False)
+    if drop_result.returncode != 0:
+        print(
+            f"warning: restored stashed changes but could not drop stash "
+            f"entry {ref}; run `git stash drop {ref}` manually to clean it up.",
             file=sys.stderr,
         )
 
@@ -161,15 +191,13 @@ def main() -> int:
     if notice:
         print(notice, file=sys.stderr, flush=True)
 
-    stashed = has_uncommitted_changes()
-    if stashed:
-        stash_worktree()
+    stash_sha = stash_worktree() if has_uncommitted_tracked_changes() else None
 
     try:
         return run_checks(package_args, target_args, test_extra_args)
     finally:
-        if stashed:
-            restore_worktree()
+        if stash_sha:
+            restore_worktree(stash_sha)
 
 
 if __name__ == "__main__":
