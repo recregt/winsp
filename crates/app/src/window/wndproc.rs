@@ -22,10 +22,10 @@ pub(super) fn handle_message(window: &Window, message: Message) {
                 autostart::set_enabled(!autostart::is_enabled());
             }
             TrayCommand::ChangeHotkey => {
-                if let Some(state_arc) = APP_STATE.get() {
-                    if let Ok(mut state) = state_arc.lock() {
-                        state.capturing_hotkey = true;
-                    }
+                if let Some(state_arc) = APP_STATE.get()
+                    && let Ok(mut state) = state_arc.lock()
+                {
+                    state.capturing_hotkey = true;
                 }
                 begin_hotkey_capture(window);
             }
@@ -175,11 +175,11 @@ fn handle_capture_key(window: &Window, key: Key, modifiers: Modifiers) {
 }
 
 fn end_capture(window: &Window) {
-    if let Some(state_arc) = APP_STATE.get() {
-        if let Ok(mut state) = state_arc.lock() {
-            state.capturing_hotkey = false;
-            interaction::clear_query(&mut state);
-        }
+    if let Some(state_arc) = APP_STATE.get()
+        && let Ok(mut state) = state_arc.lock()
+    {
+        state.capturing_hotkey = false;
+        interaction::clear_query(&mut state);
     }
     window.discard_pending_char();
     window.hide();
