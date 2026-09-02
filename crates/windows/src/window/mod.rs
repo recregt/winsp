@@ -32,7 +32,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
 use windows::core::{HSTRING, PCWSTR};
 
 pub use canvas::{Canvas, Color, Font, FontGuard, FontWeight, Rect, register_embedded_font};
-pub use icon_cache::icon_for_path;
+pub use icon_cache::{icon_for_path, mark_paint_started};
 pub use message::{Hotkey, HotkeySlot, Key, Message, Modifiers};
 pub use tray::TrayCommand;
 

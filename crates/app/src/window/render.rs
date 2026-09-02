@@ -2,7 +2,8 @@ use std::sync::OnceLock;
 
 use winsp_core::models::{IconSource, SearchResult, SearchResultKind};
 use winsp_windows::window::{
-    Canvas, Color, Font, FontWeight, Rect, icon_for_path, register_embedded_font,
+    Canvas, Color, Font, FontWeight, Rect, icon_for_path, mark_paint_started,
+    register_embedded_font,
 };
 
 use super::{APP_STATE, ITEM_ROW_HEIGHT, SEARCH_BAR_HEIGHT, WINDOW_WIDTH};
@@ -105,6 +106,7 @@ fn draw_highlighted_title(
 }
 
 pub(super) fn render_ui(canvas: &Canvas, client_rect: Rect) {
+    mark_paint_started();
     canvas.fill_rect(client_rect, Color(0x001E1E1E));
 
     let Some(state_arc) = APP_STATE.get() else {

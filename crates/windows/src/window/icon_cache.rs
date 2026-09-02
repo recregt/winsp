@@ -1,4 +1,5 @@
 use std::num::NonZeroUsize;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 
 use lru::LruCache;
@@ -38,21 +39,23 @@ enum IconState {
     Ready(Option<Arc<CachedIcon>>),
 }
 
-struct ComGuard;
+struct ComGuard {
+    initialized: bool,
+}
 
 impl ComGuard {
     fn new() -> Self {
-        unsafe {
-            let _ = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
-        }
-        Self
+        let initialized = unsafe { CoInitializeEx(None, COINIT_APARTMENTTHREADED) }.is_ok();
+        Self { initialized }
     }
 }
 
 impl Drop for ComGuard {
     fn drop(&mut self) {
-        unsafe {
-            CoUninitialize();
+        if self.initialized {
+            unsafe {
+                CoUninitialize();
+            }
         }
     }
 }
@@ -63,12 +66,20 @@ fn cache() -> &'static Mutex<LruCache<String, IconState>> {
 }
 
 static REPAINT_HWND: OnceLock<isize> = OnceLock::new();
+static REPAINT_PENDING: AtomicBool = AtomicBool::new(false);
 
 pub(super) fn register_repaint_target(hwnd: HWND) {
     let _ = REPAINT_HWND.set(hwnd.0 as isize);
 }
 
+pub fn mark_paint_started() {
+    REPAINT_PENDING.store(false, Ordering::Release);
+}
+
 fn request_repaint() {
+    if REPAINT_PENDING.swap(true, Ordering::AcqRel) {
+        return;
+    }
     if let Some(&raw) = REPAINT_HWND.get() {
         unsafe {
             let _ = InvalidateRect(Some(HWND(raw as *mut _)), None, true);
@@ -97,19 +108,16 @@ fn dispatch_extraction(path: String) {
 }
 
 pub fn icon_for_path(path: &str) -> Option<Arc<CachedIcon>> {
-    {
-        let mut cache = cache().lock().ok()?;
-        match cache.get(path) {
-            Some(IconState::Ready(icon)) => return icon.clone(),
-            Some(IconState::Pending) => return None,
-            None => {}
-        }
+    let mut cache = cache().lock().ok()?;
+    match cache.get(path) {
+        Some(IconState::Ready(icon)) => return icon.clone(),
+        Some(IconState::Pending) => return None,
+        None => {}
     }
 
     let owned = path.to_string();
-    if let Ok(mut cache) = cache().lock() {
-        cache.put(owned.clone(), IconState::Pending);
-    }
+    cache.put(owned.clone(), IconState::Pending);
+    drop(cache);
     dispatch_extraction(owned);
     None
 }
@@ -141,6 +149,7 @@ mod tests {
         if let Ok(mut c) = cache().lock() {
             c.clear();
         }
+        REPAINT_PENDING.store(false, Ordering::Release);
         guard
     }
 
@@ -165,6 +174,21 @@ mod tests {
         let _guard = reset_for_test();
         assert!(icon_for_path(r"C:\also\not\real.exe").is_none());
         assert!(icon_for_path(r"C:\also\not\real.exe").is_none());
+    }
+
+    #[test]
+    fn request_repaint_coalesces_until_a_paint_starts() {
+        let _guard = reset_for_test();
+        assert!(!REPAINT_PENDING.load(Ordering::Acquire));
+
+        request_repaint();
+        assert!(REPAINT_PENDING.load(Ordering::Acquire));
+
+        request_repaint();
+        assert!(REPAINT_PENDING.load(Ordering::Acquire));
+
+        mark_paint_started();
+        assert!(!REPAINT_PENDING.load(Ordering::Acquire));
     }
 
     #[test]
