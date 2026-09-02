@@ -6,3 +6,6 @@ coverage:
     patch:
       default:
         informational: true
+
+comment:
+  hide_project_coverage: false
