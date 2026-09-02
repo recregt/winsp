@@ -26,8 +26,8 @@ use windows::Win32::UI::WindowsAndMessaging::{
     IDC_ARROW, IsWindowVisible, LoadCursorW, LoadIconW, MSG, PM_REMOVE, PeekMessageW,
     PostQuitMessage, RegisterClassExW, SM_CXSCREEN, SM_CYSCREEN, SW_HIDE, SW_SHOW, SWP_NOACTIVATE,
     SWP_NOMOVE, SWP_NOSIZE, SetForegroundWindow, SetWindowPos, ShowWindow, TranslateMessage,
-    WM_APP, WM_CHAR, WM_COMMAND, WM_DESTROY, WM_HOTKEY, WM_KEYDOWN, WM_KILLFOCUS, WM_PAINT,
-    WM_RBUTTONUP, WM_SYSKEYDOWN, WNDCLASSEXW, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP,
+    WM_APP, WM_CHAR, WM_COMMAND, WM_DESTROY, WM_ERASEBKGND, WM_HOTKEY, WM_KEYDOWN, WM_KILLFOCUS,
+    WM_PAINT, WM_RBUTTONUP, WM_SYSKEYDOWN, WNDCLASSEXW, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP,
 };
 use windows::core::{HSTRING, PCWSTR};
 
@@ -49,6 +49,10 @@ unsafe extern "system" fn dispatch(
     wparam: WPARAM,
     lparam: LPARAM,
 ) -> LRESULT {
+    if msg == WM_ERASEBKGND {
+        return LRESULT(1);
+    }
+
     let Some(handler) = HANDLER.get() else {
         return unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) };
     };
@@ -459,6 +463,19 @@ mod tests {
             )
             .unwrap_or(HWND(std::ptr::null_mut()))
         }
+    }
+
+    #[test]
+    fn erase_background_is_suppressed_to_avoid_a_white_flash() {
+        let result = unsafe {
+            dispatch(
+                HWND(std::ptr::null_mut()),
+                WM_ERASEBKGND,
+                WPARAM(0),
+                LPARAM(0),
+            )
+        };
+        assert_eq!(result, LRESULT(1));
     }
 
     #[test]
