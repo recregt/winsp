@@ -196,6 +196,7 @@ impl Window {
             };
 
             let handle = Self { hwnd };
+            icon_cache::register_repaint_target(hwnd);
 
             let backdrop = DWMSBT_TRANSIENTWINDOW;
             let _ = DwmSetWindowAttribute(

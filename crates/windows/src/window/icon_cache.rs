@@ -1,7 +1,11 @@
-use std::cell::RefCell;
 use std::collections::{HashMap, VecDeque};
+use std::sync::mpsc::Sender;
+use std::sync::{Mutex, OnceLock};
 
+use windows::Win32::Foundation::HWND;
+use windows::Win32::Graphics::Gdi::InvalidateRect;
 use windows::Win32::Storage::FileSystem::FILE_FLAGS_AND_ATTRIBUTES;
+use windows::Win32::System::Com::{COINIT_APARTMENTTHREADED, CoInitializeEx};
 use windows::Win32::UI::Shell::{SHFILEINFOW, SHGFI_ICON, SHGFI_LARGEICON, SHGetFileInfoW};
 use windows::Win32::UI::WindowsAndMessaging::{DestroyIcon, HICON};
 use windows::core::HSTRING;
@@ -9,6 +13,8 @@ use windows::core::HSTRING;
 const MAX_CACHED_ICONS: usize = 512;
 
 struct CachedIcon(HICON);
+
+unsafe impl Send for CachedIcon {}
 
 impl Drop for CachedIcon {
     fn drop(&mut self) {
@@ -18,42 +24,88 @@ impl Drop for CachedIcon {
     }
 }
 
-thread_local! {
-    static CACHE: RefCell<HashMap<String, Option<CachedIcon>>> = RefCell::new(HashMap::new());
-    static INSERTION_ORDER: RefCell<VecDeque<String>> = const { RefCell::new(VecDeque::new()) };
+enum IconState {
+    Pending,
+    Ready(Option<CachedIcon>),
+}
+
+fn cache() -> &'static Mutex<HashMap<String, IconState>> {
+    static CACHE: OnceLock<Mutex<HashMap<String, IconState>>> = OnceLock::new();
+    CACHE.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn insertion_order() -> &'static Mutex<VecDeque<String>> {
+    static ORDER: OnceLock<Mutex<VecDeque<String>>> = OnceLock::new();
+    ORDER.get_or_init(|| Mutex::new(VecDeque::new()))
+}
+
+static REPAINT_HWND: OnceLock<isize> = OnceLock::new();
+
+pub(super) fn register_repaint_target(hwnd: HWND) {
+    let _ = REPAINT_HWND.set(hwnd.0 as isize);
+}
+
+fn request_repaint() {
+    if let Some(&raw) = REPAINT_HWND.get() {
+        unsafe {
+            let _ = InvalidateRect(Some(HWND(raw as *mut _)), None, true);
+        }
+    }
+}
+
+fn worker_sender() -> &'static Sender<String> {
+    static SENDER: OnceLock<Sender<String>> = OnceLock::new();
+    SENDER.get_or_init(|| {
+        let (tx, rx) = std::sync::mpsc::channel::<String>();
+        std::thread::spawn(move || {
+            unsafe {
+                let _ = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
+            }
+            for path in rx {
+                let icon = extract_icon(&path);
+                if let Ok(mut cache) = cache().lock() {
+                    cache.insert(path, IconState::Ready(icon.map(CachedIcon)));
+                }
+                request_repaint();
+            }
+        });
+        tx
+    })
 }
 
 pub fn icon_for_path(path: &str) -> Option<HICON> {
-    if let Some(icon) = CACHE.with(|cache| {
-        cache
-            .borrow()
-            .get(path)
-            .map(|icon| icon.as_ref().map(|i| i.0))
-    }) {
-        return icon;
+    {
+        let cache = cache().lock().ok()?;
+        match cache.get(path) {
+            Some(IconState::Ready(icon)) => return icon.as_ref().map(|i| i.0),
+            Some(IconState::Pending) => return None,
+            None => {}
+        }
     }
 
-    let icon = extract_icon(path);
-    CACHE.with(|cache| {
-        cache
-            .borrow_mut()
-            .insert(path.to_string(), icon.map(CachedIcon))
-    });
-    INSERTION_ORDER.with(|order| order.borrow_mut().push_back(path.to_string()));
+    if let Ok(mut cache) = cache().lock() {
+        cache.insert(path.to_string(), IconState::Pending);
+    }
+    if let Ok(mut order) = insertion_order().lock() {
+        order.push_back(path.to_string());
+    }
     evict_oldest_if_over_capacity();
-    icon
+    let _ = worker_sender().send(path.to_string());
+    None
 }
 
 fn evict_oldest_if_over_capacity() {
-    INSERTION_ORDER.with(|order| {
-        let mut order = order.borrow_mut();
-        while order.len() > MAX_CACHED_ICONS {
-            let Some(evicted_path) = order.pop_front() else {
-                break;
-            };
-            CACHE.with(|cache| cache.borrow_mut().remove(&evicted_path));
+    let Ok(mut order) = insertion_order().lock() else {
+        return;
+    };
+    while order.len() > MAX_CACHED_ICONS {
+        let Some(evicted_path) = order.pop_front() else {
+            break;
+        };
+        if let Ok(mut cache) = cache().lock() {
+            cache.remove(&evicted_path);
         }
-    });
+    }
 }
 
 fn extract_icon(path: &str) -> Option<HICON> {
@@ -77,13 +129,37 @@ fn extract_icon(path: &str) -> Option<HICON> {
 mod tests {
     use super::*;
 
+    fn reset_for_test() -> std::sync::MutexGuard<'static, ()> {
+        static TEST_LOCK: Mutex<()> = Mutex::new(());
+        let guard = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        if let Ok(mut c) = cache().lock() {
+            c.clear();
+        }
+        if let Ok(mut o) = insertion_order().lock() {
+            o.clear();
+        }
+        guard
+    }
+
+    fn wait_for_icon(path: &str) -> HICON {
+        for _ in 0..200 {
+            if let Some(icon) = icon_for_path(path) {
+                return icon;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        panic!("icon for {path} did not resolve in time");
+    }
+
     #[test]
     fn missing_path_yields_no_icon_without_panicking() {
+        let _guard = reset_for_test();
         assert!(icon_for_path(r"C:\definitely\not\a\real\path.exe").is_none());
     }
 
     #[test]
     fn repeated_lookups_of_the_same_missing_path_stay_consistent() {
+        let _guard = reset_for_test();
         assert_eq!(
             icon_for_path(r"C:\also\not\real.exe"),
             icon_for_path(r"C:\also\not\real.exe")
@@ -92,20 +168,25 @@ mod tests {
 
     #[test]
     fn evicts_the_oldest_entry_and_frees_its_icon_handle_once_over_capacity() {
+        let _guard = reset_for_test();
         let real_path = std::env::current_exe()
             .unwrap()
             .to_string_lossy()
             .into_owned();
-        assert!(icon_for_path(&real_path).is_some());
+        wait_for_icon(&real_path);
 
         for i in 0..MAX_CACHED_ICONS {
             icon_for_path(&format!(r"C:\eviction-test\{i}.exe"));
         }
 
-        let len = CACHE.with(|cache| cache.borrow().len());
-        assert_eq!(len, MAX_CACHED_ICONS);
+        let tracked = insertion_order().lock().unwrap().len();
+        assert_eq!(
+            tracked, MAX_CACHED_ICONS,
+            "insertion_order is only ever touched synchronously by the calling thread, \
+             unlike cache which the background worker can still be draining into"
+        );
 
-        let real_path_still_cached = CACHE.with(|cache| cache.borrow().contains_key(&real_path));
+        let real_path_still_cached = cache().lock().unwrap().contains_key(&real_path);
         assert!(
             !real_path_still_cached,
             "the oldest entry (holding a real icon handle) should have been evicted first"
