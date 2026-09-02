@@ -18,12 +18,11 @@ pub(crate) fn test_watch_dir() -> Option<std::path::PathBuf> {
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let _instance_mutex = match winsp_windows::system::single_instance::acquire(
+    let Some(_instance_mutex) = winsp_windows::system::single_instance::acquire(
         "WinSP_SingleInstance_Mutex",
         window::WINDOW_CLASS_NAME,
-    ) {
-        Some(mutex) => mutex,
-        None => return Ok(()),
+    ) else {
+        return Ok(());
     };
 
     let mode = watch::startup_mode();
