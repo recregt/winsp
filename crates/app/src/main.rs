@@ -23,34 +23,22 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         window::WINDOW_CLASS_NAME,
     ) {
         Some(mutex) => mutex,
-        None => {
-            println!("WinSP is already running, showing the existing window.");
-            return Ok(());
-        }
+        None => return Ok(()),
     };
 
-    let start_init = std::time::Instant::now();
     let mode = watch::startup_mode();
     let index = match &mode {
         watch::StartupMode::Real(catalog) => index::engine_from_catalog(catalog),
         watch::StartupMode::TestWatch(_) => index::populate_search_index(),
     };
-    let init_duration = start_init.elapsed();
-    println!(
-        "Indexed {} applications & settings in {:.2?}",
-        index.len(),
-        init_duration
-    );
 
     let state = Arc::new(Mutex::new(AppState::new(index)));
 
     let _reindex_watcher = match mode {
         watch::StartupMode::TestWatch(dir) => {
-            println!("Test mode: watching {} for changes", dir.display());
             let state = Arc::clone(&state);
             winsp_windows::catalog::sources::watcher::for_dirs(&[dir], move |_event| {
                 let index = index::populate_search_index();
-                println!("Reindex triggered: {} items", index.len());
                 if let Ok(mut app_state) = state.lock() {
                     app_state.index = index;
                     app_state.refresh_results();
@@ -71,6 +59,5 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     };
 
-    println!("Press Alt+Space to toggle the search bar, Esc to dismiss.");
     window::run_app(state).map_err(|e| e.into())
 }
