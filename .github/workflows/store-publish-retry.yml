@@ -32,13 +32,13 @@ jobs:
             --dir target/release \
             --clobber
 
-      - uses: ./.github/actions/msstore-configure # zizmor: ignore[self-repository]
+      - uses: $/.github/actions/msstore-configure
         with:
           tenant-id: ${{ secrets.AZURE_AD_TENANT_ID }}
           seller-id: ${{ secrets.SELLER_ID }}
           client-id: ${{ secrets.AZURE_AD_APPLICATION_CLIENT_ID }}
           client-secret: ${{ secrets.AZURE_AD_APPLICATION_SECRET }}
 
-      - uses: ./.github/actions/msstore-publish # zizmor: ignore[self-repository]
+      - uses: $/.github/actions/msstore-publish
         with:
           msix-path: target\release\winsp.msix
