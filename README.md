@@ -2,6 +2,7 @@
 [![Latest Release](https://img.shields.io/github/v/release/recregt/winsp)](https://github.com/recregt/winsp/releases/latest)
 [![License: MIT](https://img.shields.io/github/license/recregt/winsp)](LICENSE)
 [![CodSpeed](https://img.shields.io/endpoint?url=https://codspeed.io/badge.json)](https://app.codspeed.io/recregt/winsp?utm_source=badge)
+[![codecov](https://codecov.io/github/recregt/winsp/branch/main/graph/badge.svg)](https://app.codecov.io/github/recregt/winsp)
 
 ## What is WinSP?
 

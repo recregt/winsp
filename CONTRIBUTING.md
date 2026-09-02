@@ -8,7 +8,27 @@ Install the git hooks (managed via `lefthook`):
 python3 scripts/install/lefthook.py
 ```
 
-This enforces `cargo fmt` and commit message linting on commit, and `cargo test`/`clippy` before push.
+This enforces `cargo fmt` and commit message linting on commit. Before push, it detects your
+host: native Windows runs the full workspace suite; Linux/macOS with `wine`,
+`x86_64-w64-mingw32-gcc`, and the `x86_64-pc-windows-gnu` rustup target installed cross-compiles
+and runs the full suite through Wine; otherwise it falls back to `winsp-core` only.
+
+## Platform Layout
+
+`crates/core` is cross-platform and builds anywhere. `crates/windows` and `crates/app` are
+windows-only (`#![cfg(windows)]`), since WinSP only ships on Windows.
+
+On Linux/macOS, use the `win-*` cargo aliases (defined in `.cargo/config.toml`) to build and
+test the windows-only crates through Wine:
+
+```bash
+cargo win-clippy
+cargo win-test
+cargo win-run
+```
+
+These need `wine`, `x86_64-w64-mingw32-gcc`, and the `x86_64-pc-windows-gnu` rustup target
+installed locally.
 
 ## Commit Format
 
@@ -22,7 +42,10 @@ Follow standard conventional commits: `type(scope): imperative description`
 ## Commands
 
 ```bash
-# Tests
+# Tests (cross-platform crate, runs anywhere)
+cargo test -p winsp-core --locked
+
+# Tests (windows-only crates, native on Windows or via win-test elsewhere)
 cargo test --workspace --locked
 
 # Benchmarks (local, criterion output)
