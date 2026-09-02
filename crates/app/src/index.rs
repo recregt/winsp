@@ -1,3 +1,5 @@
+#![cfg(windows)]
+
 use winsp_core::models::AppItem;
 use winsp_core::search::Engine;
 
@@ -12,7 +14,6 @@ pub(crate) fn populate_search_index() -> Engine {
     index
 }
 
-#[cfg(windows)]
 pub(crate) fn engine_from_catalog(
     catalog: &winsp_windows::catalog::sources::apps::StartMenuCatalog,
 ) -> Engine {

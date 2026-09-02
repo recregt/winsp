@@ -10,7 +10,6 @@ authors.workspace = true
 test-support = []
 
 [dependencies]
-cfg-if = "1"
 lnk = "0.6"
 notify-debouncer-mini = "0.7.0"
 winsp-core = { path = "../core" }

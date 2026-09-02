@@ -1,30 +1,18 @@
-#[cfg_attr(not(windows), allow(dead_code))]
+mod builtin;
+mod catalog;
+mod discovery;
 mod lnk;
-#[cfg_attr(not(windows), allow(dead_code))]
+mod start_menu;
 mod url;
 
-#[cfg(windows)]
+pub use catalog::StartMenuCatalog;
+pub use discovery::{list_installed_apps, merge_with_built_ins};
+pub(crate) use start_menu::start_menu_dirs;
+
 fn resolve_shortcut_target(path: &std::path::Path, ext_lower: &str) -> Option<String> {
     match ext_lower {
         "lnk" => lnk::resolve_lnk_target(path),
         "url" => url::resolve_url_target(path),
         _ => None,
-    }
-}
-
-cfg_if::cfg_if! {
-    if #[cfg(windows)] {
-        mod builtin;
-        mod catalog;
-        mod discovery;
-        mod start_menu;
-
-        pub use catalog::StartMenuCatalog;
-        pub use discovery::{list_installed_apps, merge_with_built_ins};
-        pub(crate) use start_menu::start_menu_dirs;
-    } else {
-        mod fallback;
-
-        pub use fallback::list_installed_apps;
     }
 }

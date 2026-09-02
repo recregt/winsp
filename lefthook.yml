@@ -7,11 +7,9 @@ pre-commit:
   commands:
     fmt:
       glob: "*.rs"
-      run: cargo fmt --all -- --check
+      run: python3 scripts/verify/pre-commit.py
 
 pre-push:
   commands:
-    clippy:
-      run: cargo clippy --workspace --all-targets --locked -- -D warnings
-    test:
-      run: cargo test --workspace --locked
+    verify:
+      run: python3 scripts/verify/pre-push.py

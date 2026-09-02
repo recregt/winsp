@@ -30,7 +30,6 @@ where
             failed_dirs.push(dir.clone());
         }
     }
-    #[cfg(windows)]
     if !failed_dirs.is_empty() {
         crate::system::toast::show(
             "WinSP",
@@ -41,7 +40,6 @@ where
     Ok(debouncer)
 }
 
-#[cfg(windows)]
 pub fn for_start_menu<F>(on_event: F) -> notify::Result<Debouncer<RecommendedWatcher>>
 where
     F: Fn(WatchEvent) + Send + 'static,

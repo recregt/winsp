@@ -1671,7 +1671,6 @@ dependencies = [
 name = "winsp-app"
 version = "0.2.1"
 dependencies = [
- "cfg-if",
  "embed-resource",
  "mimalloc",
  "rmp-serde",
@@ -1695,7 +1694,6 @@ dependencies = [
 name = "winsp-windows"
 version = "0.2.1"
 dependencies = [
- "cfg-if",
  "lnk",
  "notify-debouncer-mini",
  "num_enum",
