@@ -65,20 +65,8 @@ jobs:
       - name: Clippy
         run: cargo clippy --workspace --all-targets --locked -- -D warnings
 
-      - name: Diagnostic - winsp-windows single-threaded x15
-        shell: pwsh
-        run: |
-          $failures = 0
-          for ($i = 1; $i -le 15; $i++) {
-            Write-Host "=== iteration $i ==="
-            cargo test -p winsp-windows --lib --features test-support --locked -- --test-threads=1
-            if ($LASTEXITCODE -ne 0) {
-              $failures++
-              Write-Host "iteration $i FAILED (exit $LASTEXITCODE)"
-            }
-          }
-          Write-Host "Total failures: $failures / 15"
-          if ($failures -gt 0) { exit 1 }
+      - name: Diagnostic - skip system module tests
+        run: cargo test -p winsp-windows --lib --features test-support --locked -- --skip system::
 
       - name: Test
         run: cargo test --workspace --locked -- --show-output
