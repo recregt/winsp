@@ -6,11 +6,11 @@ use lru::LruCache;
 use windows::Win32::Foundation::HWND;
 use windows::Win32::Graphics::Gdi::InvalidateRect;
 use windows::Win32::Storage::FileSystem::FILE_FLAGS_AND_ATTRIBUTES;
-use windows::Win32::System::Com::{COINIT_APARTMENTTHREADED, CoInitializeEx, CoUninitialize};
 use windows::Win32::UI::Shell::{SHFILEINFOW, SHGFI_ICON, SHGFI_LARGEICON, SHGetFileInfoW};
 use windows::Win32::UI::WindowsAndMessaging::{DestroyIcon, HICON};
 use windows::core::HSTRING;
 
+use crate::system::com::ComGuard;
 use crate::system::threadpool::spawn_on_threadpool;
 
 const MAX_CACHED_ICONS: usize = 512;
@@ -37,27 +37,6 @@ impl Drop for CachedIcon {
 enum IconState {
     Pending,
     Ready(Option<Arc<CachedIcon>>),
-}
-
-struct ComGuard {
-    initialized: bool,
-}
-
-impl ComGuard {
-    fn new() -> Self {
-        let initialized = unsafe { CoInitializeEx(None, COINIT_APARTMENTTHREADED) }.is_ok();
-        Self { initialized }
-    }
-}
-
-impl Drop for ComGuard {
-    fn drop(&mut self) {
-        if self.initialized {
-            unsafe {
-                CoUninitialize();
-            }
-        }
-    }
 }
 
 fn cache() -> &'static Mutex<LruCache<String, IconState>> {

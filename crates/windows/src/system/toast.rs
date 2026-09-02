@@ -2,7 +2,10 @@ use windows::Data::Xml::Dom::XmlDocument;
 use windows::UI::Notifications::{ToastNotification, ToastNotificationManager};
 use windows::core::HSTRING;
 
+use super::com::ComGuard;
+
 pub fn show(title: &str, body: &str) {
+    let _com = ComGuard::new();
     let _ = try_show(title, body);
 }
 

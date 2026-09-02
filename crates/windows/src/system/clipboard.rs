@@ -1,7 +1,10 @@
 use windows::ApplicationModel::DataTransfer::{Clipboard, DataPackage};
 use windows::core::HSTRING;
 
+use super::com::ComGuard;
+
 pub fn copy(text: &str) -> bool {
+    let _com = ComGuard::new();
     try_copy(text).is_ok()
 }
 

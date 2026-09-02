@@ -1,13 +1,17 @@
 use windows::ApplicationModel::{StartupTask, StartupTaskState};
 use windows::core::HSTRING;
 
+use super::com::ComGuard;
+
 const STARTUP_TASK_ID: &str = "WinSPStartup";
 
 pub fn is_enabled() -> bool {
+    let _com = ComGuard::new();
     startup_task_is_enabled().unwrap_or(false)
 }
 
 pub fn set_enabled(enabled: bool) {
+    let _com = ComGuard::new();
     if let Err(error) = startup_task_set_enabled(enabled) {
         super::toast::show(
             "WinSP",
