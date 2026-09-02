@@ -1,11 +1,12 @@
 use std::collections::{HashMap, VecDeque};
-use std::sync::mpsc::Sender;
+use std::ffi::c_void;
 use std::sync::{Mutex, OnceLock};
 
 use windows::Win32::Foundation::HWND;
 use windows::Win32::Graphics::Gdi::InvalidateRect;
 use windows::Win32::Storage::FileSystem::FILE_FLAGS_AND_ATTRIBUTES;
-use windows::Win32::System::Com::{COINIT_APARTMENTTHREADED, CoInitializeEx};
+use windows::Win32::System::Com::{COINIT_APARTMENTTHREADED, CoInitializeEx, CoUninitialize};
+use windows::Win32::System::Threading::{PTP_CALLBACK_INSTANCE, TrySubmitThreadpoolCallback};
 use windows::Win32::UI::Shell::{SHFILEINFOW, SHGFI_ICON, SHGFI_LARGEICON, SHGetFileInfoW};
 use windows::Win32::UI::WindowsAndMessaging::{DestroyIcon, HICON};
 use windows::core::HSTRING;
@@ -53,24 +54,34 @@ fn request_repaint() {
     }
 }
 
-fn worker_sender() -> &'static Sender<String> {
-    static SENDER: OnceLock<Sender<String>> = OnceLock::new();
-    SENDER.get_or_init(|| {
-        let (tx, rx) = std::sync::mpsc::channel::<String>();
-        std::thread::spawn(move || {
-            unsafe {
-                let _ = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
-            }
-            for path in rx {
-                let icon = extract_icon(&path);
-                if let Ok(mut cache) = cache().lock() {
-                    cache.insert(path, IconState::Ready(icon.map(CachedIcon)));
-                }
-                request_repaint();
-            }
-        });
-        tx
-    })
+unsafe extern "system" fn run_extraction(_instance: PTP_CALLBACK_INSTANCE, context: *mut c_void) {
+    let path = *unsafe { Box::from_raw(context as *mut String) };
+
+    unsafe {
+        let _ = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
+    }
+    let icon = extract_icon(&path);
+    unsafe {
+        CoUninitialize();
+    }
+
+    if let Ok(mut cache) = cache().lock() {
+        cache.insert(path, IconState::Ready(icon.map(CachedIcon)));
+    }
+    request_repaint();
+}
+
+fn dispatch_extraction(path: String) {
+    let context = Box::into_raw(Box::new(path)) as *mut c_void;
+    let submitted =
+        unsafe { TrySubmitThreadpoolCallback(Some(run_extraction), Some(context), None) };
+
+    if submitted.is_err() {
+        let path = *unsafe { Box::from_raw(context as *mut String) };
+        if let Ok(mut cache) = cache().lock() {
+            cache.remove(&path);
+        }
+    }
 }
 
 pub fn icon_for_path(path: &str) -> Option<HICON> {
@@ -83,14 +94,15 @@ pub fn icon_for_path(path: &str) -> Option<HICON> {
         }
     }
 
+    let owned = path.to_string();
     if let Ok(mut cache) = cache().lock() {
-        cache.insert(path.to_string(), IconState::Pending);
+        cache.insert(owned.clone(), IconState::Pending);
     }
     if let Ok(mut order) = insertion_order().lock() {
-        order.push_back(path.to_string());
+        order.push_back(owned.clone());
     }
     evict_oldest_if_over_capacity();
-    let _ = worker_sender().send(path.to_string());
+    dispatch_extraction(owned);
     None
 }
 
