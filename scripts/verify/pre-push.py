@@ -240,9 +240,10 @@ def main() -> int:
     if notice:
         print(notice, file=sys.stderr, flush=True)
 
-    stash_sha = stash_worktree() if has_uncommitted_tracked_changes() else None
-
+    stash_sha = None
     try:
+        if has_uncommitted_tracked_changes():
+            stash_sha = stash_worktree()
         return run_checks(package_args, target_args, test_extra_args)
     finally:
         if stash_sha:
