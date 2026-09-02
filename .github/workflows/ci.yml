@@ -103,4 +103,11 @@ jobs:
         with:
           tool: cargo-llvm-cov
 
-      - run: cargo llvm-cov --workspace --locked
+      - name: Generate coverage
+        run: cargo llvm-cov --workspace --locked --codecov --output-path codecov.json
+
+      - uses: codecov/codecov-action@0fb7174895f61a3b6b78fc075e0cd60383518dac # v5.5.5
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: codecov.json
+          fail_ci_if_error: false
