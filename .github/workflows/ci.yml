@@ -71,7 +71,7 @@ jobs:
           $failures = 0
           for ($i = 1; $i -le 10; $i++) {
             Write-Host "=== iteration $i ==="
-            cargo test -p winsp-windows --lib --features test-support --locked detects_collision_and_releases_cleanly -- --test-threads=1 --exact
+            cargo test -p winsp-windows --lib --features test-support --locked detects_collision_and_releases_cleanly -- --test-threads=1
             if ($LASTEXITCODE -ne 0) {
               $failures++
               Write-Host "iteration $i FAILED (exit $LASTEXITCODE)"
