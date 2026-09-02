@@ -9,12 +9,18 @@ pub enum AppTarget {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+pub enum IconSource {
+    Path(String),
+    Glyph(char),
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub struct AppItem {
     pub id: String,
     pub name: Arc<str>,
     pub description: Option<Arc<str>>,
     pub target: AppTarget,
-    pub icon_path: Option<String>,
+    pub icon: Option<IconSource>,
     pub keywords: Vec<String>,
     pub launch_count: u32,
     pub last_launched_timestamp: u64,
@@ -27,7 +33,7 @@ impl AppItem {
             name: name.into(),
             description: None,
             target,
-            icon_path: None,
+            icon: None,
             keywords: Vec::new(),
             launch_count: 0,
             last_launched_timestamp: 0,
@@ -39,8 +45,13 @@ impl AppItem {
         self
     }
 
-    pub fn with_icon(mut self, icon: impl Into<String>) -> Self {
-        self.icon_path = Some(icon.into());
+    pub fn with_icon(mut self, path: impl Into<String>) -> Self {
+        self.icon = Some(IconSource::Path(path.into()));
+        self
+    }
+
+    pub fn with_icon_glyph(mut self, glyph: char) -> Self {
+        self.icon = Some(IconSource::Glyph(glyph));
         self
     }
 

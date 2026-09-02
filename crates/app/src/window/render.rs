@@ -1,10 +1,16 @@
 use std::sync::OnceLock;
 
-use winsp_windows::window::{Canvas, Color, Font, FontWeight, Rect, register_embedded_font};
+use winsp_core::models::{IconSource, SearchResult, SearchResultKind};
+use winsp_windows::window::{
+    Canvas, Color, Font, FontWeight, Rect, icon_for_path, register_embedded_font,
+};
 
 use super::{APP_STATE, ITEM_ROW_HEIGHT, SEARCH_BAR_HEIGHT, WINDOW_WIDTH};
 
 const HIGHLIGHT_COLOR: Color = Color(0x00FFB74D);
+const ICON_SIZE: i32 = 32;
+const ICON_LEFT: i32 = 16;
+const TEXT_LEFT: i32 = ICON_LEFT + ICON_SIZE + 12;
 
 static INTER_REGULAR: &[u8] = include_bytes!("../../assets/fonts/Inter-Regular.ttf");
 static INTER_SEMIBOLD: &[u8] = include_bytes!("../../assets/fonts/Inter-SemiBold.ttf");
@@ -14,6 +20,7 @@ struct Fonts {
     search: Font,
     item_title: Font,
     item_sub: Font,
+    icon_glyph: Font,
 }
 
 fn fonts() -> &'static Fonts {
@@ -27,8 +34,28 @@ fn fonts() -> &'static Fonts {
             search: Font::new("Inter Display", 26, FontWeight::Normal),
             item_title: Font::new("Inter SemiBold", 18, FontWeight::Normal),
             item_sub: Font::new("Inter", 14, FontWeight::Normal),
+            icon_glyph: Font::new("Segoe MDL2 Assets", 20, FontWeight::Normal),
         }
     })
+}
+
+fn draw_result_icon(canvas: &Canvas, result: &SearchResult, rect: Rect) {
+    let SearchResultKind::App(item) = &result.kind else {
+        return;
+    };
+    match &item.icon {
+        Some(IconSource::Path(path)) => {
+            if let Some(icon) = icon_for_path(path) {
+                canvas.draw_icon(icon, rect);
+            }
+        }
+        Some(IconSource::Glyph(glyph)) => {
+            let _font = canvas.select_font(&fonts().icon_glyph);
+            canvas.set_text_color(Color(0x00CCCCCC));
+            canvas.draw_icon_glyph(*glyph, rect);
+        }
+        None => {}
+    }
 }
 
 fn highlight_segments(text: &str, matched_indices: &[usize]) -> Vec<(bool, String)> {
@@ -143,6 +170,17 @@ pub(super) fn render_ui(canvas: &Canvas, client_rect: Rect) {
             canvas.fill_rect(row_rect, Color(0x003A3A3A));
         }
 
+        draw_result_icon(
+            canvas,
+            result,
+            Rect {
+                left: ICON_LEFT,
+                top: current_y + 8,
+                right: ICON_LEFT + ICON_SIZE,
+                bottom: current_y + 8 + ICON_SIZE,
+            },
+        );
+
         let base_color = if is_selected {
             Color(0x00FFFFFF)
         } else {
@@ -155,7 +193,7 @@ pub(super) fn render_ui(canvas: &Canvas, client_rect: Rect) {
                 &result.title,
                 &result.matched_indices,
                 Rect {
-                    left: 32,
+                    left: TEXT_LEFT,
                     top: current_y + 4,
                     right: WINDOW_WIDTH - 32,
                     bottom: current_y + 26,
@@ -168,7 +206,7 @@ pub(super) fn render_ui(canvas: &Canvas, client_rect: Rect) {
             let _font = canvas.select_font(&fonts().item_sub);
             canvas.set_text_color(Color(0x00999999));
             let sub_rect = Rect {
-                left: 32,
+                left: TEXT_LEFT,
                 top: current_y + 26,
                 right: WINDOW_WIDTH - 32,
                 bottom: current_y + ITEM_ROW_HEIGHT - 8,

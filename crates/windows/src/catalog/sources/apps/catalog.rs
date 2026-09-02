@@ -145,7 +145,8 @@ fn insert_if_shortcut(
     let identity = resolved.unwrap_or_else(|| path.to_string_lossy().into_owned());
     let id = format!("shortcut:{identity}");
     let item = AppItem::new(id, stem, AppTarget::Path(path.to_string_lossy().into()))
-        .with_description(path.to_string_lossy().to_string());
+        .with_description(path.to_string_lossy().to_string())
+        .with_icon(path.to_string_lossy());
 
     shortcuts.insert(path.to_path_buf(), ScannedShortcut { item, priority });
 }
@@ -249,6 +250,26 @@ mod tests {
 
     fn names(items: &[AppItem]) -> Vec<&str> {
         items.iter().map(|i| i.name.as_ref()).collect()
+    }
+
+    #[test]
+    fn shortcut_items_carry_their_own_path_as_the_icon_source() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(
+            dir.path().join("App.url"),
+            "[InternetShortcut]\nURL=https://example.com/app\n",
+        )
+        .unwrap();
+
+        let catalog = StartMenuCatalog::scan(vec![dir.path().into()]);
+        let items = catalog.items();
+
+        assert_eq!(
+            items[0].icon,
+            Some(winsp_core::models::IconSource::Path(
+                dir.path().join("App.url").to_string_lossy().into_owned()
+            ))
+        );
     }
 
     #[test]
