@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import platform
 import shutil
+import signal
 import subprocess
 import sys
 
@@ -26,6 +27,13 @@ def run_tool(cmd: list, *, check: bool = False, **kwargs) -> subprocess.Complete
         raise HookError(f"'{cmd[0]}' not found on PATH ({e}).") from e
 
 
+def isolated_kwargs() -> dict:
+    # New process group: a second Ctrl+C during stash apply/drop can't reach the child.
+    if platform.system() == "Windows":
+        return {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP}
+    return {"start_new_session": True}
+
+
 def has_uncommitted_tracked_changes() -> bool:
     try:
         out = run_tool(
@@ -49,20 +57,28 @@ def stash_worktree() -> str:
         file=sys.stderr,
         flush=True,
     )
+    previous_handler = signal.signal(signal.SIGINT, signal.SIG_IGN)
     try:
-        run_tool(["git", "stash", "push", "-m", STASH_MESSAGE], check=True)
+        run_tool(
+            ["git", "stash", "push", "-m", STASH_MESSAGE],
+            check=True,
+            **isolated_kwargs(),
+        )
         sha = run_tool(
             ["git", "rev-parse", "--verify", "refs/stash"],
             capture_output=True,
             text=True,
             encoding="utf-8",
             check=True,
+            **isolated_kwargs(),
         ).stdout.strip()
     except subprocess.CalledProcessError as e:
         raise HookError(
             "failed to stash uncommitted changes (see git output above); "
             "aborting before running checks against a mixed working tree."
         ) from e
+    finally:
+        signal.signal(signal.SIGINT, previous_handler)
     return sha
 
 
@@ -82,32 +98,40 @@ def find_stash_ref(sha: str) -> str | None:
 
 
 def restore_worktree(sha: str) -> None:
-    apply_result = run_tool(["git", "stash", "apply", sha], check=False)
-    if apply_result.returncode != 0:
-        print(
-            "warning: could not restore stashed changes automatically; run "
-            f"`git stash apply {sha}` manually to recover them.",
-            file=sys.stderr,
+    previous_handler = signal.signal(signal.SIGINT, signal.SIG_IGN)
+    try:
+        apply_result = run_tool(
+            ["git", "stash", "apply", sha], check=False, **isolated_kwargs()
         )
-        return
+        if apply_result.returncode != 0:
+            print(
+                "warning: could not restore stashed changes automatically; run "
+                f"`git stash apply {sha}` manually to recover them.",
+                file=sys.stderr,
+            )
+            return
 
-    ref = find_stash_ref(sha)
-    if ref is None:
-        print(
-            "warning: restored stashed changes but could not find the stash "
-            f"entry to drop it; run `git stash list` and drop the entry for "
-            f"commit {sha} manually.",
-            file=sys.stderr,
-        )
-        return
+        ref = find_stash_ref(sha)
+        if ref is None:
+            print(
+                "warning: restored stashed changes but could not find the stash "
+                f"entry to drop it; run `git stash list` and drop the entry for "
+                f"commit {sha} manually.",
+                file=sys.stderr,
+            )
+            return
 
-    drop_result = run_tool(["git", "stash", "drop", ref], check=False)
-    if drop_result.returncode != 0:
-        print(
-            f"warning: restored stashed changes but could not drop stash "
-            f"entry {ref}; run `git stash drop {ref}` manually to clean it up.",
-            file=sys.stderr,
+        drop_result = run_tool(
+            ["git", "stash", "drop", ref], check=False, **isolated_kwargs()
         )
+        if drop_result.returncode != 0:
+            print(
+                f"warning: restored stashed changes but could not drop stash "
+                f"entry {ref}; run `git stash drop {ref}` manually to clean it up.",
+                file=sys.stderr,
+            )
+    finally:
+        signal.signal(signal.SIGINT, previous_handler)
 
 
 def wine_toolchain_available() -> bool:
@@ -150,7 +174,22 @@ def select_profile() -> tuple:
     return ["-p", "winsp-core"], [], [], notice
 
 
+def cargo_subcommand_available(name: str) -> bool:
+    probe = run_tool(
+        ["cargo", name, "--version"], check=False, capture_output=True, text=True
+    )
+    return probe.returncode == 0
+
+
 def run_checks(package_args: list, target_args: list, test_extra_args: list) -> int:
+    if not cargo_subcommand_available("fmt"):
+        print(
+            "error: 'cargo fmt' isn't available (rustfmt component missing?). "
+            "Install it with: rustup component add rustfmt",
+            file=sys.stderr,
+        )
+        return 1
+
     fmt = run_tool(["cargo", "fmt", "--all", "--", "--check"], check=False)
     if fmt.returncode != 0:
         print(
@@ -161,6 +200,14 @@ def run_checks(package_args: list, target_args: list, test_extra_args: list) -> 
             file=sys.stderr,
         )
         return fmt.returncode
+
+    if not cargo_subcommand_available("clippy"):
+        print(
+            "error: 'cargo clippy' isn't available (clippy component missing?). "
+            "Install it with: rustup component add clippy",
+            file=sys.stderr,
+        )
+        return 1
 
     clippy = run_tool(
         [
