@@ -1,12 +1,22 @@
 use windows::Data::Xml::Dom::XmlDocument;
 use windows::UI::Notifications::{ToastNotification, ToastNotificationManager};
+use windows::Win32::Foundation::APPMODEL_ERROR_NO_PACKAGE;
+use windows::Win32::Storage::Packaging::Appx::GetCurrentPackageFullName;
 use windows::core::HSTRING;
 
 use super::com::ComGuard;
 
 pub fn show(title: &str, body: &str) {
+    if !has_package_identity() {
+        return;
+    }
     let _com = ComGuard::new();
     let _ = try_show(title, body);
+}
+
+fn has_package_identity() -> bool {
+    let mut length = 0u32;
+    unsafe { GetCurrentPackageFullName(&mut length, None) != APPMODEL_ERROR_NO_PACKAGE }
 }
 
 fn try_show(title: &str, body: &str) -> windows::core::Result<()> {
@@ -68,5 +78,14 @@ mod tests {
             result.is_ok(),
             "unescaped reserved characters should not produce malformed XML, got {result:?}"
         );
+    }
+
+    #[test]
+    fn show_does_not_crash_without_package_identity() {
+        assert!(
+            !has_package_identity(),
+            "the unpackaged test binary must not report package identity"
+        );
+        show("WinSP", "this must be a no-op, not a crash");
     }
 }
