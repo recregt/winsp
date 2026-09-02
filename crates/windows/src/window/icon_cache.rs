@@ -96,10 +96,20 @@ fn dispatch_extraction(path: String) {
             extract_icon(&path)
         };
 
-        if let Ok(mut cache) = cache().lock() {
-            cache.put(path, IconState::Ready(icon.map(CachedIcon).map(Arc::new)));
+        let still_wanted = if let Ok(mut cache) = cache().lock() {
+            if matches!(cache.peek(&path), Some(IconState::Pending)) {
+                cache.put(path, IconState::Ready(icon.map(CachedIcon).map(Arc::new)));
+                true
+            } else {
+                false
+            }
+        } else {
+            false
+        };
+
+        if still_wanted {
+            request_repaint();
         }
-        request_repaint();
     });
 
     if !submitted && let Ok(mut cache) = cache().lock() {
@@ -174,6 +184,26 @@ mod tests {
         let _guard = reset_for_test();
         assert!(icon_for_path(r"C:\also\not\real.exe").is_none());
         assert!(icon_for_path(r"C:\also\not\real.exe").is_none());
+    }
+
+    #[test]
+    fn a_completion_for_an_already_evicted_entry_does_not_resurrect_it() {
+        let _guard = reset_for_test();
+        let real_path = std::env::current_exe()
+            .unwrap()
+            .to_string_lossy()
+            .into_owned();
+
+        assert!(icon_for_path(&real_path).is_none());
+        cache().lock().unwrap().pop(&real_path);
+
+        std::thread::sleep(std::time::Duration::from_millis(500));
+
+        let resurrected = cache().lock().unwrap().contains(&real_path);
+        assert!(
+            !resurrected,
+            "a late completion for an evicted path must not reinsert it"
+        );
     }
 
     #[test]
