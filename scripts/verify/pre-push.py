@@ -17,6 +17,10 @@ def main() -> None:
             flush=True,
         )
 
+    fmt = subprocess.run(["cargo", "fmt", "--all", "--", "--check"], check=False)
+    if fmt.returncode != 0:
+        sys.exit(fmt.returncode)
+
     clippy = subprocess.run(
         [
             "cargo",
@@ -38,4 +42,7 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except KeyboardInterrupt:
+        sys.exit(130)
