@@ -65,19 +65,19 @@ jobs:
       - name: Clippy
         run: cargo clippy --workspace --all-targets --locked -- -D warnings
 
-      - name: Diagnostic - winsp-windows single-threaded x20
+      - name: Diagnostic - single_instance test in isolation x10
         shell: pwsh
         run: |
           $failures = 0
-          for ($i = 1; $i -le 20; $i++) {
+          for ($i = 1; $i -le 10; $i++) {
             Write-Host "=== iteration $i ==="
-            cargo test -p winsp-windows --lib --features test-support --locked -- --test-threads=1
+            cargo test -p winsp-windows --lib --features test-support --locked detects_collision_and_releases_cleanly -- --test-threads=1 --exact
             if ($LASTEXITCODE -ne 0) {
               $failures++
               Write-Host "iteration $i FAILED (exit $LASTEXITCODE)"
             }
           }
-          Write-Host "Total failures: $failures / 20"
+          Write-Host "Total failures: $failures / 10"
           if ($failures -gt 0) { exit 1 }
 
       - name: Test
