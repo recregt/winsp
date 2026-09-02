@@ -11,6 +11,7 @@ test-support = []
 
 [dependencies]
 lnk = "0.6"
+lru = "0.18"
 notify-debouncer-mini = "0.7.0"
 winsp-core = { path = "../core" }
 

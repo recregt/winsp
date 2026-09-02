@@ -1,7 +1,8 @@
-use std::collections::{HashMap, VecDeque};
 use std::ffi::c_void;
+use std::num::NonZeroUsize;
 use std::sync::{Arc, Mutex, OnceLock};
 
+use lru::LruCache;
 use windows::Win32::Foundation::HWND;
 use windows::Win32::Graphics::Gdi::InvalidateRect;
 use windows::Win32::Storage::FileSystem::FILE_FLAGS_AND_ATTRIBUTES;
@@ -37,14 +38,9 @@ enum IconState {
     Ready(Option<Arc<CachedIcon>>),
 }
 
-fn cache() -> &'static Mutex<HashMap<String, IconState>> {
-    static CACHE: OnceLock<Mutex<HashMap<String, IconState>>> = OnceLock::new();
-    CACHE.get_or_init(|| Mutex::new(HashMap::new()))
-}
-
-fn insertion_order() -> &'static Mutex<VecDeque<String>> {
-    static ORDER: OnceLock<Mutex<VecDeque<String>>> = OnceLock::new();
-    ORDER.get_or_init(|| Mutex::new(VecDeque::new()))
+fn cache() -> &'static Mutex<LruCache<String, IconState>> {
+    static CACHE: OnceLock<Mutex<LruCache<String, IconState>>> = OnceLock::new();
+    CACHE.get_or_init(|| Mutex::new(LruCache::new(NonZeroUsize::new(MAX_CACHED_ICONS).unwrap())))
 }
 
 static REPAINT_HWND: OnceLock<isize> = OnceLock::new();
@@ -73,7 +69,7 @@ unsafe extern "system" fn run_extraction(_instance: PTP_CALLBACK_INSTANCE, conte
     }
 
     if let Ok(mut cache) = cache().lock() {
-        cache.insert(path, IconState::Ready(icon.map(CachedIcon).map(Arc::new)));
+        cache.put(path, IconState::Ready(icon.map(CachedIcon).map(Arc::new)));
     }
     request_repaint();
 }
@@ -86,14 +82,14 @@ fn dispatch_extraction(path: String) {
     if submitted.is_err() {
         let path = *unsafe { Box::from_raw(context as *mut String) };
         if let Ok(mut cache) = cache().lock() {
-            cache.remove(&path);
+            cache.pop(&path);
         }
     }
 }
 
 pub fn icon_for_path(path: &str) -> Option<Arc<CachedIcon>> {
     {
-        let cache = cache().lock().ok()?;
+        let mut cache = cache().lock().ok()?;
         match cache.get(path) {
             Some(IconState::Ready(icon)) => return icon.clone(),
             Some(IconState::Pending) => return None,
@@ -103,28 +99,10 @@ pub fn icon_for_path(path: &str) -> Option<Arc<CachedIcon>> {
 
     let owned = path.to_string();
     if let Ok(mut cache) = cache().lock() {
-        cache.insert(owned.clone(), IconState::Pending);
+        cache.put(owned.clone(), IconState::Pending);
     }
-    if let Ok(mut order) = insertion_order().lock() {
-        order.push_back(owned.clone());
-    }
-    evict_oldest_if_over_capacity();
     dispatch_extraction(owned);
     None
-}
-
-fn evict_oldest_if_over_capacity() {
-    let Ok(mut order) = insertion_order().lock() else {
-        return;
-    };
-    while order.len() > MAX_CACHED_ICONS {
-        let Some(evicted_path) = order.pop_front() else {
-            break;
-        };
-        if let Ok(mut cache) = cache().lock() {
-            cache.remove(&evicted_path);
-        }
-    }
 }
 
 fn extract_icon(path: &str) -> Option<HICON> {
@@ -153,9 +131,6 @@ mod tests {
         let guard = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         if let Ok(mut c) = cache().lock() {
             c.clear();
-        }
-        if let Ok(mut o) = insertion_order().lock() {
-            o.clear();
         }
         guard
     }
@@ -196,14 +171,13 @@ mod tests {
             icon_for_path(&format!(r"C:\eviction-test\{i}.exe"));
         }
 
-        let tracked = insertion_order().lock().unwrap().len();
-        assert_eq!(
-            tracked, MAX_CACHED_ICONS,
-            "insertion_order is only ever touched synchronously by the calling thread, \
-             unlike cache which the background worker can still be draining into"
+        let len = cache().lock().unwrap().len();
+        assert!(
+            len <= MAX_CACHED_ICONS,
+            "LruCache must never grow past its configured capacity"
         );
 
-        let real_path_still_cached = cache().lock().unwrap().contains_key(&real_path);
+        let real_path_still_cached = cache().lock().unwrap().contains(&real_path);
         assert!(
             !real_path_still_cached,
             "the oldest entry (holding a real icon handle) should have been evicted first"
@@ -219,7 +193,7 @@ mod tests {
             .into_owned();
         let held = wait_for_icon(&real_path);
 
-        cache().lock().unwrap().remove(&real_path);
+        cache().lock().unwrap().pop(&real_path);
 
         assert_eq!(
             Arc::strong_count(&held),
