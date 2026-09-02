@@ -82,7 +82,7 @@ fn request_repaint() {
     }
     if let Some(&raw) = REPAINT_HWND.get() {
         unsafe {
-            let _ = InvalidateRect(Some(HWND(raw as *mut _)), None, true);
+            let _ = InvalidateRect(Some(HWND(raw as *mut _)), None, false);
         }
     }
 }

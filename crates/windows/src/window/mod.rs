@@ -290,7 +290,7 @@ impl Window {
 
     pub fn invalidate(&self) {
         unsafe {
-            let _ = InvalidateRect(Some(self.hwnd), None, true);
+            let _ = InvalidateRect(Some(self.hwnd), None, false);
         }
     }
 
