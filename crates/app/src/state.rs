@@ -1,3 +1,5 @@
+#![cfg(windows)]
+
 use winsp_core::models::SearchResult;
 use winsp_core::search::Engine;
 
@@ -7,7 +9,6 @@ pub struct AppState {
     pub query: String,
     pub results: Vec<SearchResult>,
     pub selected_index: usize,
-    #[cfg_attr(not(windows), allow(dead_code))]
     pub capturing_hotkey: bool,
 }
 
@@ -29,7 +30,7 @@ impl AppState {
     }
 }
 
-#[cfg(all(test, windows))]
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::index::populate_search_index;
