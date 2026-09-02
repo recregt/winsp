@@ -5,6 +5,8 @@ import signal
 import subprocess
 import sys
 
+sys.dont_write_bytecode = True
+
 STASH_MESSAGE = "pre-push-hook-autostash"
 WINE_TARGET = "x86_64-pc-windows-gnu"
 WINE_MINGW_LINKER = "x86_64-w64-mingw32-gcc"
