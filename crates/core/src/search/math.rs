@@ -294,6 +294,8 @@ fn try_eval_percentage(input: &str) -> Option<f64> {
 fn format_result(val: f64) -> String {
     if (val.fract() == 0.0) && (val.abs() < 1e15) {
         format!("{}", val as i64)
+    } else if val.abs() < 1e-6 || val.abs() >= 1e15 {
+        format!("{val:e}")
     } else {
         let s = format!("{:.6}", val);
         let trimmed = s.trim_end_matches('0').trim_end_matches('.');
@@ -472,6 +474,14 @@ mod tests {
         assert_eq!(try_eval("0.1+0.2"), Some("0.3".to_string()));
         assert_eq!(try_eval(".5+.5"), Some("1".to_string()));
         assert_eq!(try_eval("1/3*3"), Some("1".to_string()));
+    }
+
+    #[test]
+    fn test_very_small_results_use_scientific_notation_instead_of_zero() {
+        assert_eq!(format_result(1e-10), "1e-10");
+        assert_eq!(format_result(-1e-10), "-1e-10");
+        assert_ne!(format_result(1e-10), "0");
+        assert_ne!(format_result(-1e-10), "-0");
     }
 
     #[test]
