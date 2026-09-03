@@ -1,14 +1,12 @@
 use std::sync::OnceLock;
 
 use winsp_core::models::{IconSource, SearchResult, SearchResultKind};
-use winsp_windows::window::{
-    Canvas, Color, Font, FontWeight, Rect, icon_for_path, mark_paint_started,
-    register_embedded_font,
-};
+use winsp_windows::window::gfx::{Canvas, Color, Font, FontWeight, Rect};
+use winsp_windows::window::icon_for_path;
 
 use super::{APP_STATE, ITEM_ROW_HEIGHT, SEARCH_BAR_HEIGHT, WINDOW_WIDTH};
 
-const HIGHLIGHT_COLOR: Color = Color(0x00FFB74D);
+const HIGHLIGHT_COLOR: Color = Color::hex(0xFFB74D);
 const ICON_SIZE: i32 = 32;
 const ICON_LEFT: i32 = 16;
 const TEXT_LEFT: i32 = ICON_LEFT + ICON_SIZE + 12;
@@ -27,9 +25,9 @@ struct Fonts {
 fn fonts() -> &'static Fonts {
     static FONTS: OnceLock<Fonts> = OnceLock::new();
     FONTS.get_or_init(|| {
-        register_embedded_font(INTER_REGULAR);
-        register_embedded_font(INTER_SEMIBOLD);
-        register_embedded_font(INTER_DISPLAY_REGULAR);
+        Font::register(INTER_REGULAR);
+        Font::register(INTER_SEMIBOLD);
+        Font::register(INTER_DISPLAY_REGULAR);
 
         Fonts {
             search: Font::new("Inter Display", 26, FontWeight::Normal),
@@ -47,12 +45,12 @@ fn draw_result_icon(canvas: &Canvas, result: &SearchResult, rect: Rect) {
     match &item.icon {
         Some(IconSource::Path(path)) => {
             if let Some(icon) = icon_for_path(path) {
-                canvas.draw_icon(icon.handle(), rect);
+                canvas.draw_cached_icon(&icon, rect);
             }
         }
         Some(IconSource::Glyph(glyph)) => {
             let _font = canvas.select_font(&fonts().icon_glyph);
-            canvas.set_text_color(Color(0x00CCCCCC));
+            canvas.set_text_color(Color::hex(0xCCCCCC));
             canvas.draw_icon_glyph(*glyph, rect);
         }
         None => {}
@@ -106,8 +104,7 @@ fn draw_highlighted_title(
 }
 
 pub(super) fn render_ui(canvas: &Canvas, client_rect: Rect) {
-    mark_paint_started();
-    canvas.fill_rect(client_rect, Color(0x001E1E1E));
+    canvas.fill_rect(client_rect, Color::hex(0x1E1E1E));
 
     let Some(state_arc) = APP_STATE.get() else {
         return;
@@ -118,7 +115,7 @@ pub(super) fn render_ui(canvas: &Canvas, client_rect: Rect) {
 
     if state.capturing_hotkey {
         let _font = canvas.select_font(&fonts().search);
-        canvas.set_text_color(Color(0x00FFFFFF));
+        canvas.set_text_color(Color::hex(0xFFFFFF));
         let prompt_rect = Rect {
             left: 24,
             top: 14,
@@ -132,10 +129,10 @@ pub(super) fn render_ui(canvas: &Canvas, client_rect: Rect) {
     {
         let _font = canvas.select_font(&fonts().search);
         let display_text = if state.query.is_empty() {
-            canvas.set_text_color(Color(0x00888888));
+            canvas.set_text_color(Color::hex(0x888888));
             "Search apps, settings, math...".to_string()
         } else {
-            canvas.set_text_color(Color(0x00FFFFFF));
+            canvas.set_text_color(Color::hex(0xFFFFFF));
             state.query.clone()
         };
         let search_rect = Rect {
@@ -153,7 +150,7 @@ pub(super) fn render_ui(canvas: &Canvas, client_rect: Rect) {
         canvas.draw_line(
             (16, current_y),
             (WINDOW_WIDTH - 16, current_y),
-            Color(0x00333333),
+            Color::hex(0x333333),
         );
         current_y += 8;
     }
@@ -169,7 +166,7 @@ pub(super) fn render_ui(canvas: &Canvas, client_rect: Rect) {
         };
 
         if is_selected {
-            canvas.fill_rect(row_rect, Color(0x003A3A3A));
+            canvas.fill_rect(row_rect, Color::hex(0x3A3A3A));
         }
 
         draw_result_icon(
@@ -184,9 +181,9 @@ pub(super) fn render_ui(canvas: &Canvas, client_rect: Rect) {
         );
 
         let base_color = if is_selected {
-            Color(0x00FFFFFF)
+            Color::hex(0xFFFFFF)
         } else {
-            Color(0x00E0E0E0)
+            Color::hex(0xE0E0E0)
         };
         {
             let _font = canvas.select_font(&fonts().item_title);
@@ -206,7 +203,7 @@ pub(super) fn render_ui(canvas: &Canvas, client_rect: Rect) {
 
         if let Some(sub) = &result.subtitle {
             let _font = canvas.select_font(&fonts().item_sub);
-            canvas.set_text_color(Color(0x00999999));
+            canvas.set_text_color(Color::hex(0x999999));
             let sub_rect = Rect {
                 left: TEXT_LEFT,
                 top: current_y + 26,
@@ -224,7 +221,7 @@ pub(super) fn render_ui(canvas: &Canvas, client_rect: Rect) {
 mod tests {
     use super::*;
     use winsp_core::models::{AppItem, AppTarget};
-    use winsp_windows::window::testing::OffscreenSurface;
+    use winsp_windows::window::gfx::testing::OffscreenSurface;
 
     const BITMAP_WIDTH: i32 = 300;
     const BITMAP_HEIGHT: i32 = 40;
@@ -258,7 +255,7 @@ mod tests {
 
         draw_result_icon(&surface.canvas(), &app_result(item), ICON_BOUNDS);
 
-        assert!(surface.contains_pixel(Color(0x00CCCCCC)));
+        assert!(surface.contains_pixel(Color::hex(0xCCCCCC)));
     }
 
     #[test]
@@ -272,7 +269,7 @@ mod tests {
         wait_for_icon(&exe_path);
         draw_result_icon(&surface.canvas(), &app_result(item), ICON_BOUNDS);
 
-        assert!(surface.contains_pixel_other_than(Color(0x00000000)));
+        assert!(surface.contains_pixel_other_than(Color::hex(0x000000)));
     }
 
     #[test]
@@ -283,7 +280,7 @@ mod tests {
 
         draw_result_icon(&surface.canvas(), &app_result(item), ICON_BOUNDS);
 
-        assert!(!surface.contains_pixel_other_than(Color(0x00000000)));
+        assert!(!surface.contains_pixel_other_than(Color::hex(0x000000)));
     }
 
     #[test]
@@ -293,10 +290,10 @@ mod tests {
 
         draw_result_icon(&surface.canvas(), &result, ICON_BOUNDS);
 
-        assert!(!surface.contains_pixel_other_than(Color(0x00000000)));
+        assert!(!surface.contains_pixel_other_than(Color::hex(0x000000)));
     }
 
-    const BASE_COLOR: Color = Color(0x00E0E0E0);
+    const BASE_COLOR: Color = Color::hex(0xE0E0E0);
 
     const TEST_BOUNDS: Rect = Rect {
         left: 4,
@@ -333,7 +330,7 @@ mod tests {
 
     #[test]
     fn test_highlight_color_constant_is_distinct_from_base_and_background() {
-        const BACKGROUND_COLOR: Color = Color(0x00000000);
+        const BACKGROUND_COLOR: Color = Color::hex(0x000000);
         assert_ne!(HIGHLIGHT_COLOR, BASE_COLOR);
         assert_ne!(HIGHLIGHT_COLOR, BACKGROUND_COLOR);
     }

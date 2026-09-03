@@ -72,7 +72,7 @@ pub(crate) fn refresh_state(catalog: &StartMenuCatalog) {
     if let Ok(mut slot) = pending_index().lock() {
         *slot = Some(index);
     }
-    winsp_windows::window::notify_catalog_ready();
+    winsp_windows::window::post_event(crate::window::CATALOG_READY_EVENT);
 }
 
 fn next_wait(pending: bool, last_rescan: Instant) -> Duration {

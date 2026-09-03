@@ -20,7 +20,6 @@ winsp-core = { path = "../core" }
 tempfile = "3.27.0"
 
 [target.'cfg(windows)'.dependencies]
-num_enum = "0.7"
 windows-registry = "0.100"
 windows = { version = "0.62", features = [
     "ApplicationModel",

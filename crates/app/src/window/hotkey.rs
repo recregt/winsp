@@ -3,7 +3,7 @@ use std::sync::Mutex;
 
 use winsp_windows::window::{Hotkey, HotkeySlot, Key, Modifiers, Window};
 
-use super::settings::{HotkeyBinding, Settings};
+use crate::config::{HotkeyBinding, Settings};
 
 static ACTIVE_SLOT: Mutex<HotkeySlot> = Mutex::new(HotkeySlot::Primary);
 

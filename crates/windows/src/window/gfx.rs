@@ -9,6 +9,8 @@ use windows::Win32::Graphics::Gdi::{
 use windows::Win32::UI::WindowsAndMessaging::{DI_NORMAL, DrawIconEx, HICON};
 use windows::core::HSTRING;
 
+use super::icon_cache::CachedIcon;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Rect {
     pub left: i32,
@@ -29,7 +31,20 @@ impl Rect {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Color(pub u32);
+pub struct Color(u32);
+
+impl Color {
+    pub const fn rgb(r: u8, g: u8, b: u8) -> Self {
+        Self((r as u32) | ((g as u32) << 8) | ((b as u32) << 16))
+    }
+
+    pub const fn hex(rgb: u32) -> Self {
+        let r = ((rgb >> 16) & 0xFF) as u8;
+        let g = ((rgb >> 8) & 0xFF) as u8;
+        let b = (rgb & 0xFF) as u8;
+        Self::rgb(r, g, b)
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FontWeight {
@@ -117,7 +132,7 @@ impl Canvas {
         }
     }
 
-    pub fn draw_icon(&self, icon: HICON, rect: Rect) {
+    fn draw_icon(&self, icon: HICON, rect: Rect) {
         unsafe {
             let _ = DrawIconEx(
                 self.hdc,
@@ -131,6 +146,10 @@ impl Canvas {
                 DI_NORMAL,
             );
         }
+    }
+
+    pub fn draw_cached_icon(&self, icon: &CachedIcon, rect: Rect) {
+        self.draw_icon(icon.handle(), rect);
     }
 
     pub fn draw_icon_glyph(&self, glyph: char, rect: Rect) {
@@ -188,19 +207,19 @@ impl Font {
             Self { handle }
         }
     }
-}
 
-pub fn register_embedded_font(data: &'static [u8]) -> bool {
-    let num_fonts: u32 = 0;
-    let result = unsafe {
-        AddFontMemResourceEx(
-            data.as_ptr() as *const _,
-            data.len() as u32,
-            None,
-            &num_fonts,
-        )
-    };
-    !result.is_invalid()
+    pub fn register(data: &'static [u8]) -> bool {
+        let num_fonts: u32 = 0;
+        let result = unsafe {
+            AddFontMemResourceEx(
+                data.as_ptr() as *const _,
+                data.len() as u32,
+                None,
+                &num_fonts,
+            )
+        };
+        !result.is_invalid()
+    }
 }
 
 impl Drop for Font {

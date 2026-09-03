@@ -5,8 +5,6 @@ use windows::Win32::UI::Input::KeyboardAndMouse::{
     VK_RCONTROL, VK_RETURN, VK_RMENU, VK_RSHIFT, VK_RWIN, VK_SHIFT, VK_SPACE, VK_TAB, VK_UP,
 };
 
-use super::TrayCommand;
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Key {
     Back,
@@ -120,17 +118,17 @@ impl HotkeySlot {
 }
 
 #[derive(Debug, Clone, Copy)]
-pub enum Message {
+pub enum WindowEvent {
     Hotkey,
     TrayRightClick,
-    Command(TrayCommand),
-    KillFocus,
+    TrayCommand(usize),
+    FocusLost,
     Char(char),
-    KeyDown(Key, Modifiers),
+    KeyDown { key: Key, modifiers: Modifiers },
     ShowRequest,
-    CatalogReady,
     TaskbarRestarted,
-    Paint,
+    Redraw,
+    User(u32),
 }
 
 fn is_key_down(vk: VIRTUAL_KEY) -> bool {
