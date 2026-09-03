@@ -109,7 +109,7 @@ impl SearchResult {
         Self {
             title: Arc::from(result.as_str()),
             subtitle: Some(format!("= {expression}").into()),
-            score: 100_000,
+            score: i32::MAX,
             matched_indices: Vec::new(),
             kind: SearchResultKind::Calculation { expression, result },
         }
