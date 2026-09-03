@@ -163,7 +163,7 @@ fn is_reparse_point(metadata: &std::fs::Metadata) -> bool {
 
 fn directory_identity(dir: &Path) -> Option<DirIdentity> {
     use std::os::windows::fs::OpenOptionsExt;
-    use std::os::windows::io::{AsHandle, AsRawHandle};
+    use std::os::windows::io::AsRawHandle;
     use windows::Win32::Foundation::HANDLE;
     use windows::Win32::Storage::FileSystem::{FILE_FLAG_BACKUP_SEMANTICS, FILE_READ_ATTRIBUTES};
 
@@ -178,7 +178,7 @@ fn directory_identity(dir: &Path) -> Option<DirIdentity> {
             return None;
         }
     };
-    let handle = HANDLE(file.as_handle().as_raw_handle());
+    let handle = HANDLE(file.as_raw_handle());
 
     if let Some(id) = wide_file_id(handle) {
         return Some(id);
@@ -194,22 +194,20 @@ fn directory_identity(dir: &Path) -> Option<DirIdentity> {
 }
 
 fn wide_file_id(handle: windows::Win32::Foundation::HANDLE) -> Option<DirIdentity> {
-    use std::mem::MaybeUninit;
     use windows::Win32::Storage::FileSystem::{
         FILE_ID_INFO, FileIdInfo, GetFileInformationByHandleEx,
     };
 
-    let mut info = MaybeUninit::<FILE_ID_INFO>::uninit();
+    let mut info = FILE_ID_INFO::default();
     unsafe {
         GetFileInformationByHandleEx(
             handle,
             FileIdInfo,
-            info.as_mut_ptr().cast(),
+            std::ptr::addr_of_mut!(info).cast(),
             size_of::<FILE_ID_INFO>() as u32,
         )
     }
     .ok()?;
-    let info = unsafe { info.assume_init() };
 
     Some(DirIdentity::Wide {
         volume: info.VolumeSerialNumber,
@@ -218,14 +216,12 @@ fn wide_file_id(handle: windows::Win32::Foundation::HANDLE) -> Option<DirIdentit
 }
 
 fn narrow_file_id(handle: windows::Win32::Foundation::HANDLE) -> Option<DirIdentity> {
-    use std::mem::MaybeUninit;
     use windows::Win32::Storage::FileSystem::{
         BY_HANDLE_FILE_INFORMATION, GetFileInformationByHandle,
     };
 
-    let mut info = MaybeUninit::<BY_HANDLE_FILE_INFORMATION>::uninit();
-    unsafe { GetFileInformationByHandle(handle, info.as_mut_ptr()) }.ok()?;
-    let info = unsafe { info.assume_init() };
+    let mut info = BY_HANDLE_FILE_INFORMATION::default();
+    unsafe { GetFileInformationByHandle(handle, &mut info) }.ok()?;
 
     let file_index = ((info.nFileIndexHigh as u64) << 32) | info.nFileIndexLow as u64;
     Some(DirIdentity::Narrow {
