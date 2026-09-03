@@ -1,13 +1,10 @@
-use num_enum::TryFromPrimitive;
 use windows::Win32::Foundation::{HINSTANCE, HWND, POINT};
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::Shell::{
     NIF_ICON, NIF_MESSAGE, NIF_TIP, NIM_ADD, NIM_DELETE, NOTIFYICONDATAW, Shell_NotifyIconW,
 };
 use windows::Win32::UI::WindowsAndMessaging::*;
-use windows::core::{PCWSTR, w};
-
-use super::Anchor;
+use windows::core::{HSTRING, PCWSTR, w};
 
 pub(super) const WM_TRAYICON: u32 = WM_APP + 1;
 
@@ -16,15 +13,10 @@ pub(super) fn taskbar_created_message() -> u32 {
     *MSG_ID.get_or_init(|| unsafe { RegisterWindowMessageW(w!("TaskbarCreated")) })
 }
 
-#[repr(usize)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, TryFromPrimitive)]
-pub enum TrayCommand {
-    Toggle = 1001,
-    Autostart = 1002,
-    Exit = 1003,
-    ChangeHotkey = 1004,
-    PositionTop = 1005,
-    PositionCenter = 1006,
+pub struct MenuItem<'a> {
+    pub id: usize,
+    pub label: &'a str,
+    pub checked: bool,
 }
 
 const TRAY_ICON_ID: u32 = 1;
@@ -66,22 +58,15 @@ pub(super) fn remove(hwnd: HWND) {
     }
 }
 
-fn checked_flag(is_current: bool) -> MENU_ITEM_FLAGS {
-    if is_current {
+fn menu_flags(checked: bool) -> MENU_ITEM_FLAGS {
+    if checked {
         MF_STRING | MF_CHECKED
     } else {
-        MF_STRING | MF_UNCHECKED
+        MF_STRING
     }
 }
 
-fn position_flags(current_position: Anchor) -> (MENU_ITEM_FLAGS, MENU_ITEM_FLAGS) {
-    (
-        checked_flag(current_position == Anchor::Top),
-        checked_flag(current_position == Anchor::Center),
-    )
-}
-
-pub(super) fn show_menu(hwnd: HWND, current_position: Anchor) {
+pub(super) fn show_menu(hwnd: HWND, items: &[MenuItem]) {
     if !unsafe { IsWindow(Some(hwnd)) }.as_bool() {
         return;
     }
@@ -89,39 +74,11 @@ pub(super) fn show_menu(hwnd: HWND, current_position: Anchor) {
         let Ok(menu) = CreatePopupMenu() else {
             return;
         };
-        let autostart_flags = checked_flag(crate::system::autostart::is_enabled());
-        let (top_flags, center_flags) = position_flags(current_position);
-        let _ = AppendMenuW(
-            menu,
-            MF_STRING,
-            TrayCommand::Toggle as usize,
-            w!("Toggle Search"),
-        );
-        let _ = AppendMenuW(
-            menu,
-            autostart_flags,
-            TrayCommand::Autostart as usize,
-            w!("Start with Windows"),
-        );
-        let _ = AppendMenuW(
-            menu,
-            MF_STRING,
-            TrayCommand::ChangeHotkey as usize,
-            w!("Change Hotkey…"),
-        );
-        let _ = AppendMenuW(
-            menu,
-            top_flags,
-            TrayCommand::PositionTop as usize,
-            w!("Position: Top"),
-        );
-        let _ = AppendMenuW(
-            menu,
-            center_flags,
-            TrayCommand::PositionCenter as usize,
-            w!("Position: Center"),
-        );
-        let _ = AppendMenuW(menu, MF_STRING, TrayCommand::Exit as usize, w!("Exit"));
+
+        for item in items {
+            let label = HSTRING::from(item.label);
+            let _ = AppendMenuW(menu, menu_flags(item.checked), item.id, &label);
+        }
 
         let mut cursor = std::mem::MaybeUninit::<POINT>::uninit();
         let cursor = if GetCursorPos(cursor.as_mut_ptr()).is_ok() {
@@ -144,17 +101,11 @@ mod tests {
         CreateWindowExW, DefWindowProcW, DestroyWindow, RegisterClassExW, UnregisterClassW,
         WNDCLASSEXW,
     };
-    use windows::core::HSTRING;
 
     #[test]
-    fn position_flags_checks_only_the_current_anchors_item() {
-        let (top, center) = position_flags(Anchor::Top);
-        assert_eq!(top, MF_STRING | MF_CHECKED);
-        assert_eq!(center, MF_STRING | MF_UNCHECKED);
-
-        let (top, center) = position_flags(Anchor::Center);
-        assert_eq!(top, MF_STRING | MF_UNCHECKED);
-        assert_eq!(center, MF_STRING | MF_CHECKED);
+    fn menu_flags_sets_the_checked_bit_only_when_checked() {
+        assert_eq!(menu_flags(true), MF_STRING | MF_CHECKED);
+        assert_eq!(menu_flags(false), MF_STRING);
     }
 
     unsafe extern "system" fn noop_wnd_proc(

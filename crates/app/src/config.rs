@@ -1,3 +1,5 @@
+#![cfg(windows)]
+
 use std::io;
 use std::path::{Path, PathBuf};
 
@@ -6,17 +8,17 @@ use serde::{Deserialize, Serialize};
 const DEFAULT_VK: u16 = 0x20;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub(super) struct HotkeyBinding {
+pub(crate) struct HotkeyBinding {
     #[serde(default)]
-    pub(super) ctrl: bool,
+    pub(crate) ctrl: bool,
     #[serde(default)]
-    pub(super) shift: bool,
+    pub(crate) shift: bool,
     #[serde(default = "default_alt")]
-    pub(super) alt: bool,
+    pub(crate) alt: bool,
     #[serde(default)]
-    pub(super) win: bool,
+    pub(crate) win: bool,
     #[serde(default = "default_vk")]
-    pub(super) vk: u16,
+    pub(crate) vk: u16,
 }
 
 fn default_alt() -> bool {
@@ -40,18 +42,18 @@ impl Default for HotkeyBinding {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
-pub(super) enum WindowPosition {
+pub(crate) enum WindowPosition {
     #[default]
     Top,
     Center,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
-pub(super) struct Settings {
+pub(crate) struct Settings {
     #[serde(default)]
-    pub(super) hotkey: HotkeyBinding,
+    pub(crate) hotkey: HotkeyBinding,
     #[serde(default)]
-    pub(super) position: WindowPosition,
+    pub(crate) position: WindowPosition,
 }
 
 fn config_path() -> Option<PathBuf> {
@@ -61,7 +63,7 @@ fn config_path() -> Option<PathBuf> {
 }
 
 impl Settings {
-    pub(super) fn load() -> Self {
+    pub(crate) fn load() -> Self {
         match config_path() {
             Some(path) => Self::load_from(&path),
             None => Self::default(),
@@ -75,7 +77,7 @@ impl Settings {
             .unwrap_or_default()
     }
 
-    pub(super) fn save(&self) -> io::Result<()> {
+    pub(crate) fn save(&self) -> io::Result<()> {
         let path = config_path()
             .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "LOCALAPPDATA is not set"))?;
         self.save_to(&path)

@@ -1,8 +1,9 @@
 #![cfg_attr(windows, windows_subsystem = "windows")]
 
+mod catalog_sync;
+mod config;
 mod index;
 mod state;
-mod watch;
 mod window;
 
 use state::AppState;
@@ -32,16 +33,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         return Ok(());
     };
 
-    let mode = watch::startup_mode();
+    let mode = catalog_sync::startup_mode();
     let index = match &mode {
-        watch::StartupMode::Real(catalog) => index::engine_from_catalog(catalog),
-        watch::StartupMode::TestWatch(_) => index::populate_search_index(),
+        catalog_sync::StartupMode::Real(catalog) => index::engine_from_catalog(catalog),
+        catalog_sync::StartupMode::TestWatch(_) => index::populate_search_index(),
     };
 
     let state = Arc::new(Mutex::new(AppState::new(index)));
 
     let _reindex_watcher = match mode {
-        watch::StartupMode::TestWatch(dir) => {
+        catalog_sync::StartupMode::TestWatch(dir) => {
             let state = Arc::clone(&state);
             let watcher =
                 winsp_windows::catalog::sources::watcher::for_dirs(&[dir], move |_event| {
@@ -52,20 +53,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     }
                 });
             if watcher.is_err() {
-                watch::notify_watcher_init_failed();
+                catalog_sync::notify_watcher_init_failed();
             }
             watcher.ok()
         }
-        watch::StartupMode::Real(catalog) => {
+        catalog_sync::StartupMode::Real(catalog) => {
             let catalog = Arc::new(Mutex::new(catalog));
-            let reconcile_tx = watch::spawn_reconciler(Arc::clone(&catalog));
+            let reconcile_tx = catalog_sync::spawn_reconciler(Arc::clone(&catalog));
             window::set_reconcile_hook(reconcile_tx.clone());
 
             let watcher = winsp_windows::catalog::sources::watcher::for_start_menu(move |event| {
-                watch::handle_watch_event(event, &catalog, &reconcile_tx);
+                catalog_sync::handle_watch_event(event, &catalog, &reconcile_tx);
             });
             if watcher.is_err() {
-                watch::notify_watcher_init_failed();
+                catalog_sync::notify_watcher_init_failed();
             }
             watcher.ok()
         }
