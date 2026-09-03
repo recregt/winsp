@@ -100,18 +100,23 @@ fn match_all_items(
 
         let frecency_boost = launch_score(item.launch_count, 50);
 
-        if let Some(score) = matcher.fuzzy_indices(haystack, needle, &mut raw_indices) {
-            let indices = raw_indices.iter().map(|&i| i as usize).collect();
+        let name_score = matcher
+            .fuzzy_indices(haystack, needle, &mut raw_indices)
+            .map(|score| score as i32);
+        let keyword_score = match_keywords(&item.keywords, &query_lower);
+
+        let best = match (name_score, keyword_score) {
+            (Some(name), Some(kw)) if kw > name => Some((kw, Vec::new())),
+            (Some(name), _) => Some((name, raw_indices.iter().map(|&i| i as usize).collect())),
+            (None, Some(kw)) => Some((kw, Vec::new())),
+            (None, None) => None,
+        };
+
+        if let Some((score, indices)) = best {
             candidates.push((
                 Arc::clone(item),
-                (score as i32).saturating_add(frecency_boost),
+                score.saturating_add(frecency_boost),
                 indices,
-            ));
-        } else if let Some(kw_score) = match_keywords(&item.keywords, &query_lower) {
-            candidates.push((
-                Arc::clone(item),
-                kw_score.saturating_add(frecency_boost),
-                Vec::new(),
             ));
         }
     }
@@ -197,6 +202,23 @@ mod tests {
         let results = index.find("gc", 5);
         assert!(!results.is_empty());
         assert_eq!(results[0].title.as_ref(), "Google Chrome");
+    }
+
+    #[test]
+    fn test_keyword_score_not_shadowed_by_weak_name_match() {
+        let mut index = Engine::new();
+        index.set_items(vec![
+            AppItem::new(
+                "scattered",
+                "T z z z z e z z z z r z z z z m z z z z z z z z",
+                AppTarget::Path("term.exe".into()),
+            )
+            .with_keywords(vec!["term".into()]),
+        ]);
+
+        let results = index.find("term", 5);
+        assert_eq!(results.len(), 1);
+        assert!(results[0].score >= 5_000);
     }
 
     #[test]
