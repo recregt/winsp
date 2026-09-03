@@ -27,6 +27,11 @@ impl StartMenuCatalog {
         let mut unreadable_dirs = Vec::new();
         let mut visited = HashSet::new();
         for (priority, dir) in dirs.iter().enumerate() {
+            if let Some(id) = directory_identity(dir)
+                && !visited.insert(id)
+            {
+                continue;
+            }
             collect_shortcuts(
                 dir,
                 priority,
@@ -66,12 +71,16 @@ impl StartMenuCatalog {
             .unwrap_or(usize::MAX);
 
         if path.is_dir() {
+            let mut visited = HashSet::new();
+            if let Some(id) = directory_identity(path) {
+                visited.insert(id);
+            }
             collect_shortcuts(
                 path,
                 priority,
                 &mut self.shortcuts,
                 &mut self.unreadable_dirs,
-                &mut HashSet::new(),
+                &mut visited,
             );
         } else {
             insert_if_shortcut(path, priority, &mut self.shortcuts);
@@ -153,11 +162,12 @@ fn directory_identity(dir: &Path) -> Option<DirIdentity> {
     use std::os::windows::io::AsRawHandle;
     use windows::Win32::Foundation::HANDLE;
     use windows::Win32::Storage::FileSystem::{
-        FILE_FLAG_BACKUP_SEMANTICS, FILE_ID_INFO, FileIdInfo, GetFileInformationByHandleEx,
+        FILE_FLAG_BACKUP_SEMANTICS, FILE_ID_INFO, FILE_READ_ATTRIBUTES, FileIdInfo,
+        GetFileInformationByHandleEx,
     };
 
     let file = std::fs::OpenOptions::new()
-        .read(true)
+        .access_mode(FILE_READ_ATTRIBUTES.0)
         .custom_flags(FILE_FLAG_BACKUP_SEMANTICS.0)
         .open(dir)
         .ok()?;
