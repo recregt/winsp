@@ -37,9 +37,9 @@ fn tray_icon_data(hwnd: HWND) -> NOTIFYICONDATAW {
     nid
 }
 
-pub(super) fn add(hwnd: HWND) {
+pub(super) fn add(hwnd: HWND) -> bool {
     if !unsafe { IsWindow(Some(hwnd)) }.as_bool() {
-        return;
+        return false;
     }
     unsafe {
         let mut nid = tray_icon_data(hwnd);
@@ -52,7 +52,7 @@ pub(super) fn add(hwnd: HWND) {
         let tip: Vec<u16> = "WinSP".encode_utf16().collect();
         let len = tip.len().min(nid.szTip.len());
         nid.szTip[..len].copy_from_slice(&tip[..len]);
-        let _ = Shell_NotifyIconW(NIM_ADD, &nid);
+        Shell_NotifyIconW(NIM_ADD, &nid).as_bool()
     }
 }
 
@@ -216,6 +216,29 @@ mod tests {
                 "Shell_NotifyIconW(NIM_DELETE) should succeed"
             );
 
+            let _ = DestroyWindow(hwnd);
+            let _ = UnregisterClassW(&class_name, Some(GetModuleHandleW(None).unwrap().into()));
+        }
+    }
+
+    #[test]
+    fn add_reports_failure_for_an_invalid_window() {
+        assert!(
+            !add(HWND(std::ptr::null_mut())),
+            "add() must report failure instead of silently ignoring an invalid window"
+        );
+    }
+
+    #[test]
+    fn add_reports_success_on_a_real_window() {
+        let class_name = HSTRING::from("WinSpTest_TrayAddReturnWindow");
+        let hwnd = create_test_window(&class_name);
+        assert!(!hwnd.is_invalid(), "test window creation should succeed");
+
+        assert!(add(hwnd), "add() should report success on a real window");
+
+        unsafe {
+            let _ = Shell_NotifyIconW(NIM_DELETE, &tray_icon_data(hwnd));
             let _ = DestroyWindow(hwnd);
             let _ = UnregisterClassW(&class_name, Some(GetModuleHandleW(None).unwrap().into()));
         }

@@ -63,7 +63,12 @@ pub fn run_app(state: Arc<Mutex<AppState>>) -> Result<(), String> {
     window_handle.enable_dark_mode();
 
     window_handle.center(WINDOW_WIDTH, SEARCH_BAR_HEIGHT, anchor);
-    window_handle.add_tray_icon();
+    if !window_handle.add_tray_icon() {
+        winsp_windows::system::toast::show(
+            "WinSP",
+            "Couldn't add the tray icon. Use the hotkey to open WinSP.",
+        );
+    }
     window_handle.run_message_loop(hotkey);
 
     Ok(())
