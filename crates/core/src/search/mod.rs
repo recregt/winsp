@@ -27,7 +27,7 @@ impl Engine {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::models::{AppItem, AppTarget};
+    use crate::models::{AppItem, LaunchTarget};
 
     #[test]
     fn test_math_expression_is_merged_into_results() {
@@ -44,7 +44,7 @@ mod tests {
         index.set_items(vec![AppItem::new(
             "calc",
             "2 Calculators",
-            AppTarget::Aumid("Microsoft.WindowsCalculator".into()),
+            LaunchTarget::OsUri("shell:AppsFolder\\Microsoft.WindowsCalculator".into()),
         )]);
 
         let results = index.search("2 + 2", 5);
@@ -54,7 +54,7 @@ mod tests {
     #[test]
     fn test_empty_query_lists_top_items_without_touching_math() {
         let mut index = Engine::new();
-        let mut popular = AppItem::new("a", "Popular App", AppTarget::Path("a.exe".into()));
+        let mut popular = AppItem::new("a", "Popular App", LaunchTarget::Path("a.exe".into()));
         popular.launch_count = 10;
         index.set_items(vec![popular]);
 

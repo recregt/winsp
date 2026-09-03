@@ -220,7 +220,7 @@ pub(super) fn render_ui(canvas: &Canvas, client_rect: Rect) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use winsp_core::models::{AppItem, AppTarget};
+    use winsp_core::models::{AppItem, LaunchTarget};
     use winsp_windows::window::gfx::testing::OffscreenSurface;
 
     const BITMAP_WIDTH: i32 = 300;
@@ -250,8 +250,8 @@ mod tests {
     #[test]
     fn draw_result_icon_paints_the_glyph_color_for_a_glyph_icon() {
         let surface = OffscreenSurface::new(40, 40);
-        let item =
-            AppItem::new("id", "Name", AppTarget::Uri("ms-settings:".into())).with_icon_glyph('A');
+        let item = AppItem::new("id", "Name", LaunchTarget::OsUri("ms-settings:".into()))
+            .with_icon_glyph('A');
 
         draw_result_icon(&surface.canvas(), &app_result(item), ICON_BOUNDS);
 
@@ -263,7 +263,7 @@ mod tests {
         let surface = OffscreenSurface::new(40, 40);
         let exe = std::env::current_exe().unwrap();
         let exe_path = exe.to_string_lossy().into_owned();
-        let item = AppItem::new("id", "Name", AppTarget::Path(exe_path.clone()))
+        let item = AppItem::new("id", "Name", LaunchTarget::Path(exe_path.clone()))
             .with_icon(exe_path.clone());
 
         wait_for_icon(&exe_path);
@@ -275,7 +275,7 @@ mod tests {
     #[test]
     fn draw_result_icon_paints_nothing_for_a_missing_path_icon() {
         let surface = OffscreenSurface::new(40, 40);
-        let item = AppItem::new("id", "Name", AppTarget::Path("missing.exe".into()))
+        let item = AppItem::new("id", "Name", LaunchTarget::Path("missing.exe".into()))
             .with_icon(r"C:\definitely\not\a\real\path.exe");
 
         draw_result_icon(&surface.canvas(), &app_result(item), ICON_BOUNDS);

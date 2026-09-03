@@ -1,6 +1,6 @@
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use std::hint::black_box;
-use winsp_core::models::{AppItem, AppTarget};
+use winsp_core::models::{AppItem, LaunchTarget};
 use winsp_core::search::Engine;
 
 const WORDS: &[&str] = &[
@@ -47,7 +47,7 @@ fn synthetic_index(size: usize) -> Engine {
                 i
             );
             let id = format!("bench-app-{i}");
-            AppItem::new(id, name, AppTarget::Path(format!("app{i}.exe")))
+            AppItem::new(id, name, LaunchTarget::Path(format!("app{i}.exe")))
                 .with_keywords(vec!["tool".into(), "utility".into()])
         })
         .collect();

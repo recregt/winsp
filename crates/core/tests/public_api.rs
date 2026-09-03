@@ -1,27 +1,31 @@
-use winsp_core::models::{AppItem, AppTarget, SearchResultKind};
+use winsp_core::models::{AppItem, LaunchTarget, SearchResultKind};
 use winsp_core::search::Engine;
 
 #[test]
 fn test_full_flow_from_construction_to_search_result() {
     let mut index = Engine::new();
     index.set_items(vec![
-        AppItem::new("notepad", "Notepad", AppTarget::Path("notepad.exe".into())),
+        AppItem::new(
+            "notepad",
+            "Notepad",
+            LaunchTarget::Path("notepad.exe".into()),
+        ),
         AppItem::new(
             "calc",
             "Calculator",
-            AppTarget::Aumid("Microsoft.WindowsCalculator".into()),
+            LaunchTarget::OsUri("shell:AppsFolder\\Microsoft.WindowsCalculator".into()),
         ),
         AppItem::new(
             "display",
             "Display Settings",
-            AppTarget::Uri("ms-settings:display".into()),
+            LaunchTarget::OsUri("ms-settings:display".into()),
         )
         .with_description("Change your display resolution")
         .with_keywords(vec!["screen".into(), "monitor".into()]),
         AppItem::new(
             "shutdown",
             "Shut Down",
-            AppTarget::SystemCommand("shutdown /s /t 0".into()),
+            LaunchTarget::Command("shutdown /s /t 0".into()),
         ),
     ]);
 
@@ -35,10 +39,7 @@ fn test_full_flow_from_construction_to_search_result() {
     assert_eq!(item.id, "notepad");
 
     let results = index.search("calc", 5);
-    assert_eq!(
-        results[0].subtitle.as_deref(),
-        Some("Store App: Microsoft.WindowsCalculator")
-    );
+    assert_eq!(results[0].subtitle.as_deref(), None);
 
     let results = index.search("display", 5);
     assert_eq!(
@@ -47,10 +48,7 @@ fn test_full_flow_from_construction_to_search_result() {
     );
 
     let results = index.search("shutdown", 5);
-    assert_eq!(
-        results[0].subtitle.as_deref(),
-        Some("System: shutdown /s /t 0")
-    );
+    assert_eq!(results[0].subtitle.as_deref(), None);
 }
 
 #[test]

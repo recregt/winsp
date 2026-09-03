@@ -1,4 +1,4 @@
-use winsp_core::models::{AppItem, AppTarget};
+use winsp_core::models::{AppItem, LaunchTarget};
 
 use super::apps::resolve_system_exe;
 
@@ -8,7 +8,7 @@ pub fn list_settings() -> Vec<AppItem> {
         AppItem::new(
             "win-settings",
             "Settings",
-            AppTarget::Uri("ms-settings:".into()),
+            LaunchTarget::OsUri("ms-settings:".into()),
         )
         .with_description("Windows System Settings")
         .with_icon_glyph('\u{E713}')
@@ -20,7 +20,7 @@ pub fn list_settings() -> Vec<AppItem> {
         AppItem::new(
             "win-display",
             "Display Settings",
-            AppTarget::Uri("ms-settings:display".into()),
+            LaunchTarget::OsUri("ms-settings:display".into()),
         )
         .with_description("Resolution, scaling, brightness, multiple displays")
         .with_icon_glyph('\u{E7F4}')
@@ -33,7 +33,7 @@ pub fn list_settings() -> Vec<AppItem> {
         AppItem::new(
             "win-sound",
             "Sound Settings",
-            AppTarget::Uri("ms-settings:sound".into()),
+            LaunchTarget::OsUri("ms-settings:sound".into()),
         )
         .with_description("Audio output, microphone, volume mixer")
         .with_icon_glyph('\u{E7F5}')
@@ -46,7 +46,7 @@ pub fn list_settings() -> Vec<AppItem> {
         AppItem::new(
             "win-bluetooth",
             "Bluetooth & Devices",
-            AppTarget::Uri("ms-settings:bluetooth".into()),
+            LaunchTarget::OsUri("ms-settings:bluetooth".into()),
         )
         .with_description("Pair devices, mouse, keyboard, printers")
         .with_icon_glyph('\u{E702}')
@@ -54,7 +54,7 @@ pub fn list_settings() -> Vec<AppItem> {
         AppItem::new(
             "win-network",
             "Network & Internet",
-            AppTarget::Uri("ms-settings:network".into()),
+            LaunchTarget::OsUri("ms-settings:network".into()),
         )
         .with_description("Wi-Fi, Ethernet, VPN, Proxy")
         .with_icon_glyph('\u{E968}')
@@ -67,7 +67,7 @@ pub fn list_settings() -> Vec<AppItem> {
         AppItem::new(
             "win-apps",
             "Installed Apps",
-            AppTarget::Uri("ms-settings:appsfeatures".into()),
+            LaunchTarget::OsUri("ms-settings:appsfeatures".into()),
         )
         .with_description("Uninstall and manage installed software")
         .with_icon_glyph('\u{ED35}')
@@ -75,7 +75,7 @@ pub fn list_settings() -> Vec<AppItem> {
         AppItem::new(
             "win-update",
             "Windows Update",
-            AppTarget::Uri("ms-settings:windowsupdate".into()),
+            LaunchTarget::OsUri("ms-settings:windowsupdate".into()),
         )
         .with_description("Check for system updates and patches")
         .with_icon_glyph('\u{E777}')
@@ -83,7 +83,7 @@ pub fn list_settings() -> Vec<AppItem> {
         AppItem::new(
             "win-power",
             "Power & Sleep",
-            AppTarget::Uri("ms-settings:powersleep".into()),
+            LaunchTarget::OsUri("ms-settings:powersleep".into()),
         )
         .with_description("Battery, sleep timeout, power mode")
         .with_icon_glyph('\u{E7E8}')
@@ -91,7 +91,7 @@ pub fn list_settings() -> Vec<AppItem> {
         AppItem::new(
             "win-personalization",
             "Personalization",
-            AppTarget::Uri("ms-settings:personalization".into()),
+            LaunchTarget::OsUri("ms-settings:personalization".into()),
         )
         .with_description("Wallpaper, themes, colors, lock screen")
         .with_icon_glyph('\u{E771}')
@@ -105,7 +105,7 @@ pub fn list_settings() -> Vec<AppItem> {
             let mut item = AppItem::new(
                 "win-taskmanager",
                 "Task Manager",
-                AppTarget::Path("taskmgr.exe".into()),
+                LaunchTarget::Path("taskmgr.exe".into()),
             );
             if let Some(icon) = resolve_system_exe("taskmgr.exe") {
                 item = item.with_icon(icon);
@@ -130,7 +130,7 @@ mod tests {
     #[test]
     fn every_setting_uri_entry_carries_a_glyph_icon() {
         for item in list_settings() {
-            if matches!(item.target, AppTarget::Uri(_)) {
+            if matches!(item.target, LaunchTarget::OsUri(_)) {
                 assert!(
                     matches!(item.icon, Some(IconSource::Glyph(_))),
                     "{} has no glyph icon",
