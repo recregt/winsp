@@ -2,7 +2,7 @@ use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 use walkdir::WalkDir;
-use winsp_core::models::{AppItem, AppTarget};
+use winsp_core::models::{AppItem, LaunchTarget};
 
 use super::resolve_shortcut_target;
 use super::start_menu::start_menu_dirs;
@@ -149,7 +149,7 @@ fn insert_if_shortcut(
 
     let identity = resolved.unwrap_or_else(|| path.to_string_lossy().into_owned());
     let id = format!("shortcut:{identity}");
-    let item = AppItem::new(id, stem, AppTarget::Path(path.to_string_lossy().into()))
+    let item = AppItem::new(id, stem, LaunchTarget::Path(path.to_string_lossy().into()))
         .with_description(path.to_string_lossy().to_string())
         .with_icon(path.to_string_lossy());
 
@@ -462,7 +462,7 @@ mod tests {
         assert_eq!(items.len(), 1);
         assert_eq!(
             items[0].target,
-            AppTarget::Path(per_user.path().join("App.url").to_string_lossy().into())
+            LaunchTarget::Path(per_user.path().join("App.url").to_string_lossy().into())
         );
     }
 

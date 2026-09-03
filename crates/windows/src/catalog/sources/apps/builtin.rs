@@ -1,71 +1,71 @@
-use winsp_core::models::{AppItem, AppTarget};
+use winsp_core::models::{AppItem, LaunchTarget};
 
 pub(super) fn built_in_tools() -> Vec<AppItem> {
     vec![
         AppItem::new(
             "builtin:calc.exe",
             "Calculator",
-            AppTarget::Path("calc.exe".into()),
+            LaunchTarget::Path("calc.exe".into()),
         )
         .with_description("Microsoft Calculator"),
         AppItem::new(
             "builtin:notepad.exe",
             "Notepad",
-            AppTarget::Path("notepad.exe".into()),
+            LaunchTarget::Path("notepad.exe".into()),
         )
         .with_description("Fast text editor"),
         AppItem::new(
             "builtin:wt.exe",
             "Windows Terminal",
-            AppTarget::Path("wt.exe".into()),
+            LaunchTarget::Path("wt.exe".into()),
         )
         .with_description("Modern terminal console"),
         AppItem::new(
             "builtin:cmd.exe",
             "Command Prompt",
-            AppTarget::Path("cmd.exe".into()),
+            LaunchTarget::Path("cmd.exe".into()),
         )
         .with_description("Windows command interpreter"),
         AppItem::new(
             "builtin:powershell.exe",
             "PowerShell",
-            AppTarget::Path("powershell.exe".into()),
+            LaunchTarget::Path("powershell.exe".into()),
         )
         .with_description("PowerShell scripting environment"),
         AppItem::new(
             "builtin:mspaint.exe",
             "Paint",
-            AppTarget::Path("mspaint.exe".into()),
+            LaunchTarget::Path("mspaint.exe".into()),
         )
         .with_description("Bitmap image editor"),
         AppItem::new(
             "builtin:snippingtool.exe",
             "Snipping Tool",
-            AppTarget::Path("snippingtool.exe".into()),
+            LaunchTarget::Path("snippingtool.exe".into()),
         )
         .with_description("Screen capture tool"),
         AppItem::new(
             "builtin:regedit.exe",
             "Registry Editor",
-            AppTarget::Path("regedit.exe".into()),
+            LaunchTarget::Path("regedit.exe".into()),
         )
         .with_description("Windows registry management"),
         AppItem::new(
             "builtin:control.exe",
             "Control Panel",
-            AppTarget::Path("control.exe".into()),
+            LaunchTarget::Path("control.exe".into()),
         )
         .with_description("Legacy system control panel"),
         AppItem::new(
             "builtin:explorer.exe",
             "File Explorer",
-            AppTarget::Path("explorer.exe".into()),
+            LaunchTarget::Path("explorer.exe".into()),
         )
         .with_description("File management"),
     ]
     .into_iter()
     .map(|item| match &item.target {
-        AppTarget::Path(exe) => match resolve_system_exe(exe) {
+        LaunchTarget::Path(exe) => match resolve_system_exe(exe) {
             Some(icon) => item.with_icon(icon),
             None => item,
         },
@@ -103,7 +103,7 @@ mod tests {
     #[test]
     fn every_resolved_builtin_tool_carries_a_path_icon_matching_its_target() {
         for item in built_in_tools() {
-            let AppTarget::Path(exe) = &item.target else {
+            let LaunchTarget::Path(exe) = &item.target else {
                 continue;
             };
             if let Some(resolved) = resolve_system_exe(exe) {

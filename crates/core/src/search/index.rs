@@ -138,37 +138,41 @@ fn match_keywords(keywords: &[String], query_lower: &str) -> Option<i32> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::models::AppTarget;
+    use crate::models::LaunchTarget;
 
     fn sample_index() -> Engine {
         let mut index = Engine::new();
         index.set_items(vec![
-            AppItem::new("notepad", "Notepad", AppTarget::Path("notepad.exe".into())),
+            AppItem::new(
+                "notepad",
+                "Notepad",
+                LaunchTarget::Path("notepad.exe".into()),
+            ),
             AppItem::new(
                 "vscode",
                 "Visual Studio Code",
-                AppTarget::Path("code.exe".into()),
+                LaunchTarget::Path("code.exe".into()),
             ),
             AppItem::new(
                 "calc",
                 "Calculator",
-                AppTarget::Aumid("Microsoft.WindowsCalculator".into()),
+                LaunchTarget::OsUri("shell:AppsFolder\\Microsoft.WindowsCalculator".into()),
             ),
             AppItem::new(
                 "terminal",
                 "Windows Terminal",
-                AppTarget::Path("wt.exe".into()),
+                LaunchTarget::Path("wt.exe".into()),
             ),
             AppItem::new(
                 "chrome",
                 "Google Chrome",
-                AppTarget::Path("chrome.exe".into()),
+                LaunchTarget::Path("chrome.exe".into()),
             )
             .with_keywords(vec!["browser".into(), "web".into(), "internet".into()]),
             AppItem::new(
                 "settings",
                 "Windows Settings",
-                AppTarget::Uri("ms-settings:".into()),
+                LaunchTarget::OsUri("ms-settings:".into()),
             ),
         ]);
         index
@@ -211,7 +215,7 @@ mod tests {
             AppItem::new(
                 "scattered",
                 "T z z z z e z z z z r z z z z m z z z z z z z z",
-                AppTarget::Path("term.exe".into()),
+                LaunchTarget::Path("term.exe".into()),
             )
             .with_keywords(vec!["term".into()]),
         ]);
@@ -234,21 +238,21 @@ mod tests {
     fn test_no_match_is_excluded_even_with_partial_letters() {
         let mut index = Engine::new();
         index.set_items(vec![
-            AppItem::new("chrome", "Chrome", AppTarget::Path("chrome.exe".into())),
+            AppItem::new("chrome", "Chrome", LaunchTarget::Path("chrome.exe".into())),
             AppItem::new(
                 "google-chrome",
                 "Google Chrome",
-                AppTarget::Path("chrome.exe".into()),
+                LaunchTarget::Path("chrome.exe".into()),
             ),
             AppItem::new(
                 "chromium",
                 "Chromium",
-                AppTarget::Path("chromium.exe".into()),
+                LaunchTarget::Path("chromium.exe".into()),
             ),
             AppItem::new(
                 "chrome-devtools",
                 "Chrome DevTools",
-                AppTarget::Path("chrome.exe".into()),
+                LaunchTarget::Path("chrome.exe".into()),
             ),
         ]);
 
@@ -263,11 +267,11 @@ mod tests {
     fn test_prefix_outranks_acronym() {
         let mut index = Engine::new();
         index.set_items(vec![
-            AppItem::new("vscode", "VS Code", AppTarget::Path("code.exe".into())),
+            AppItem::new("vscode", "VS Code", LaunchTarget::Path("code.exe".into())),
             AppItem::new(
                 "vstudio",
                 "Visual Studio",
-                AppTarget::Path("devenv.exe".into()),
+                LaunchTarget::Path("devenv.exe".into()),
             ),
         ]);
 
@@ -282,9 +286,9 @@ mod tests {
             AppItem::new(
                 "open-office-go",
                 "Open Office Go",
-                AppTarget::Path("oog.exe".into()),
+                LaunchTarget::Path("oog.exe".into()),
             ),
-            AppItem::new("google", "Google", AppTarget::Path("chrome.exe".into())),
+            AppItem::new("google", "Google", LaunchTarget::Path("chrome.exe".into())),
         ]);
 
         let results = index.find("oog", 5);
@@ -295,11 +299,15 @@ mod tests {
     fn test_word_start_bonus_can_outrank_a_midword_substring() {
         let mut index = Engine::new();
         index.set_items(vec![
-            AppItem::new("notepad", "Notepad", AppTarget::Path("notepad.exe".into())),
+            AppItem::new(
+                "notepad",
+                "Notepad",
+                LaunchTarget::Path("notepad.exe".into()),
+            ),
             AppItem::new(
                 "paint-design",
                 "Paint Design",
-                AppTarget::Path("paint.exe".into()),
+                LaunchTarget::Path("paint.exe".into()),
             ),
         ]);
 
@@ -314,12 +322,12 @@ mod tests {
             AppItem::new(
                 "rand-setup",
                 "Random Windows Setup",
-                AppTarget::Path("setup.exe".into()),
+                LaunchTarget::Path("setup.exe".into()),
             ),
             AppItem::new(
                 "chrome",
                 "Google Chrome",
-                AppTarget::Path("chrome.exe".into()),
+                LaunchTarget::Path("chrome.exe".into()),
             )
             .with_keywords(vec!["browser".into()]),
         ]);
@@ -335,9 +343,9 @@ mod tests {
     fn test_frecency_breaks_ties_between_identical_names() {
         use crate::models::SearchResultKind;
 
-        let mut popular = AppItem::new("a", "Test App", AppTarget::Path("a.exe".into()));
+        let mut popular = AppItem::new("a", "Test App", LaunchTarget::Path("a.exe".into()));
         popular.launch_count = 10;
-        let rare = AppItem::new("b", "Test App", AppTarget::Path("b.exe".into()));
+        let rare = AppItem::new("b", "Test App", LaunchTarget::Path("b.exe".into()));
 
         let mut index = Engine::new();
         index.set_items(vec![rare, popular]);
@@ -352,10 +360,10 @@ mod tests {
 
     #[test]
     fn test_frecency_applies_to_keyword_matches_too() {
-        let mut popular = AppItem::new("a", "Aardvark Tool", AppTarget::Path("a.exe".into()))
+        let mut popular = AppItem::new("a", "Aardvark Tool", LaunchTarget::Path("a.exe".into()))
             .with_keywords(vec!["zzzmatch".into()]);
         popular.launch_count = 10;
-        let rare = AppItem::new("b", "Yak Tool", AppTarget::Path("b.exe".into()))
+        let rare = AppItem::new("b", "Yak Tool", LaunchTarget::Path("b.exe".into()))
             .with_keywords(vec!["zzzmatch".into()]);
 
         let mut index = Engine::new();
@@ -373,7 +381,7 @@ mod tests {
             AppItem::new(
                 "chrome",
                 "Google Chrome",
-                AppTarget::Path("chrome.exe".into()),
+                LaunchTarget::Path("chrome.exe".into()),
             )
             .with_keywords(vec!["BROWSER".into()]),
         ]);
@@ -387,11 +395,11 @@ mod tests {
     fn test_unicode_names_match_case_insensitively_with_correct_indices() {
         let mut index = Engine::new();
         index.set_items(vec![
-            AppItem::new("cafe", "Café", AppTarget::Path("cafe.exe".into())),
+            AppItem::new("cafe", "Café", LaunchTarget::Path("cafe.exe".into())),
             AppItem::new(
                 "nihongo",
                 "日本語アプリ",
-                AppTarget::Path("nihongo.exe".into()),
+                LaunchTarget::Path("nihongo.exe".into()),
             ),
         ]);
 
@@ -414,7 +422,7 @@ mod tests {
 
     #[test]
     fn test_extreme_launch_count_does_not_panic_or_go_negative() {
-        let mut item = AppItem::new("bulk", "Bulk App", AppTarget::Path("bulk.exe".into()));
+        let mut item = AppItem::new("bulk", "Bulk App", LaunchTarget::Path("bulk.exe".into()));
         item.launch_count = u32::MAX;
         let mut index = Engine::new();
         index.add_item(item);
@@ -434,7 +442,7 @@ mod tests {
         index.set_items(vec![AppItem::new(
             "istanbul",
             "İstanbul Maps",
-            AppTarget::Path("istanbul.exe".into()),
+            LaunchTarget::Path("istanbul.exe".into()),
         )]);
 
         let results = index.find("İ", 5);

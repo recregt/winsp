@@ -1,6 +1,6 @@
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use std::hint::black_box;
-use winsp_core::models::{AppItem, AppTarget};
+use winsp_core::models::{AppItem, LaunchTarget};
 use winsp_core::search::Engine;
 
 const WORDS: &[&str] = &[
@@ -20,7 +20,7 @@ fn synthetic_items(size: usize) -> Vec<AppItem> {
             AppItem::new(
                 format!("bench-app-{i}"),
                 name,
-                AppTarget::Path(format!("app{i}.exe")),
+                LaunchTarget::Path(format!("app{i}.exe")),
             )
             .with_keywords(vec!["tool".into(), "Utility".into()])
         })

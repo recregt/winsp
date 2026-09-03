@@ -114,9 +114,7 @@ pub(super) fn handle_event(window: &Window, event: WindowEvent) {
                             }
                             ExecuteOutcome::Launch(target) => {
                                 std::thread::spawn(move || {
-                                    if let Err(error) =
-                                        winsp_windows::catalog::launcher::run(&target)
-                                    {
+                                    if let Err(error) = winsp_windows::shell::run(&target) {
                                         winsp_windows::system::toast::show("WinSP", &error);
                                     }
                                 });

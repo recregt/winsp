@@ -1,11 +1,11 @@
 use std::sync::Arc;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum AppTarget {
+pub enum LaunchTarget {
     Path(String),
-    Aumid(String),
-    Uri(String),
-    SystemCommand(String),
+    WebUrl(String),
+    OsUri(String),
+    Command(String),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -19,7 +19,7 @@ pub struct AppItem {
     pub id: String,
     pub name: Arc<str>,
     pub description: Option<Arc<str>>,
-    pub target: AppTarget,
+    pub target: LaunchTarget,
     pub icon: Option<IconSource>,
     pub keywords: Vec<String>,
     pub launch_count: u32,
@@ -27,7 +27,7 @@ pub struct AppItem {
 }
 
 impl AppItem {
-    pub fn new(id: impl Into<String>, name: impl Into<Arc<str>>, target: AppTarget) -> Self {
+    pub fn new(id: impl Into<String>, name: impl Into<Arc<str>>, target: LaunchTarget) -> Self {
         Self {
             id: id.into(),
             name: name.into(),
@@ -90,10 +90,8 @@ pub struct SearchResult {
 impl SearchResult {
     pub fn from_app(item: Arc<AppItem>, score: i32, matched_indices: Vec<usize>) -> Self {
         let subtitle = item.description.clone().or_else(|| match &item.target {
-            AppTarget::Path(p) => Some(p.clone().into()),
-            AppTarget::Aumid(a) => Some(format!("Store App: {a}").into()),
-            AppTarget::Uri(u) => Some(format!("Settings: {u}").into()),
-            AppTarget::SystemCommand(c) => Some(format!("System: {c}").into()),
+            LaunchTarget::Path(p) => Some(p.clone().into()),
+            _ => None,
         });
 
         Self {

@@ -1,11 +1,11 @@
-use winsp_core::models::AppTarget;
+use winsp_core::models::LaunchTarget;
 
-pub fn run(target: &AppTarget) -> Result<(), String> {
+pub fn run(target: &LaunchTarget) -> Result<(), String> {
     match target {
-        AppTarget::Path(path) => launch_path(path),
-        AppTarget::Aumid(aumid) => launch_aumid(aumid),
-        AppTarget::Uri(uri) => launch_uri(uri),
-        AppTarget::SystemCommand(cmd) => launch_command(cmd),
+        LaunchTarget::Path(path) => launch_path(path),
+        LaunchTarget::WebUrl(url) => launch_uri(url),
+        LaunchTarget::OsUri(uri) => launch_uri(uri),
+        LaunchTarget::Command(cmd) => launch_command(cmd),
     }
 }
 
@@ -71,14 +71,6 @@ fn launch_via_explorer(param: &str) -> bool {
     };
 
     instance.0 as usize > 32
-}
-
-fn launch_aumid(aumid: &str) -> Result<(), String> {
-    if launch_via_explorer(&format!("shell:AppsFolder\\{aumid}")) {
-        Ok(())
-    } else {
-        Err(format!("Failed to launch UWP app: {aumid}"))
-    }
 }
 
 fn launch_uri(uri: &str) -> Result<(), String> {

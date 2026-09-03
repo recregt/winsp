@@ -1,6 +1,6 @@
 #![cfg(windows)]
 
-use winsp_core::models::{AppTarget, SearchResult, SearchResultKind};
+use winsp_core::models::{LaunchTarget, SearchResult, SearchResultKind};
 use winsp_core::search::Engine;
 
 #[derive(Debug)]
@@ -14,7 +14,7 @@ pub struct AppState {
 
 pub(crate) enum ExecuteOutcome {
     Copy(String),
-    Launch(AppTarget),
+    Launch(LaunchTarget),
     None,
 }
 
@@ -74,10 +74,10 @@ impl AppState {
             SearchResultKind::App(item) => ExecuteOutcome::Launch(item.target.clone()),
             SearchResultKind::Calculation { result, .. } => ExecuteOutcome::Copy(result.clone()),
             SearchResultKind::WebSearch { url, .. } => {
-                ExecuteOutcome::Launch(AppTarget::Uri(url.clone()))
+                ExecuteOutcome::Launch(LaunchTarget::WebUrl(url.clone()))
             }
             SearchResultKind::SystemCommand { command, .. } => {
-                ExecuteOutcome::Launch(AppTarget::SystemCommand(command.clone()))
+                ExecuteOutcome::Launch(LaunchTarget::Command(command.clone()))
             }
         }
     }
