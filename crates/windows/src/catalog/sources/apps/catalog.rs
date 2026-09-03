@@ -108,7 +108,11 @@ impl StartMenuCatalog {
     }
 }
 
-type DirIdentity = (u64, [u8; 16]);
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+enum DirIdentity {
+    Wide { volume: u64, file_id: [u8; 16] },
+    Narrow { volume: u32, file_index: u64 },
+}
 
 fn collect_shortcuts(
     dir: &Path,
@@ -158,14 +162,10 @@ fn is_reparse_point(metadata: &std::fs::Metadata) -> bool {
 }
 
 fn directory_identity(dir: &Path) -> Option<DirIdentity> {
-    use std::mem::MaybeUninit;
     use std::os::windows::fs::OpenOptionsExt;
     use std::os::windows::io::{AsHandle, AsRawHandle};
     use windows::Win32::Foundation::HANDLE;
-    use windows::Win32::Storage::FileSystem::{
-        FILE_FLAG_BACKUP_SEMANTICS, FILE_ID_INFO, FILE_READ_ATTRIBUTES, FileIdInfo,
-        GetFileInformationByHandleEx,
-    };
+    use windows::Win32::Storage::FileSystem::{FILE_FLAG_BACKUP_SEMANTICS, FILE_READ_ATTRIBUTES};
 
     let file = match std::fs::OpenOptions::new()
         .access_mode(FILE_READ_ATTRIBUTES.0)
@@ -178,23 +178,60 @@ fn directory_identity(dir: &Path) -> Option<DirIdentity> {
             return None;
         }
     };
+    let handle = HANDLE(file.as_handle().as_raw_handle());
+
+    if let Some(id) = wide_file_id(handle) {
+        return Some(id);
+    }
+
+    match narrow_file_id(handle) {
+        Some(id) => Some(id),
+        None => {
+            eprintln!("failed to determine identity of {}", dir.display());
+            None
+        }
+    }
+}
+
+fn wide_file_id(handle: windows::Win32::Foundation::HANDLE) -> Option<DirIdentity> {
+    use std::mem::MaybeUninit;
+    use windows::Win32::Storage::FileSystem::{
+        FILE_ID_INFO, FileIdInfo, GetFileInformationByHandleEx,
+    };
 
     let mut info = MaybeUninit::<FILE_ID_INFO>::uninit();
-    let handle = HANDLE(file.as_handle().as_raw_handle());
-    if let Err(e) = unsafe {
+    unsafe {
         GetFileInformationByHandleEx(
             handle,
             FileIdInfo,
             info.as_mut_ptr().cast(),
             size_of::<FILE_ID_INFO>() as u32,
         )
-    } {
-        eprintln!("failed to determine identity of {}: {e}", dir.display());
-        return None;
     }
+    .ok()?;
     let info = unsafe { info.assume_init() };
 
-    Some((info.VolumeSerialNumber, info.FileId.Identifier))
+    Some(DirIdentity::Wide {
+        volume: info.VolumeSerialNumber,
+        file_id: info.FileId.Identifier,
+    })
+}
+
+fn narrow_file_id(handle: windows::Win32::Foundation::HANDLE) -> Option<DirIdentity> {
+    use std::mem::MaybeUninit;
+    use windows::Win32::Storage::FileSystem::{
+        BY_HANDLE_FILE_INFORMATION, GetFileInformationByHandle,
+    };
+
+    let mut info = MaybeUninit::<BY_HANDLE_FILE_INFORMATION>::uninit();
+    unsafe { GetFileInformationByHandle(handle, info.as_mut_ptr()) }.ok()?;
+    let info = unsafe { info.assume_init() };
+
+    let file_index = ((info.nFileIndexHigh as u64) << 32) | info.nFileIndexLow as u64;
+    Some(DirIdentity::Narrow {
+        volume: info.dwVolumeSerialNumber,
+        file_index,
+    })
 }
 
 fn insert_if_shortcut(
