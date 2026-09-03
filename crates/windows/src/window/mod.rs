@@ -5,15 +5,16 @@ mod tray;
 
 use std::sync::OnceLock;
 
-use windows::Win32::Foundation::{HINSTANCE, HWND, LPARAM, LRESULT, RECT, WPARAM};
+use windows::Win32::Foundation::{HINSTANCE, HWND, LPARAM, LRESULT, POINT, RECT, WPARAM};
 use windows::Win32::Graphics::Dwm::{
     DWMSBT_TRANSIENTWINDOW, DWMWA_SYSTEMBACKDROP_TYPE, DWMWA_USE_IMMERSIVE_DARK_MODE,
     DWMWA_WINDOW_CORNER_PREFERENCE, DWMWCP_ROUND, DwmSetWindowAttribute,
 };
 use windows::Win32::Graphics::Gdi::{
     BeginPaint, BitBlt, CreateCompatibleBitmap, CreateCompatibleDC, DeleteDC, DeleteObject,
-    EndPaint, GetStockObject, InvalidateRect, PAINTSTRUCT, SRCCOPY, SelectObject, SetBkMode,
-    TRANSPARENT, WHITE_BRUSH,
+    EndPaint, GetMonitorInfoW, GetStockObject, InvalidateRect, MONITOR_DEFAULTTONEAREST,
+    MONITORINFO, MonitorFromPoint, PAINTSTRUCT, SRCCOPY, SelectObject, SetBkMode, TRANSPARENT,
+    WHITE_BRUSH,
 };
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::HiDpi::{
@@ -22,14 +23,14 @@ use windows::Win32::UI::HiDpi::{
 use windows::Win32::UI::Input::KeyboardAndMouse::{MOD_NOREPEAT, RegisterHotKey, UnregisterHotKey};
 use windows::Win32::UI::WindowsAndMessaging::{
     CREATESTRUCTW, CS_HREDRAW, CS_VREDRAW, CreateWindowExW, DefWindowProcW, DestroyWindow,
-    DispatchMessageW, GWLP_USERDATA, GetClientRect, GetMessageW, GetSystemMetrics,
+    DispatchMessageW, GWLP_USERDATA, GetClientRect, GetCursorPos, GetMessageW, GetSystemMetrics,
     GetWindowLongPtrW, GetWindowRect, HCURSOR, HICON, HWND_TOPMOST, IDC_ARROW, IsWindowVisible,
     LoadCursorW, LoadIconW, MSG, PM_REMOVE, PeekMessageW, PostMessageW, PostQuitMessage,
-    RegisterClassExW, SM_CXSCREEN, SM_CYSCREEN, SW_HIDE, SW_SHOW, SWP_NOACTIVATE, SWP_NOMOVE,
-    SWP_NOSIZE, SetForegroundWindow, SetWindowLongPtrW, SetWindowPos, ShowWindow, TranslateMessage,
-    WM_APP, WM_CHAR, WM_COMMAND, WM_DESTROY, WM_ERASEBKGND, WM_HOTKEY, WM_KEYDOWN, WM_KILLFOCUS,
-    WM_NCCREATE, WM_PAINT, WM_RBUTTONUP, WM_SYSKEYDOWN, WNDCLASSEXW, WS_EX_TOOLWINDOW,
-    WS_EX_TOPMOST, WS_POPUP,
+    RegisterClassExW, SM_CXSCREEN, SM_CYSCREEN, SPI_GETWORKAREA, SW_HIDE, SW_SHOW, SWP_NOACTIVATE,
+    SWP_NOMOVE, SWP_NOSIZE, SetForegroundWindow, SetWindowLongPtrW, SetWindowPos, ShowWindow,
+    SystemParametersInfoW, TranslateMessage, WM_APP, WM_CHAR, WM_COMMAND, WM_DESTROY,
+    WM_ERASEBKGND, WM_HOTKEY, WM_KEYDOWN, WM_KILLFOCUS, WM_NCCREATE, WM_PAINT, WM_RBUTTONUP,
+    WM_SYSKEYDOWN, WNDCLASSEXW, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP,
 };
 use windows::core::{HSTRING, PCWSTR};
 
@@ -161,16 +162,56 @@ pub enum Anchor {
 
 impl Anchor {
     fn position_for(self, width: i32, height: i32) -> (i32, i32) {
-        unsafe {
-            let screen_width = GetSystemMetrics(SM_CXSCREEN);
-            let screen_height = GetSystemMetrics(SM_CYSCREEN);
+        self.position_within(active_monitor_rect(), width, height)
+    }
 
-            let x = (screen_width - width) / 2;
-            let y = match self {
-                Anchor::Top => screen_height / 4,
-                Anchor::Center => (screen_height - height) / 2,
+    fn position_within(self, monitor: RECT, width: i32, height: i32) -> (i32, i32) {
+        let monitor_width = monitor.right - monitor.left;
+        let monitor_height = monitor.bottom - monitor.top;
+
+        let x = monitor.left + (monitor_width - width) / 2;
+        let y = monitor.top
+            + match self {
+                Anchor::Top => monitor_height / 4,
+                Anchor::Center => (monitor_height - height) / 2,
             };
-            (x, y)
+        (x, y)
+    }
+}
+
+fn active_monitor_rect() -> RECT {
+    unsafe {
+        let mut cursor = POINT::default();
+        if GetCursorPos(&mut cursor).is_err() {
+            return primary_work_area();
+        }
+
+        let monitor = MonitorFromPoint(cursor, MONITOR_DEFAULTTONEAREST);
+        let mut info = MONITORINFO {
+            cbSize: std::mem::size_of::<MONITORINFO>() as u32,
+            ..Default::default()
+        };
+        if GetMonitorInfoW(monitor, &mut info).as_bool() {
+            info.rcWork
+        } else {
+            primary_work_area()
+        }
+    }
+}
+
+fn primary_work_area() -> RECT {
+    unsafe {
+        let mut rect = RECT::default();
+        let pvparam = Some(&mut rect as *mut RECT as *mut std::ffi::c_void);
+        if SystemParametersInfoW(SPI_GETWORKAREA, 0, pvparam, Default::default()).is_ok() {
+            rect
+        } else {
+            RECT {
+                left: 0,
+                top: 0,
+                right: GetSystemMetrics(SM_CXSCREEN),
+                bottom: GetSystemMetrics(SM_CYSCREEN),
+            }
         }
     }
 }
@@ -765,29 +806,69 @@ mod tests {
     }
 
     #[test]
-    fn position_for_top_horizontally_centers_and_anchors_near_the_top() {
-        let (x, y) = Anchor::Top.position_for(680, 64);
-        unsafe {
-            assert_eq!(x, (GetSystemMetrics(SM_CXSCREEN) - 680) / 2);
-            assert_eq!(y, GetSystemMetrics(SM_CYSCREEN) / 4);
-        }
+    fn position_within_top_horizontally_centers_and_anchors_near_the_top() {
+        let monitor = RECT {
+            left: 0,
+            top: 0,
+            right: 1920,
+            bottom: 1080,
+        };
+        let (x, y) = Anchor::Top.position_within(monitor, 680, 64);
+        assert_eq!(x, (1920 - 680) / 2);
+        assert_eq!(y, 1080 / 4);
     }
 
     #[test]
-    fn position_for_center_vertically_centers_using_the_given_height() {
-        let (x, y) = Anchor::Center.position_for(680, 400);
-        unsafe {
-            assert_eq!(x, (GetSystemMetrics(SM_CXSCREEN) - 680) / 2);
-            assert_eq!(y, (GetSystemMetrics(SM_CYSCREEN) - 400) / 2);
-        }
+    fn position_within_center_vertically_centers_using_the_given_height() {
+        let monitor = RECT {
+            left: 0,
+            top: 0,
+            right: 1920,
+            bottom: 1080,
+        };
+        let (x, y) = Anchor::Center.position_within(monitor, 680, 400);
+        assert_eq!(x, (1920 - 680) / 2);
+        assert_eq!(y, (1080 - 400) / 2);
     }
 
     #[test]
     fn top_and_center_agree_on_x_but_differ_on_y() {
-        let (top_x, top_y) = Anchor::Top.position_for(680, 64);
-        let (center_x, center_y) = Anchor::Center.position_for(680, 64);
+        let monitor = RECT {
+            left: 0,
+            top: 0,
+            right: 1920,
+            bottom: 1080,
+        };
+        let (top_x, top_y) = Anchor::Top.position_within(monitor, 680, 64);
+        let (center_x, center_y) = Anchor::Center.position_within(monitor, 680, 64);
         assert_eq!(top_x, center_x);
         assert_ne!(top_y, center_y);
+    }
+
+    #[test]
+    fn position_within_centers_on_a_monitor_to_the_right_of_the_primary() {
+        let monitor = RECT {
+            left: 1920,
+            top: 0,
+            right: 3840,
+            bottom: 1080,
+        };
+        let (x, y) = Anchor::Center.position_within(monitor, 680, 400);
+        assert_eq!(x, 1920 + (1920 - 680) / 2);
+        assert_eq!(y, (1080 - 400) / 2);
+    }
+
+    #[test]
+    fn position_within_handles_a_monitor_left_of_the_primary() {
+        let monitor = RECT {
+            left: -1920,
+            top: 0,
+            right: 0,
+            bottom: 1080,
+        };
+        let (x, y) = Anchor::Top.position_within(monitor, 680, 64);
+        assert_eq!(x, -1920 + (1920 - 680) / 2);
+        assert_eq!(y, 1080 / 4);
     }
 
     #[test]
