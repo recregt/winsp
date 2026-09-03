@@ -81,7 +81,7 @@
   <p>WinSP is a local application launcher. Everything it does happens entirely on your own computer:</p>
   <ul>
     <li>It reads the names and shortcut locations of installed Start Menu applications and Windows Settings pages to build a searchable index, held only in memory while the app runs.</li>
-    <li>If you enable &ldquo;Start with Windows&rdquo; from the tray menu, it writes a single value containing WinSP's own install path to the standard per-user Windows autostart registry key. Disabling the option removes it.</li>
+    <li>If you enable &ldquo;Start with Windows&rdquo; from the tray menu, it registers WinSP with the standard Store-managed startup mechanism (<code>Windows.ApplicationModel.StartupTask</code>), visible in Settings &gt; Apps &gt; Startup. Disabling the option unregisters it.</li>
     <li>It watches your Start Menu folders for changes so the search index can refresh automatically.</li>
   </ul>
 
@@ -94,7 +94,7 @@
   </ul>
 
   <h2>Permissions</h2>
-  <p>WinSP runs as a standard full-trust Win32 desktop application. This lets it use ordinary Windows APIs &mdash; a global keyboard shortcut, a system tray icon, and the autostart registry key described above &mdash; and does not grant it administrator rights or access beyond what any desktop app on Windows already has.</p>
+  <p>WinSP runs as a standard full-trust Win32 desktop application. This lets it use ordinary Windows APIs &mdash; a global keyboard shortcut, a system tray icon, and the startup mechanism described above &mdash; and does not grant it administrator rights or access beyond what any desktop app on Windows already has.</p>
 
   <h2>Children's privacy</h2>
   <p>WinSP does not knowingly collect information from anyone, including children, because it does not collect information from anyone at all.</p>
