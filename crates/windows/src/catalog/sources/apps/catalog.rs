@@ -108,12 +108,6 @@ fn collect_shortcuts(
     unreadable_dirs: &mut Vec<PathBuf>,
     visited: &mut HashSet<DirIdentity>,
 ) {
-    if let Some(id) = directory_identity(dir)
-        && !visited.insert(id)
-    {
-        return;
-    }
-
     match std::fs::read_dir(dir) {
         Ok(entries) => {
             for entry in entries.flatten() {
@@ -121,11 +115,19 @@ fn collect_shortcuts(
                     continue;
                 };
                 let path = entry.path();
-                if is_directory_entry(&metadata) {
-                    collect_shortcuts(&path, priority, shortcuts, unreadable_dirs, visited);
-                } else {
+                if !is_directory_entry(&metadata) {
                     insert_if_shortcut(&path, priority, shortcuts);
+                    continue;
                 }
+                if is_reparse_point(&metadata) {
+                    let Some(id) = directory_identity(&path) else {
+                        continue;
+                    };
+                    if !visited.insert(id) {
+                        continue;
+                    }
+                }
+                collect_shortcuts(&path, priority, shortcuts, unreadable_dirs, visited);
             }
         }
         Err(_) => unreadable_dirs.push(dir.to_path_buf()),
@@ -137,6 +139,13 @@ fn is_directory_entry(metadata: &std::fs::Metadata) -> bool {
     use windows::Win32::Storage::FileSystem::FILE_ATTRIBUTE_DIRECTORY;
 
     metadata.file_attributes() & FILE_ATTRIBUTE_DIRECTORY.0 != 0
+}
+
+fn is_reparse_point(metadata: &std::fs::Metadata) -> bool {
+    use std::os::windows::fs::MetadataExt;
+    use windows::Win32::Storage::FileSystem::FILE_ATTRIBUTE_REPARSE_POINT;
+
+    metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT.0 != 0
 }
 
 fn directory_identity(dir: &Path) -> Option<DirIdentity> {
