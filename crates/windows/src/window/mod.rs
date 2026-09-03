@@ -182,22 +182,30 @@ impl Anchor {
 fn active_monitor_rect() -> RECT {
     unsafe {
         let mut cursor = POINT::default();
-        let _ = GetCursorPos(&mut cursor);
-        let monitor = MonitorFromPoint(cursor, MONITOR_DEFAULTTONEAREST);
+        if GetCursorPos(&mut cursor).is_err() {
+            return primary_work_area();
+        }
 
+        let monitor = MonitorFromPoint(cursor, MONITOR_DEFAULTTONEAREST);
         let mut info = MONITORINFO {
             cbSize: std::mem::size_of::<MONITORINFO>() as u32,
             ..Default::default()
         };
         if GetMonitorInfoW(monitor, &mut info).as_bool() {
-            info.rcMonitor
+            info.rcWork
         } else {
-            RECT {
-                left: 0,
-                top: 0,
-                right: GetSystemMetrics(SM_CXSCREEN),
-                bottom: GetSystemMetrics(SM_CYSCREEN),
-            }
+            primary_work_area()
+        }
+    }
+}
+
+fn primary_work_area() -> RECT {
+    unsafe {
+        RECT {
+            left: 0,
+            top: 0,
+            right: GetSystemMetrics(SM_CXSCREEN),
+            bottom: GetSystemMetrics(SM_CYSCREEN),
         }
     }
 }
@@ -793,20 +801,18 @@ mod tests {
 
     #[test]
     fn position_for_top_horizontally_centers_and_anchors_near_the_top() {
+        let monitor = active_monitor_rect();
         let (x, y) = Anchor::Top.position_for(680, 64);
-        unsafe {
-            assert_eq!(x, (GetSystemMetrics(SM_CXSCREEN) - 680) / 2);
-            assert_eq!(y, GetSystemMetrics(SM_CYSCREEN) / 4);
-        }
+        assert_eq!(x, monitor.left + (monitor.right - monitor.left - 680) / 2);
+        assert_eq!(y, monitor.top + (monitor.bottom - monitor.top) / 4);
     }
 
     #[test]
     fn position_for_center_vertically_centers_using_the_given_height() {
+        let monitor = active_monitor_rect();
         let (x, y) = Anchor::Center.position_for(680, 400);
-        unsafe {
-            assert_eq!(x, (GetSystemMetrics(SM_CXSCREEN) - 680) / 2);
-            assert_eq!(y, (GetSystemMetrics(SM_CYSCREEN) - 400) / 2);
-        }
+        assert_eq!(x, monitor.left + (monitor.right - monitor.left - 680) / 2);
+        assert_eq!(y, monitor.top + (monitor.bottom - monitor.top - 400) / 2);
     }
 
     #[test]
