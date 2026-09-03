@@ -11,6 +11,11 @@ use super::Anchor;
 
 pub(super) const WM_TRAYICON: u32 = WM_APP + 1;
 
+pub(super) fn taskbar_created_message() -> u32 {
+    static MSG_ID: std::sync::OnceLock<u32> = std::sync::OnceLock::new();
+    *MSG_ID.get_or_init(|| unsafe { RegisterWindowMessageW(w!("TaskbarCreated")) })
+}
+
 #[repr(usize)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, TryFromPrimitive)]
 pub enum TrayCommand {
