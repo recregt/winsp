@@ -143,6 +143,10 @@ unsafe extern "system" fn dispatch(
             unsafe { PostQuitMessage(0) };
             LRESULT(0)
         }
+        _ if msg == tray::taskbar_created_message() => {
+            handler(&window, Message::TaskbarRestarted);
+            LRESULT(0)
+        }
         _ => unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) },
     }));
 
@@ -535,6 +539,43 @@ mod tests {
             )
         };
         assert_eq!(result, LRESULT(1));
+    }
+
+    static TASKBAR_RESTARTED_CALLED: std::sync::atomic::AtomicBool =
+        std::sync::atomic::AtomicBool::new(false);
+
+    fn taskbar_restart_test_handler(_window: &Window, message: Message) {
+        if matches!(message, Message::TaskbarRestarted) {
+            TASKBAR_RESTARTED_CALLED.store(true, std::sync::atomic::Ordering::SeqCst);
+        }
+    }
+
+    #[test]
+    fn taskbar_created_message_re_adds_the_tray_icon() {
+        TASKBAR_RESTARTED_CALLED.store(false, std::sync::atomic::Ordering::SeqCst);
+
+        let class_name = HSTRING::from("WinSpTest_TaskbarRestartWindow");
+        let hwnd = create_test_window(&class_name);
+        assert!(!hwnd.is_invalid(), "test window creation should succeed");
+
+        unsafe {
+            SetWindowLongPtrW(
+                hwnd,
+                GWLP_USERDATA,
+                taskbar_restart_test_handler as *const () as isize,
+            )
+        };
+
+        let _ = unsafe { dispatch(hwnd, tray::taskbar_created_message(), WPARAM(0), LPARAM(0)) };
+        assert!(
+            TASKBAR_RESTARTED_CALLED.load(std::sync::atomic::Ordering::SeqCst),
+            "the handler must receive TaskbarRestarted when Explorer's taskbar-created message arrives"
+        );
+
+        unsafe {
+            let _ = DestroyWindow(hwnd);
+            let _ = UnregisterClassW(&class_name, Some(GetModuleHandleW(None).unwrap().into()));
+        }
     }
 
     static SURVIVED_HANDLER_CALLED: std::sync::atomic::AtomicBool =

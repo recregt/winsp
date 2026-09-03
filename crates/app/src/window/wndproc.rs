@@ -15,6 +15,9 @@ pub(super) fn handle_message(window: &Window, message: Message) {
         Message::Hotkey => toggle_visibility(window),
         Message::ShowRequest => show_fresh(window),
         Message::CatalogReady => apply_catalog_ready(window),
+        Message::TaskbarRestarted => {
+            window.add_tray_icon();
+        }
         Message::TrayRightClick => window.show_tray_menu(current_anchor()),
         Message::Command(cmd) => match cmd {
             TrayCommand::Toggle => toggle_visibility(window),

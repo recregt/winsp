@@ -129,6 +129,7 @@ pub enum Message {
     KeyDown(Key, Modifiers),
     ShowRequest,
     CatalogReady,
+    TaskbarRestarted,
     Paint,
 }
 
