@@ -250,8 +250,9 @@ impl Window {
         unsafe {
             let mut msg = std::mem::MaybeUninit::<MSG>::uninit();
             while GetMessageW(msg.as_mut_ptr(), None, 0, 0).0 > 0 {
-                let _ = TranslateMessage(msg.as_ptr());
-                DispatchMessageW(msg.as_ptr());
+                let msg = msg.assume_init_ref();
+                let _ = TranslateMessage(msg);
+                DispatchMessageW(msg);
             }
         }
 
@@ -306,6 +307,9 @@ impl Window {
         unsafe {
             let mut ps = std::mem::MaybeUninit::<PAINTSTRUCT>::uninit();
             let hdc = BeginPaint(self.hwnd, ps.as_mut_ptr());
+            if hdc.is_invalid() {
+                return;
+            }
 
             let mut client_rect = std::mem::MaybeUninit::<RECT>::uninit();
             let client_rect = if GetClientRect(self.hwnd, client_rect.as_mut_ptr()).is_ok() {
