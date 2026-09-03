@@ -21,13 +21,15 @@ use windows::Win32::UI::HiDpi::{
 };
 use windows::Win32::UI::Input::KeyboardAndMouse::{MOD_NOREPEAT, RegisterHotKey, UnregisterHotKey};
 use windows::Win32::UI::WindowsAndMessaging::{
-    CS_HREDRAW, CS_VREDRAW, CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW,
-    GetClientRect, GetMessageW, GetSystemMetrics, GetWindowRect, HCURSOR, HICON, HWND_TOPMOST,
-    IDC_ARROW, IsWindowVisible, LoadCursorW, LoadIconW, MSG, PM_REMOVE, PeekMessageW, PostMessageW,
-    PostQuitMessage, RegisterClassExW, SM_CXSCREEN, SM_CYSCREEN, SW_HIDE, SW_SHOW, SWP_NOACTIVATE,
-    SWP_NOMOVE, SWP_NOSIZE, SetForegroundWindow, SetWindowPos, ShowWindow, TranslateMessage,
+    CREATESTRUCTW, CS_HREDRAW, CS_VREDRAW, CreateWindowExW, DefWindowProcW, DestroyWindow,
+    DispatchMessageW, GWLP_USERDATA, GetClientRect, GetMessageW, GetSystemMetrics,
+    GetWindowLongPtrW, GetWindowRect, HCURSOR, HICON, HWND_TOPMOST, IDC_ARROW, IsWindowVisible,
+    LoadCursorW, LoadIconW, MSG, PM_REMOVE, PeekMessageW, PostMessageW, PostQuitMessage,
+    RegisterClassExW, SM_CXSCREEN, SM_CYSCREEN, SW_HIDE, SW_SHOW, SWP_NOACTIVATE, SWP_NOMOVE,
+    SWP_NOSIZE, SetForegroundWindow, SetWindowLongPtrW, SetWindowPos, ShowWindow, TranslateMessage,
     WM_APP, WM_CHAR, WM_COMMAND, WM_DESTROY, WM_ERASEBKGND, WM_HOTKEY, WM_KEYDOWN, WM_KILLFOCUS,
-    WM_PAINT, WM_RBUTTONUP, WM_SYSKEYDOWN, WNDCLASSEXW, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP,
+    WM_NCCREATE, WM_PAINT, WM_RBUTTONUP, WM_SYSKEYDOWN, WNDCLASSEXW, WS_EX_TOOLWINDOW,
+    WS_EX_TOPMOST, WS_POPUP,
 };
 use windows::core::{HSTRING, PCWSTR};
 
@@ -38,8 +40,6 @@ pub use tray::TrayCommand;
 
 #[cfg(feature = "test-support")]
 pub use canvas::testing;
-
-static HANDLER: OnceLock<fn(&Window, Message)> = OnceLock::new();
 
 pub(crate) const WM_SHOW_REQUEST: u32 = WM_APP + 2;
 const WM_CATALOG_READY: u32 = WM_APP + 3;
@@ -65,13 +65,25 @@ unsafe extern "system" fn dispatch(
     wparam: WPARAM,
     lparam: LPARAM,
 ) -> LRESULT {
+    if msg == WM_NCCREATE {
+        let create_struct = lparam.0 as *const CREATESTRUCTW;
+        if let Some(create_struct) = unsafe { create_struct.as_ref() } {
+            unsafe {
+                SetWindowLongPtrW(hwnd, GWLP_USERDATA, create_struct.lpCreateParams as isize)
+            };
+        }
+        return unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) };
+    }
+
     if msg == WM_ERASEBKGND {
         return LRESULT(1);
     }
 
-    let Some(handler) = HANDLER.get() else {
+    let handler_ptr = unsafe { GetWindowLongPtrW(hwnd, GWLP_USERDATA) };
+    if handler_ptr == 0 {
         return unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) };
-    };
+    }
+    let handler: fn(&Window, Message) = unsafe { std::mem::transmute(handler_ptr as usize) };
     let window = Window::new(hwnd);
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| match msg {
         WM_HOTKEY => {
@@ -175,7 +187,7 @@ impl Window {
         height: i32,
         handler: fn(&Window, Message),
     ) -> Result<Self, std::io::Error> {
-        let _ = HANDLER.set(handler);
+        let handler_ptr = handler as *const () as *mut std::ffi::c_void;
         unsafe {
             let _ = SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
 
@@ -216,7 +228,7 @@ impl Window {
                 None,
                 None,
                 Some(instance),
-                None,
+                Some(handler_ptr as *const _),
             ) else {
                 return Err(std::io::Error::last_os_error());
             };
@@ -541,7 +553,13 @@ mod tests {
         let hwnd = create_test_window(&class_name);
         assert!(!hwnd.is_invalid(), "test window creation should succeed");
 
-        let _ = HANDLER.set(panicking_test_handler);
+        unsafe {
+            SetWindowLongPtrW(
+                hwnd,
+                GWLP_USERDATA,
+                panicking_test_handler as *const () as isize,
+            )
+        };
 
         let panicked_result = unsafe {
             dispatch(
@@ -564,6 +582,55 @@ mod tests {
             let _ = DestroyWindow(hwnd);
             let _ = UnregisterClassW(&class_name, Some(GetModuleHandleW(None).unwrap().into()));
         }
+    }
+
+    static FIRST_WINDOW_HANDLER_CALLED: std::sync::atomic::AtomicBool =
+        std::sync::atomic::AtomicBool::new(false);
+    static SECOND_WINDOW_HANDLER_CALLED: std::sync::atomic::AtomicBool =
+        std::sync::atomic::AtomicBool::new(false);
+
+    fn first_window_test_handler(_window: &Window, _message: Message) {
+        FIRST_WINDOW_HANDLER_CALLED.store(true, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    fn second_window_test_handler(_window: &Window, _message: Message) {
+        SECOND_WINDOW_HANDLER_CALLED.store(true, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    #[test]
+    fn a_recreated_window_uses_its_own_handler_not_a_stale_one() {
+        FIRST_WINDOW_HANDLER_CALLED.store(false, std::sync::atomic::Ordering::SeqCst);
+        SECOND_WINDOW_HANDLER_CALLED.store(false, std::sync::atomic::Ordering::SeqCst);
+
+        let first = Window::create(
+            "WinSpTest_FirstRecreatedWindow",
+            "first",
+            10,
+            10,
+            first_window_test_handler,
+        )
+        .expect("first window creation should succeed");
+        let second = Window::create(
+            "WinSpTest_SecondRecreatedWindow",
+            "second",
+            10,
+            10,
+            second_window_test_handler,
+        )
+        .expect("second window creation should succeed");
+
+        let _ = unsafe { dispatch(second.hwnd, WM_HOTKEY, WPARAM(0), LPARAM(0)) };
+        assert!(
+            SECOND_WINDOW_HANDLER_CALLED.load(std::sync::atomic::Ordering::SeqCst),
+            "the second window's own handler should run for its messages"
+        );
+        assert!(
+            !FIRST_WINDOW_HANDLER_CALLED.load(std::sync::atomic::Ordering::SeqCst),
+            "the first window's stale handler must not run for the second window's messages"
+        );
+
+        first.close();
+        second.close();
     }
 
     #[test]
