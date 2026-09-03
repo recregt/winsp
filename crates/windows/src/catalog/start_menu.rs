@@ -1,43 +1,63 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use walkdir::WalkDir;
 use winsp_core::models::{AppItem, LaunchTarget};
 
-use super::resolve_shortcut_target;
-use super::start_menu::start_menu_dirs;
+use super::Catalog;
+use crate::system::shortcut;
 
-struct ScannedShortcut {
+pub(crate) fn start_menu_dirs() -> Vec<PathBuf> {
+    let mut dirs = Vec::new();
+
+    if let Ok(app_data) = std::env::var("APPDATA") {
+        dirs.push(format!(
+            "{}\\Microsoft\\Windows\\Start Menu\\Programs",
+            app_data
+        ));
+    }
+    if let Ok(program_data) = std::env::var("ProgramData") {
+        dirs.push(format!(
+            "{}\\Microsoft\\Windows\\Start Menu\\Programs",
+            program_data
+        ));
+    }
+
+    dirs.into_iter()
+        .map(PathBuf::from)
+        .filter(|p| p.exists())
+        .collect()
+}
+
+pub(super) struct ScannedShortcut {
     item: AppItem,
     priority: usize,
 }
 
-pub struct StartMenuCatalog {
-    dirs: Vec<PathBuf>,
-    shortcuts: std::collections::HashMap<PathBuf, ScannedShortcut>,
-    unreadable_dirs: Vec<PathBuf>,
-}
-
-impl StartMenuCatalog {
-    pub fn for_start_menu() -> Self {
-        Self::scan(start_menu_dirs())
-    }
-
-    pub fn scan(dirs: Vec<PathBuf>) -> Self {
-        let mut shortcuts = std::collections::HashMap::new();
+impl Catalog {
+    pub(super) fn scan_shortcuts(
+        dirs: Vec<PathBuf>,
+    ) -> (
+        Vec<PathBuf>,
+        HashMap<PathBuf, ScannedShortcut>,
+        Vec<PathBuf>,
+    ) {
+        let mut shortcuts = HashMap::new();
         let mut unreadable_dirs = Vec::new();
         for (priority, dir) in dirs.iter().enumerate() {
             collect_shortcuts(dir, priority, &mut shortcuts, &mut unreadable_dirs);
         }
-        Self {
-            dirs,
-            shortcuts,
-            unreadable_dirs,
-        }
+        (dirs, shortcuts, unreadable_dirs)
     }
 
     pub fn rescan(&mut self) {
-        *self = Self::scan(std::mem::take(&mut self.dirs));
+        let dirs = std::mem::take(&mut self.dirs);
+        let (dirs, shortcuts, unreadable_dirs) = Self::scan_shortcuts(dirs);
+        self.dirs = dirs;
+        self.shortcuts = shortcuts;
+        self.unreadable_dirs = unreadable_dirs;
+        self.builtins = super::apps::built_in_tools();
+        self.settings = super::settings::list_settings();
     }
 
     pub fn apply_changes(&mut self, changed_paths: &[PathBuf]) {
@@ -72,7 +92,7 @@ impl StartMenuCatalog {
         }
     }
 
-    pub fn items(&self) -> Vec<AppItem> {
+    pub(super) fn shortcut_items(&self) -> Vec<AppItem> {
         let mut ordered: Vec<(&PathBuf, &ScannedShortcut)> = self.shortcuts.iter().collect();
         ordered.sort_by(|(path_a, a), (path_b, b)| {
             a.priority.cmp(&b.priority).then_with(|| path_a.cmp(path_b))
@@ -96,7 +116,7 @@ impl StartMenuCatalog {
 fn collect_shortcuts(
     dir: &Path,
     priority: usize,
-    shortcuts: &mut std::collections::HashMap<PathBuf, ScannedShortcut>,
+    shortcuts: &mut HashMap<PathBuf, ScannedShortcut>,
     unreadable_dirs: &mut Vec<PathBuf>,
 ) {
     for entry in WalkDir::new(dir).follow_links(true) {
@@ -120,7 +140,7 @@ fn collect_shortcuts(
 fn insert_if_shortcut(
     path: &Path,
     priority: usize,
-    shortcuts: &mut std::collections::HashMap<PathBuf, ScannedShortcut>,
+    shortcuts: &mut HashMap<PathBuf, ScannedShortcut>,
 ) {
     let Some(ext) = path.extension().and_then(|e| e.to_str()) else {
         return;
@@ -134,7 +154,7 @@ fn insert_if_shortcut(
     };
     let stem_lower = stem.to_lowercase();
 
-    let resolved = resolve_shortcut_target(path, &ext_lower);
+    let resolved = shortcut::resolve_target(path, &ext_lower);
 
     if ext_lower == "lnk" {
         if let Some(identity) = &resolved
@@ -193,6 +213,20 @@ fn is_uninstaller_exe_name(exe_name: &str) -> bool {
         stem.strip_prefix(prefix)
             .is_some_and(|digits| !digits.is_empty() && digits.bytes().all(|b| b.is_ascii_digit()))
     })
+}
+
+#[cfg(test)]
+impl Catalog {
+    fn for_test_dirs(dirs: Vec<PathBuf>) -> Self {
+        let (dirs, shortcuts, unreadable_dirs) = Self::scan_shortcuts(dirs);
+        Self {
+            dirs,
+            shortcuts,
+            unreadable_dirs,
+            builtins: Vec::new(),
+            settings: Vec::new(),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -266,8 +300,8 @@ mod tests {
         )
         .unwrap();
 
-        let catalog = StartMenuCatalog::scan(vec![dir.path().into()]);
-        let items = catalog.items();
+        let catalog = Catalog::for_test_dirs(vec![dir.path().into()]);
+        let items = catalog.shortcut_items();
 
         assert_eq!(
             items[0].icon,
@@ -288,9 +322,9 @@ mod tests {
         }
 
         let catalog =
-            StartMenuCatalog::scan(vec![per_user.path().into(), system_wide.path().into()]);
+            Catalog::for_test_dirs(vec![per_user.path().into(), system_wide.path().into()]);
 
-        assert_eq!(catalog.items().len(), 1);
+        assert_eq!(catalog.shortcut_items().len(), 1);
     }
 
     #[test]
@@ -304,9 +338,9 @@ mod tests {
         }
 
         let catalog =
-            StartMenuCatalog::scan(vec![per_user.path().into(), system_wide.path().into()]);
+            Catalog::for_test_dirs(vec![per_user.path().into(), system_wide.path().into()]);
 
-        assert_eq!(catalog.items().len(), 2);
+        assert_eq!(catalog.shortcut_items().len(), 2);
     }
 
     #[test]
@@ -330,9 +364,9 @@ mod tests {
         }
 
         let catalog =
-            StartMenuCatalog::scan(vec![per_user.path().into(), system_wide.path().into()]);
+            Catalog::for_test_dirs(vec![per_user.path().into(), system_wide.path().into()]);
 
-        assert_eq!(catalog.items().len(), 2);
+        assert_eq!(catalog.shortcut_items().len(), 2);
     }
 
     #[test]
@@ -344,8 +378,8 @@ mod tests {
         fs::write(system_wide.path().join("Chrome.lnk"), []).unwrap();
 
         let catalog =
-            StartMenuCatalog::scan(vec![per_user.path().into(), system_wide.path().into()]);
-        let items = catalog.items();
+            Catalog::for_test_dirs(vec![per_user.path().into(), system_wide.path().into()]);
+        let items = catalog.shortcut_items();
 
         assert_eq!(items.len(), 2);
         assert!(items.iter().all(|item| item.name.as_ref() == "Chrome"));
@@ -360,9 +394,9 @@ mod tests {
         fs::write(system_wide.path().join("Firefox.lnk"), []).unwrap();
 
         let catalog =
-            StartMenuCatalog::scan(vec![per_user.path().into(), system_wide.path().into()]);
+            Catalog::for_test_dirs(vec![per_user.path().into(), system_wide.path().into()]);
 
-        assert_eq!(catalog.items().len(), 2);
+        assert_eq!(catalog.shortcut_items().len(), 2);
     }
 
     #[test]
@@ -375,9 +409,9 @@ mod tests {
         fs::write(system_wide.path().join("App.url"), contents).unwrap();
 
         let catalog =
-            StartMenuCatalog::scan(vec![per_user.path().into(), system_wide.path().into()]);
+            Catalog::for_test_dirs(vec![per_user.path().into(), system_wide.path().into()]);
 
-        assert_eq!(catalog.items().len(), 1);
+        assert_eq!(catalog.shortcut_items().len(), 1);
     }
 
     #[test]
@@ -397,9 +431,9 @@ mod tests {
         .unwrap();
 
         let catalog =
-            StartMenuCatalog::scan(vec![per_user.path().into(), system_wide.path().into()]);
+            Catalog::for_test_dirs(vec![per_user.path().into(), system_wide.path().into()]);
 
-        assert_eq!(catalog.items().len(), 2);
+        assert_eq!(catalog.shortcut_items().len(), 2);
     }
 
     #[test]
@@ -419,9 +453,9 @@ mod tests {
         .unwrap();
 
         let catalog =
-            StartMenuCatalog::scan(vec![per_user.path().into(), system_wide.path().into()]);
+            Catalog::for_test_dirs(vec![per_user.path().into(), system_wide.path().into()]);
 
-        assert_eq!(catalog.items().len(), 1);
+        assert_eq!(catalog.shortcut_items().len(), 1);
     }
 
     #[test]
@@ -441,9 +475,9 @@ mod tests {
         .unwrap();
 
         let catalog =
-            StartMenuCatalog::scan(vec![per_user.path().into(), system_wide.path().into()]);
+            Catalog::for_test_dirs(vec![per_user.path().into(), system_wide.path().into()]);
 
-        assert_eq!(catalog.items().len(), 2);
+        assert_eq!(catalog.shortcut_items().len(), 2);
     }
 
     #[test]
@@ -456,8 +490,8 @@ mod tests {
         fs::write(per_user.path().join("App.url"), contents).unwrap();
 
         let catalog =
-            StartMenuCatalog::scan(vec![per_user.path().into(), system_wide.path().into()]);
-        let items = catalog.items();
+            Catalog::for_test_dirs(vec![per_user.path().into(), system_wide.path().into()]);
+        let items = catalog.shortcut_items();
 
         assert_eq!(items.len(), 1);
         assert_eq!(
@@ -469,8 +503,8 @@ mod tests {
     #[test]
     fn apply_changes_picks_up_a_newly_created_shortcut() {
         let dir = tempfile::tempdir().unwrap();
-        let mut catalog = StartMenuCatalog::scan(vec![dir.path().into()]);
-        assert_eq!(catalog.items().len(), 0);
+        let mut catalog = Catalog::for_test_dirs(vec![dir.path().into()]);
+        assert_eq!(catalog.shortcut_items().len(), 0);
 
         let contents = "[InternetShortcut]\nURL=https://example.com/app\n";
         let new_shortcut = dir.path().join("App.url");
@@ -478,7 +512,7 @@ mod tests {
 
         catalog.apply_changes(&[new_shortcut]);
 
-        assert_eq!(names(&catalog.items()), vec!["App"]);
+        assert_eq!(names(&catalog.shortcut_items()), vec!["App"]);
     }
 
     #[test]
@@ -488,20 +522,20 @@ mod tests {
         let shortcut = dir.path().join("App.url");
         fs::write(&shortcut, contents).unwrap();
 
-        let mut catalog = StartMenuCatalog::scan(vec![dir.path().into()]);
-        assert_eq!(catalog.items().len(), 1);
+        let mut catalog = Catalog::for_test_dirs(vec![dir.path().into()]);
+        assert_eq!(catalog.shortcut_items().len(), 1);
 
         fs::remove_file(&shortcut).unwrap();
         catalog.apply_changes(&[shortcut]);
 
-        assert_eq!(catalog.items().len(), 0);
+        assert_eq!(catalog.shortcut_items().len(), 0);
     }
 
     #[test]
     fn apply_changes_walks_a_newly_created_subfolder() {
         let dir = tempfile::tempdir().unwrap();
-        let mut catalog = StartMenuCatalog::scan(vec![dir.path().into()]);
-        assert_eq!(catalog.items().len(), 0);
+        let mut catalog = Catalog::for_test_dirs(vec![dir.path().into()]);
+        assert_eq!(catalog.shortcut_items().len(), 0);
 
         let subfolder = dir.path().join("VendorX");
         fs::create_dir(&subfolder).unwrap();
@@ -512,7 +546,7 @@ mod tests {
 
         catalog.apply_changes(&[subfolder]);
 
-        let scanned = catalog.items();
+        let scanned = catalog.shortcut_items();
         let mut items = names(&scanned);
         items.sort_unstable();
         assert_eq!(items, vec!["One", "Two"]);
@@ -526,13 +560,13 @@ mod tests {
         let contents = "[InternetShortcut]\nURL=https://example.com/one\n";
         fs::write(subfolder.join("One.url"), contents).unwrap();
 
-        let mut catalog = StartMenuCatalog::scan(vec![dir.path().into()]);
-        assert_eq!(catalog.items().len(), 1);
+        let mut catalog = Catalog::for_test_dirs(vec![dir.path().into()]);
+        assert_eq!(catalog.shortcut_items().len(), 1);
 
         fs::remove_dir_all(&subfolder).unwrap();
         catalog.apply_changes(&[subfolder]);
 
-        assert_eq!(catalog.items().len(), 0);
+        assert_eq!(catalog.shortcut_items().len(), 0);
     }
 
     #[test]
@@ -540,7 +574,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let missing = dir.path().join("does-not-exist");
 
-        let catalog = StartMenuCatalog::scan(vec![dir.path().into(), missing.clone()]);
+        let catalog = Catalog::for_test_dirs(vec![dir.path().into(), missing.clone()]);
 
         assert_eq!(catalog.unreadable_dirs(), &[missing]);
     }
@@ -549,7 +583,7 @@ mod tests {
     fn unreadable_dirs_is_empty_for_a_clean_scan() {
         let dir = tempfile::tempdir().unwrap();
 
-        let catalog = StartMenuCatalog::scan(vec![dir.path().into()]);
+        let catalog = Catalog::for_test_dirs(vec![dir.path().into()]);
 
         assert!(catalog.unreadable_dirs().is_empty());
     }
@@ -578,9 +612,9 @@ mod tests {
             return;
         }
 
-        let catalog = StartMenuCatalog::scan(vec![dir.path().into()]);
+        let catalog = Catalog::for_test_dirs(vec![dir.path().into()]);
 
-        assert_eq!(names(&catalog.items()), vec!["App"]);
+        assert_eq!(names(&catalog.shortcut_items()), vec!["App"]);
     }
 
     #[test]
@@ -596,9 +630,9 @@ mod tests {
             return;
         }
 
-        let catalog = StartMenuCatalog::scan(vec![dir.path().into()]);
+        let catalog = Catalog::for_test_dirs(vec![dir.path().into()]);
 
-        assert_eq!(names(&catalog.items()), vec!["App"]);
+        assert_eq!(names(&catalog.shortcut_items()), vec!["App"]);
     }
 
     #[test]
@@ -612,7 +646,7 @@ mod tests {
             return;
         }
 
-        let catalog = StartMenuCatalog::scan(vec![dir.path().into()]);
+        let catalog = Catalog::for_test_dirs(vec![dir.path().into()]);
 
         assert!(catalog.unreadable_dirs().is_empty());
     }
@@ -622,7 +656,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let later_created = dir.path().join("VendorX");
 
-        let mut catalog = StartMenuCatalog::scan(vec![later_created.clone()]);
+        let mut catalog = Catalog::for_test_dirs(vec![later_created.clone()]);
         let expected = [later_created.clone()];
         assert_eq!(catalog.unreadable_dirs(), &expected);
 
@@ -637,7 +671,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let later_created = dir.path().join("VendorX");
 
-        let mut catalog = StartMenuCatalog::scan(vec![later_created.clone()]);
+        let mut catalog = Catalog::for_test_dirs(vec![later_created.clone()]);
         let expected = [later_created.clone()];
         assert_eq!(catalog.unreadable_dirs(), &expected);
 
@@ -650,15 +684,15 @@ mod tests {
     #[test]
     fn rescan_reflects_changes_made_since_the_last_scan() {
         let dir = tempfile::tempdir().unwrap();
-        let mut catalog = StartMenuCatalog::scan(vec![dir.path().into()]);
-        assert_eq!(catalog.items().len(), 0);
+        let mut catalog = Catalog::for_test_dirs(vec![dir.path().into()]);
+        assert_eq!(catalog.shortcut_items().len(), 0);
 
         let contents = "[InternetShortcut]\nURL=https://example.com/app\n";
         fs::write(dir.path().join("App.url"), contents).unwrap();
 
         catalog.rescan();
 
-        assert_eq!(names(&catalog.items()), vec!["App"]);
+        assert_eq!(names(&catalog.shortcut_items()), vec!["App"]);
     }
 
     #[test]
@@ -669,9 +703,9 @@ mod tests {
             create_test_lnk(dir.path(), "Remove Foo", r"C:\Apps\Foo\unins000.exe", "");
         }
 
-        let catalog = StartMenuCatalog::scan(vec![dir.path().into()]);
+        let catalog = Catalog::for_test_dirs(vec![dir.path().into()]);
 
-        assert_eq!(catalog.items().len(), 0);
+        assert_eq!(catalog.shortcut_items().len(), 0);
     }
 
     #[test]
@@ -687,9 +721,9 @@ mod tests {
             );
         }
 
-        let catalog = StartMenuCatalog::scan(vec![dir.path().into()]);
+        let catalog = Catalog::for_test_dirs(vec![dir.path().into()]);
 
-        assert_eq!(catalog.items().len(), 0);
+        assert_eq!(catalog.shortcut_items().len(), 0);
     }
 
     #[test]
@@ -705,9 +739,9 @@ mod tests {
             );
         }
 
-        let catalog = StartMenuCatalog::scan(vec![dir.path().into()]);
+        let catalog = Catalog::for_test_dirs(vec![dir.path().into()]);
 
-        assert_eq!(catalog.items().len(), 1);
+        assert_eq!(catalog.shortcut_items().len(), 1);
     }
 
     #[test]
@@ -718,9 +752,9 @@ mod tests {
             create_test_lnk(dir.path(), "Installer", r"C:\Apps\Foo\installer.exe", "");
         }
 
-        let catalog = StartMenuCatalog::scan(vec![dir.path().into()]);
+        let catalog = Catalog::for_test_dirs(vec![dir.path().into()]);
 
-        assert_eq!(catalog.items().len(), 1);
+        assert_eq!(catalog.shortcut_items().len(), 1);
     }
 
     #[test]
@@ -742,9 +776,9 @@ mod tests {
             );
         }
 
-        let catalog = StartMenuCatalog::scan(vec![dir.path().into()]);
+        let catalog = Catalog::for_test_dirs(vec![dir.path().into()]);
 
-        let scanned = catalog.items();
+        let scanned = catalog.shortcut_items();
         let mut items = names(&scanned);
         items.sort_unstable();
         assert_eq!(items, vec!["Help Scout", "Uninstall Manager"]);
@@ -755,9 +789,9 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         fs::write(dir.path().join("Uninstall Foo.lnk"), []).unwrap();
 
-        let catalog = StartMenuCatalog::scan(vec![dir.path().into()]);
+        let catalog = Catalog::for_test_dirs(vec![dir.path().into()]);
 
-        assert_eq!(names(&catalog.items()), vec!["Uninstall Foo"]);
+        assert_eq!(names(&catalog.shortcut_items()), vec!["Uninstall Foo"]);
     }
 
     #[test]
@@ -769,9 +803,9 @@ mod tests {
         )
         .unwrap();
 
-        let catalog = StartMenuCatalog::scan(vec![dir.path().into()]);
+        let catalog = Catalog::for_test_dirs(vec![dir.path().into()]);
 
-        assert_eq!(names(&catalog.items()), vec!["Help"]);
+        assert_eq!(names(&catalog.shortcut_items()), vec!["Help"]);
     }
 
     #[test]
@@ -788,8 +822,8 @@ mod tests {
         )
         .unwrap();
 
-        let catalog = StartMenuCatalog::scan(vec![dir.path().into()]);
+        let catalog = Catalog::for_test_dirs(vec![dir.path().into()]);
 
-        assert_eq!(catalog.items().len(), 0);
+        assert_eq!(catalog.shortcut_items().len(), 0);
     }
 }

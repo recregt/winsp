@@ -31,7 +31,7 @@ where
         }
     }
     if !failed_dirs.is_empty() {
-        crate::system::toast::show(
+        super::toast::show(
             "WinSP",
             "Some folders couldn't be watched for changes. New apps there may not appear until WinSP restarts.",
         );
@@ -44,7 +44,7 @@ pub fn for_start_menu<F>(on_event: F) -> notify::Result<Debouncer<RecommendedWat
 where
     F: Fn(WatchEvent) + Send + 'static,
 {
-    for_dirs(&super::apps::start_menu_dirs(), on_event)
+    for_dirs(&crate::catalog::start_menu_dirs(), on_event)
 }
 
 #[cfg(test)]
