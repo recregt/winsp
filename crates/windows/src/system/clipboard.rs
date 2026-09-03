@@ -10,7 +10,8 @@ pub fn copy(text: &str) -> bool {
 
 fn try_copy(text: &str) -> windows::core::Result<()> {
     let package = build_package(text)?;
-    Clipboard::SetContent(&package)
+    Clipboard::SetContent(&package)?;
+    Clipboard::Flush()
 }
 
 fn build_package(text: &str) -> windows::core::Result<DataPackage> {
