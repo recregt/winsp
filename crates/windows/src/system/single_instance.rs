@@ -15,9 +15,17 @@ impl Drop for InstanceGuard {
     }
 }
 
-pub fn acquire(mutex_name: &str, window_class_name: &str) -> Option<InstanceGuard> {
+pub enum AcquireResult {
+    Acquired(InstanceGuard),
+    AlreadyRunning { brought_to_front: bool },
+    Failed,
+}
+
+pub fn acquire(mutex_name: &str, window_class_name: &str) -> AcquireResult {
     let name = HSTRING::from(mutex_name);
-    let handle = unsafe { CreateMutexW(None, false, &name) }.ok()?;
+    let Ok(handle) = (unsafe { CreateMutexW(None, false, &name) }) else {
+        return AcquireResult::Failed;
+    };
     let already_exists =
         std::io::Error::last_os_error().raw_os_error() == Some(ERROR_ALREADY_EXISTS.0 as i32);
 
@@ -25,25 +33,13 @@ pub fn acquire(mutex_name: &str, window_class_name: &str) -> Option<InstanceGuar
         unsafe {
             let _ = CloseHandle(handle);
         }
-        if !request_show(window_class_name) {
-            notify_already_running();
-        }
-        return None;
+        return AcquireResult::AlreadyRunning {
+            brought_to_front: request_show(window_class_name),
+        };
     }
 
-    Some(InstanceGuard(handle))
+    AcquireResult::Acquired(InstanceGuard(handle))
 }
-
-#[cfg(not(test))]
-fn notify_already_running() {
-    crate::system::toast::show(
-        "WinSP",
-        "WinSP is already running but couldn't be brought to the front.",
-    );
-}
-
-#[cfg(test)]
-fn notify_already_running() {}
 
 fn request_show(window_class_name: &str) -> bool {
     let class_name = HSTRING::from(window_class_name);
@@ -150,21 +146,33 @@ mod tests {
     #[test]
     fn detects_collision_and_releases_cleanly() {
         let first = acquire(MUTEX_NAME, WINDOW_CLASS_NAME);
-        assert!(first.is_some(), "first acquire should succeed");
+        assert!(
+            matches!(first, AcquireResult::Acquired(_)),
+            "first acquire should succeed"
+        );
 
         assert!(
-            acquire(MUTEX_NAME, WINDOW_CLASS_NAME).is_none(),
+            matches!(
+                acquire(MUTEX_NAME, WINDOW_CLASS_NAME),
+                AcquireResult::AlreadyRunning { .. }
+            ),
             "a second acquire while the first is held should detect the collision"
         );
         assert!(
-            acquire(MUTEX_NAME, WINDOW_CLASS_NAME).is_none(),
+            matches!(
+                acquire(MUTEX_NAME, WINDOW_CLASS_NAME),
+                AcquireResult::AlreadyRunning { .. }
+            ),
             "the collision cleanup must not release the mutex the first guard still holds"
         );
 
         drop(first);
 
         assert!(
-            acquire(MUTEX_NAME, WINDOW_CLASS_NAME).is_some(),
+            matches!(
+                acquire(MUTEX_NAME, WINDOW_CLASS_NAME),
+                AcquireResult::Acquired(_)
+            ),
             "after the guard is dropped, acquiring again should succeed"
         );
     }

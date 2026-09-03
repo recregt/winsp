@@ -25,12 +25,39 @@ pub(crate) fn test_watch_dir() -> Option<std::path::PathBuf> {
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
+fn finish_watcher<W, E>(result: Result<(W, Vec<std::path::PathBuf>), E>) -> Option<W> {
+    match result {
+        Ok((watcher, failed_dirs)) => {
+            if !failed_dirs.is_empty() {
+                catalog_sync::notify_watch_dirs_failed();
+            }
+            Some(watcher)
+        }
+        Err(_) => {
+            catalog_sync::notify_watcher_init_failed();
+            None
+        }
+    }
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let Some(_instance_mutex) = winsp_windows::system::single_instance::acquire(
+    use winsp_windows::system::single_instance::AcquireResult;
+
+    let _instance_mutex = match winsp_windows::system::single_instance::acquire(
         "WinSP_SingleInstance_Mutex",
         window::WINDOW_CLASS_NAME,
-    ) else {
-        return Ok(());
+    ) {
+        AcquireResult::Acquired(guard) => guard,
+        AcquireResult::AlreadyRunning { brought_to_front } => {
+            if !brought_to_front {
+                winsp_windows::system::toast::show(
+                    "WinSP",
+                    "WinSP is already running but couldn't be brought to the front.",
+                );
+            }
+            return Ok(());
+        }
+        AcquireResult::Failed => return Ok(()),
     };
 
     let mode = catalog_sync::startup_mode();
@@ -51,10 +78,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     app_state.refresh_results();
                 }
             });
-            if watcher.is_err() {
-                catalog_sync::notify_watcher_init_failed();
-            }
-            watcher.ok()
+            finish_watcher(watcher)
         }
         catalog_sync::StartupMode::Real(catalog) => {
             let catalog = Arc::new(Mutex::new(catalog));
@@ -64,10 +88,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let watcher = winsp_windows::system::watcher::for_start_menu(move |event| {
                 catalog_sync::handle_watch_event(event, &catalog, &reconcile_tx);
             });
-            if watcher.is_err() {
-                catalog_sync::notify_watcher_init_failed();
-            }
-            watcher.ok()
+            finish_watcher(watcher)
         }
     };
 
