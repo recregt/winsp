@@ -25,8 +25,15 @@ impl StartMenuCatalog {
     pub fn scan(dirs: Vec<PathBuf>) -> Self {
         let mut shortcuts = std::collections::HashMap::new();
         let mut unreadable_dirs = Vec::new();
+        let mut visited = HashSet::new();
         for (priority, dir) in dirs.iter().enumerate() {
-            collect_shortcuts(dir, priority, &mut shortcuts, &mut unreadable_dirs);
+            collect_shortcuts(
+                dir,
+                priority,
+                &mut shortcuts,
+                &mut unreadable_dirs,
+                &mut visited,
+            );
         }
         Self {
             dirs,
@@ -64,6 +71,7 @@ impl StartMenuCatalog {
                 priority,
                 &mut self.shortcuts,
                 &mut self.unreadable_dirs,
+                &mut HashSet::new(),
             );
         } else {
             insert_if_shortcut(path, priority, &mut self.shortcuts);
@@ -91,18 +99,30 @@ impl StartMenuCatalog {
     }
 }
 
+type DirIdentity = (u64, [u8; 16]);
+
 fn collect_shortcuts(
     dir: &Path,
     priority: usize,
     shortcuts: &mut std::collections::HashMap<PathBuf, ScannedShortcut>,
     unreadable_dirs: &mut Vec<PathBuf>,
+    visited: &mut HashSet<DirIdentity>,
 ) {
+    if let Some(id) = directory_identity(dir)
+        && !visited.insert(id)
+    {
+        return;
+    }
+
     match std::fs::read_dir(dir) {
         Ok(entries) => {
             for entry in entries.flatten() {
+                let Ok(metadata) = entry.metadata() else {
+                    continue;
+                };
                 let path = entry.path();
-                if path.is_dir() {
-                    collect_shortcuts(&path, priority, shortcuts, unreadable_dirs);
+                if is_directory_entry(&metadata) {
+                    collect_shortcuts(&path, priority, shortcuts, unreadable_dirs, visited);
                 } else {
                     insert_if_shortcut(&path, priority, shortcuts);
                 }
@@ -110,6 +130,41 @@ fn collect_shortcuts(
         }
         Err(_) => unreadable_dirs.push(dir.to_path_buf()),
     }
+}
+
+fn is_directory_entry(metadata: &std::fs::Metadata) -> bool {
+    use std::os::windows::fs::MetadataExt;
+    use windows::Win32::Storage::FileSystem::FILE_ATTRIBUTE_DIRECTORY;
+
+    metadata.file_attributes() & FILE_ATTRIBUTE_DIRECTORY.0 != 0
+}
+
+fn directory_identity(dir: &Path) -> Option<DirIdentity> {
+    use std::os::windows::fs::OpenOptionsExt;
+    use std::os::windows::io::AsRawHandle;
+    use windows::Win32::Foundation::HANDLE;
+    use windows::Win32::Storage::FileSystem::{
+        FILE_FLAG_BACKUP_SEMANTICS, FILE_ID_INFO, FileIdInfo, GetFileInformationByHandleEx,
+    };
+
+    let file = std::fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(FILE_FLAG_BACKUP_SEMANTICS.0)
+        .open(dir)
+        .ok()?;
+
+    let mut info = FILE_ID_INFO::default();
+    unsafe {
+        GetFileInformationByHandleEx(
+            HANDLE(file.as_raw_handle()),
+            FileIdInfo,
+            std::ptr::addr_of_mut!(info).cast(),
+            size_of::<FILE_ID_INFO>() as u32,
+        )
+    }
+    .ok()?;
+
+    Some((info.VolumeSerialNumber, info.FileId.Identifier))
 }
 
 fn insert_if_shortcut(
@@ -547,6 +602,78 @@ mod tests {
         let catalog = StartMenuCatalog::scan(vec![dir.path().into()]);
 
         assert!(catalog.unreadable_dirs().is_empty());
+    }
+
+    fn try_create_directory_symlink(real: &Path, link: &Path) -> bool {
+        if let Err(e) = std::os::windows::fs::symlink_dir(real, link) {
+            eprintln!("skipping: cannot create a directory symlink here ({e})");
+            return false;
+        }
+        if !link.exists() {
+            eprintln!("skipping: directory symlink was not actually created here");
+            return false;
+        }
+        true
+    }
+
+    #[test]
+    fn directory_identity_differs_for_different_directories() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::create_dir(dir.path().join("A")).unwrap();
+        fs::create_dir(dir.path().join("B")).unwrap();
+
+        assert_ne!(
+            directory_identity(&dir.path().join("A")),
+            directory_identity(&dir.path().join("B"))
+        );
+    }
+
+    #[test]
+    fn directory_identity_matches_the_same_directory_reached_two_ways() {
+        let dir = tempfile::tempdir().unwrap();
+        let real = dir.path().join("Real");
+        fs::create_dir(&real).unwrap();
+        let link = dir.path().join("Link");
+        if !try_create_directory_symlink(&real, &link) {
+            return;
+        }
+
+        assert_eq!(directory_identity(&real), directory_identity(&link));
+    }
+
+    #[test]
+    fn follows_a_legitimate_directory_junction_to_a_new_target() {
+        let dir = tempfile::tempdir().unwrap();
+        let target = tempfile::tempdir().unwrap();
+        let contents = "[InternetShortcut]\nURL=https://example.com/app\n";
+        fs::write(target.path().join("App.url"), contents).unwrap();
+
+        let link = dir.path().join("Vendor");
+        if !try_create_directory_symlink(target.path(), &link) {
+            return;
+        }
+
+        let catalog = StartMenuCatalog::scan(vec![dir.path().into()]);
+
+        assert_eq!(names(&catalog.items()), vec!["App"]);
+    }
+
+    #[test]
+    fn does_not_recurse_infinitely_through_a_self_referencing_junction() {
+        let dir = tempfile::tempdir().unwrap();
+        let real = dir.path().join("Real");
+        fs::create_dir(&real).unwrap();
+        let contents = "[InternetShortcut]\nURL=https://example.com/app\n";
+        fs::write(real.join("App.url"), contents).unwrap();
+
+        let loop_link = real.join("Loop");
+        if !try_create_directory_symlink(&real, &loop_link) {
+            return;
+        }
+
+        let catalog = StartMenuCatalog::scan(vec![dir.path().into()]);
+
+        assert_eq!(names(&catalog.items()), vec!["App"]);
     }
 
     #[test]
