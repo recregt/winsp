@@ -1,4 +1,5 @@
 use crate::models::{AppItem, SearchResult};
+use nucleo_matcher::chars::{normalize, to_lower_case};
 use nucleo_matcher::{Config, Matcher, Utf32Str};
 use std::cell::RefCell;
 use std::sync::Arc;
@@ -84,8 +85,9 @@ fn match_all_items(
 ) -> Vec<(Arc<AppItem>, i32, Vec<usize>)> {
     let mut matcher = matcher.borrow_mut();
     let query_lower = query.to_lowercase();
+    let needle_string: String = query.chars().map(normalize).map(to_lower_case).collect();
     let mut needle_buf = Vec::new();
-    let needle = Utf32Str::new(&query_lower, &mut needle_buf);
+    let needle = Utf32Str::new(&needle_string, &mut needle_buf);
 
     let mut candidates = Vec::new();
     let mut hay_buf = Vec::new();
@@ -402,5 +404,20 @@ mod tests {
         let found = index.find("bulk", 1);
         assert_eq!(found.len(), 1);
         assert!(found[0].score >= 0);
+    }
+
+    #[test]
+    fn test_query_with_multi_char_unicode_lowercase_expansion_still_matches() {
+        let mut index = Engine::new();
+        index.set_items(vec![AppItem::new(
+            "istanbul",
+            "İstanbul Maps",
+            AppTarget::Path("istanbul.exe".into()),
+        )]);
+
+        let results = index.find("İ", 5);
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].title.as_ref(), "İstanbul Maps");
+        assert_eq!(results[0].matched_indices, vec![0]);
     }
 }
