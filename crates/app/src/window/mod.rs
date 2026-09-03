@@ -8,7 +8,7 @@ mod view;
 use std::sync::mpsc::Sender;
 use std::sync::{Arc, Mutex, OnceLock};
 
-use winsp_windows::window::{Hotkey, Key, Modifiers, Window};
+use winsp_windows::window::{Hotkey, HotkeySlot, Key, Modifiers, Window};
 
 use crate::config::Settings;
 use crate::state::AppState;
@@ -67,7 +67,16 @@ pub fn run_app(state: Arc<Mutex<AppState>>) -> Result<(), String> {
             "Couldn't add the tray icon. Use the hotkey to open WinSP.",
         );
     }
-    window_handle.run_message_loop(hotkey);
+    if !window_handle.register_hotkey(HotkeySlot::Primary, hotkey) {
+        winsp_windows::system::toast::show(
+            "WinSP",
+            &format!(
+                "Failed to register global hotkey: {}",
+                std::io::Error::last_os_error()
+            ),
+        );
+    }
+    window_handle.run_message_loop();
 
     Ok(())
 }

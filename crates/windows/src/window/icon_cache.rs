@@ -265,8 +265,8 @@ mod tests {
         );
 
         let surface = super::super::gfx::testing::OffscreenSurface::new(40, 40);
-        surface.canvas().draw_icon(
-            held.handle(),
+        surface.canvas().draw_cached_icon(
+            &held,
             super::super::gfx::Rect {
                 left: 4,
                 top: 4,
@@ -275,7 +275,7 @@ mod tests {
             },
         );
         assert!(
-            surface.contains_pixel_other_than(super::super::gfx::Color(0x00000000)),
+            surface.contains_pixel_other_than(super::super::gfx::Color::hex(0x000000)),
             "the icon handle must still be valid and drawable after the cache dropped its copy"
         );
     }

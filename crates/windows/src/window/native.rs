@@ -1,4 +1,4 @@
-use std::sync::OnceLock;
+use std::sync::atomic::{AtomicIsize, Ordering};
 
 use windows::Win32::Foundation::{HINSTANCE, HWND, LPARAM, LRESULT, POINT, RECT, WPARAM};
 use windows::Win32::Graphics::Dwm::{
@@ -37,10 +37,11 @@ use super::tray::{self, MenuItem};
 pub(crate) const WM_SHOW_REQUEST: u32 = WM_APP + 2;
 const WM_APP_EVENT: u32 = WM_APP + 3;
 
-static MAIN_HWND: OnceLock<isize> = OnceLock::new();
+static MAIN_HWND: AtomicIsize = AtomicIsize::new(0);
 
 pub fn post_event(id: u32) {
-    if let Some(&raw) = MAIN_HWND.get() {
+    let raw = MAIN_HWND.load(Ordering::Acquire);
+    if raw != 0 {
         unsafe {
             let _ = PostMessageW(
                 Some(HWND(raw as *mut _)),
@@ -130,6 +131,7 @@ unsafe extern "system" fn dispatch(
             LRESULT(0)
         }
         WM_DESTROY => {
+            MAIN_HWND.store(0, Ordering::Release);
             tray::remove(hwnd);
             unsafe { PostQuitMessage(0) };
             LRESULT(0)
@@ -270,7 +272,7 @@ impl Window {
 
             let handle = Self { hwnd };
             icon_cache::register_repaint_target(hwnd);
-            let _ = MAIN_HWND.set(hwnd.0 as isize);
+            MAIN_HWND.store(hwnd.0 as isize, Ordering::Release);
 
             let backdrop = DWMSBT_TRANSIENTWINDOW;
             let _ = DwmSetWindowAttribute(
@@ -310,11 +312,7 @@ impl Window {
         }
     }
 
-    pub fn run_message_loop(&self, hotkey: Hotkey) {
-        if !self.register_hotkey(HotkeySlot::Primary, hotkey) {
-            notify_hotkey_registration_failed(std::io::Error::last_os_error());
-        }
-
+    pub fn run_message_loop(&self) {
         unsafe {
             let mut msg = std::mem::MaybeUninit::<MSG>::uninit();
             while GetMessageW(msg.as_mut_ptr(), None, 0, 0).0 > 0 {
@@ -500,13 +498,6 @@ impl Window {
     pub fn show_tray_menu(&self, items: &[MenuItem]) {
         tray::show_menu(self.hwnd, items);
     }
-}
-
-fn notify_hotkey_registration_failed(error: std::io::Error) {
-    crate::system::toast::show(
-        "WinSP",
-        &format!("Failed to register global hotkey: {error}"),
-    );
 }
 
 #[cfg(test)]
