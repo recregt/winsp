@@ -283,10 +283,14 @@ fn try_eval_percentage(input: &str) -> Option<f64> {
     let lower = input.to_lowercase();
     let parts: Vec<&str> = lower.split_whitespace().collect();
     if parts.len() == 3 && parts[1] == "of" {
-        let pct_str = parts[0].trim_end_matches('%');
+        let pct_str = parts[0].strip_suffix('%')?;
         let pct: f64 = pct_str.parse().ok()?;
         let total: f64 = parts[2].parse().ok()?;
-        return Some((pct / 100.0) * total);
+        if !pct.is_finite() || !total.is_finite() {
+            return None;
+        }
+        let result = (pct / 100.0) * total;
+        return result.is_finite().then_some(result);
     }
     None
 }
@@ -380,6 +384,17 @@ mod tests {
     fn test_percentage() {
         assert_eq!(try_eval("15% of 200"), Some("30".to_string()));
         assert_eq!(try_eval("25% of 80"), Some("20".to_string()));
+    }
+
+    #[test]
+    fn test_percentage_rejects_malformed_and_non_finite_input() {
+        assert_eq!(try_eval("15 of 200"), None);
+        assert_eq!(try_eval("15%% of 200"), None);
+        assert_eq!(try_eval("15%%%% of 200"), None);
+        assert_eq!(try_eval("nan% of 2"), None);
+        assert_eq!(try_eval("inf% of 2"), None);
+        assert_eq!(try_eval("15% of nan"), None);
+        assert_eq!(try_eval("15% of inf"), None);
     }
 
     #[test]
