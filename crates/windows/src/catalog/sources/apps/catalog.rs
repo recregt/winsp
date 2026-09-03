@@ -1,6 +1,7 @@
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
+use walkdir::WalkDir;
 use winsp_core::models::{AppItem, AppTarget};
 
 use super::resolve_shortcut_target;
@@ -25,20 +26,8 @@ impl StartMenuCatalog {
     pub fn scan(dirs: Vec<PathBuf>) -> Self {
         let mut shortcuts = std::collections::HashMap::new();
         let mut unreadable_dirs = Vec::new();
-        let mut visited = HashSet::new();
         for (priority, dir) in dirs.iter().enumerate() {
-            if let Some(id) = directory_identity(dir)
-                && !visited.insert(id)
-            {
-                continue;
-            }
-            collect_shortcuts(
-                dir,
-                priority,
-                &mut shortcuts,
-                &mut unreadable_dirs,
-                &mut visited,
-            );
+            collect_shortcuts(dir, priority, &mut shortcuts, &mut unreadable_dirs);
         }
         Self {
             dirs,
@@ -71,16 +60,11 @@ impl StartMenuCatalog {
             .unwrap_or(usize::MAX);
 
         if path.is_dir() {
-            let mut visited = HashSet::new();
-            if let Some(id) = directory_identity(path) {
-                visited.insert(id);
-            }
             collect_shortcuts(
                 path,
                 priority,
                 &mut self.shortcuts,
                 &mut self.unreadable_dirs,
-                &mut visited,
             );
         } else {
             insert_if_shortcut(path, priority, &mut self.shortcuts);
@@ -108,126 +92,28 @@ impl StartMenuCatalog {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-enum DirIdentity {
-    Wide { volume: u64, file_id: [u8; 16] },
-    Narrow { volume: u32, file_index: u64 },
-}
-
 fn collect_shortcuts(
     dir: &Path,
     priority: usize,
     shortcuts: &mut std::collections::HashMap<PathBuf, ScannedShortcut>,
     unreadable_dirs: &mut Vec<PathBuf>,
-    visited: &mut HashSet<DirIdentity>,
 ) {
-    match std::fs::read_dir(dir) {
-        Ok(entries) => {
-            for entry in entries.flatten() {
-                let Ok(metadata) = entry.metadata() else {
-                    continue;
-                };
-                let path = entry.path();
-                if !is_directory_entry(&metadata) {
-                    insert_if_shortcut(&path, priority, shortcuts);
-                    continue;
+    for entry in WalkDir::new(dir).follow_links(true) {
+        match entry {
+            Ok(entry) => {
+                if !entry.file_type().is_dir() {
+                    insert_if_shortcut(entry.path(), priority, shortcuts);
                 }
-                if is_reparse_point(&metadata) {
-                    let Some(id) = directory_identity(&path) else {
-                        continue;
-                    };
-                    if !visited.insert(id) {
-                        continue;
-                    }
+            }
+            Err(err) => {
+                if err.loop_ancestor().is_none()
+                    && let Some(path) = err.path()
+                {
+                    unreadable_dirs.push(path.to_path_buf());
                 }
-                collect_shortcuts(&path, priority, shortcuts, unreadable_dirs, visited);
             }
         }
-        Err(_) => unreadable_dirs.push(dir.to_path_buf()),
     }
-}
-
-fn is_directory_entry(metadata: &std::fs::Metadata) -> bool {
-    use std::os::windows::fs::MetadataExt;
-    use windows::Win32::Storage::FileSystem::FILE_ATTRIBUTE_DIRECTORY;
-
-    metadata.file_attributes() & FILE_ATTRIBUTE_DIRECTORY.0 != 0
-}
-
-fn is_reparse_point(metadata: &std::fs::Metadata) -> bool {
-    use std::os::windows::fs::MetadataExt;
-    use windows::Win32::Storage::FileSystem::FILE_ATTRIBUTE_REPARSE_POINT;
-
-    metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT.0 != 0
-}
-
-fn directory_identity(dir: &Path) -> Option<DirIdentity> {
-    use std::os::windows::fs::OpenOptionsExt;
-    use std::os::windows::io::AsRawHandle;
-    use windows::Win32::Foundation::HANDLE;
-    use windows::Win32::Storage::FileSystem::{FILE_FLAG_BACKUP_SEMANTICS, FILE_READ_ATTRIBUTES};
-
-    let file = match std::fs::OpenOptions::new()
-        .access_mode(FILE_READ_ATTRIBUTES.0)
-        .custom_flags(FILE_FLAG_BACKUP_SEMANTICS.0)
-        .open(dir)
-    {
-        Ok(file) => file,
-        Err(e) => {
-            eprintln!("failed to open {} for identity lookup: {e}", dir.display());
-            return None;
-        }
-    };
-    let handle = HANDLE(file.as_raw_handle());
-
-    if let Some(id) = wide_file_id(handle) {
-        return Some(id);
-    }
-
-    match narrow_file_id(handle) {
-        Some(id) => Some(id),
-        None => {
-            eprintln!("failed to determine identity of {}", dir.display());
-            None
-        }
-    }
-}
-
-fn wide_file_id(handle: windows::Win32::Foundation::HANDLE) -> Option<DirIdentity> {
-    use windows::Win32::Storage::FileSystem::{
-        FILE_ID_INFO, FileIdInfo, GetFileInformationByHandleEx,
-    };
-
-    let mut info = FILE_ID_INFO::default();
-    unsafe {
-        GetFileInformationByHandleEx(
-            handle,
-            FileIdInfo,
-            std::ptr::addr_of_mut!(info).cast(),
-            size_of::<FILE_ID_INFO>() as u32,
-        )
-    }
-    .ok()?;
-
-    Some(DirIdentity::Wide {
-        volume: info.VolumeSerialNumber,
-        file_id: info.FileId.Identifier,
-    })
-}
-
-fn narrow_file_id(handle: windows::Win32::Foundation::HANDLE) -> Option<DirIdentity> {
-    use windows::Win32::Storage::FileSystem::{
-        BY_HANDLE_FILE_INFORMATION, GetFileInformationByHandle,
-    };
-
-    let mut info = BY_HANDLE_FILE_INFORMATION::default();
-    unsafe { GetFileInformationByHandle(handle, &mut info) }.ok()?;
-
-    let file_index = ((info.nFileIndexHigh as u64) << 32) | info.nFileIndexLow as u64;
-    Some(DirIdentity::Narrow {
-        volume: info.dwVolumeSerialNumber,
-        file_index,
-    })
 }
 
 fn insert_if_shortcut(
@@ -680,31 +566,6 @@ mod tests {
     }
 
     #[test]
-    fn directory_identity_differs_for_different_directories() {
-        let dir = tempfile::tempdir().unwrap();
-        fs::create_dir(dir.path().join("A")).unwrap();
-        fs::create_dir(dir.path().join("B")).unwrap();
-
-        assert_ne!(
-            directory_identity(&dir.path().join("A")),
-            directory_identity(&dir.path().join("B"))
-        );
-    }
-
-    #[test]
-    fn directory_identity_matches_the_same_directory_reached_two_ways() {
-        let dir = tempfile::tempdir().unwrap();
-        let real = dir.path().join("Real");
-        fs::create_dir(&real).unwrap();
-        let link = dir.path().join("Link");
-        if !try_create_directory_symlink(&real, &link) {
-            return;
-        }
-
-        assert_eq!(directory_identity(&real), directory_identity(&link));
-    }
-
-    #[test]
     fn follows_a_legitimate_directory_junction_to_a_new_target() {
         let dir = tempfile::tempdir().unwrap();
         let target = tempfile::tempdir().unwrap();
@@ -737,6 +598,22 @@ mod tests {
         let catalog = StartMenuCatalog::scan(vec![dir.path().into()]);
 
         assert_eq!(names(&catalog.items()), vec!["App"]);
+    }
+
+    #[test]
+    fn a_self_referencing_junction_is_not_reported_as_unreadable() {
+        let dir = tempfile::tempdir().unwrap();
+        let real = dir.path().join("Real");
+        fs::create_dir(&real).unwrap();
+
+        let loop_link = real.join("Loop");
+        if !try_create_directory_symlink(&real, &loop_link) {
+            return;
+        }
+
+        let catalog = StartMenuCatalog::scan(vec![dir.path().into()]);
+
+        assert!(catalog.unreadable_dirs().is_empty());
     }
 
     #[test]
