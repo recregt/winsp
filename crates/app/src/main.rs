@@ -9,9 +9,16 @@ use state::AppState;
 use std::sync::{Arc, Mutex};
 
 pub(crate) fn test_watch_dir() -> Option<std::path::PathBuf> {
-    std::env::var("WINSP_TEST_WATCH_DIR")
-        .ok()
-        .map(std::path::PathBuf::from)
+    #[cfg(debug_assertions)]
+    {
+        std::env::var("WINSP_TEST_WATCH_DIR")
+            .ok()
+            .map(std::path::PathBuf::from)
+    }
+    #[cfg(not(debug_assertions))]
+    {
+        None
+    }
 }
 
 #[global_allocator]
