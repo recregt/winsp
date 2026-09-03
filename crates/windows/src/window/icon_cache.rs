@@ -1,5 +1,5 @@
 use std::num::NonZeroUsize;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicIsize, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 
 use lru::LruCache;
@@ -44,11 +44,11 @@ fn cache() -> &'static Mutex<LruCache<String, IconState>> {
     CACHE.get_or_init(|| Mutex::new(LruCache::new(NonZeroUsize::new(MAX_CACHED_ICONS).unwrap())))
 }
 
-static REPAINT_HWND: OnceLock<isize> = OnceLock::new();
+static REPAINT_HWND: AtomicIsize = AtomicIsize::new(0);
 static REPAINT_PENDING: AtomicBool = AtomicBool::new(false);
 
 pub(super) fn register_repaint_target(hwnd: HWND) {
-    let _ = REPAINT_HWND.set(hwnd.0 as isize);
+    REPAINT_HWND.store(hwnd.0 as isize, Ordering::Release);
 }
 
 pub fn mark_paint_started() {
@@ -59,7 +59,8 @@ fn request_repaint() {
     if REPAINT_PENDING.swap(true, Ordering::AcqRel) {
         return;
     }
-    if let Some(&raw) = REPAINT_HWND.get() {
+    let raw = REPAINT_HWND.load(Ordering::Acquire);
+    if raw != 0 {
         unsafe {
             let _ = InvalidateRect(Some(HWND(raw as *mut _)), None, false);
         }
@@ -143,7 +144,23 @@ mod tests {
             c.clear();
         }
         REPAINT_PENDING.store(false, Ordering::Release);
+        REPAINT_HWND.store(0, Ordering::Release);
         guard
+    }
+
+    #[test]
+    fn register_repaint_target_replaces_the_previous_hwnd() {
+        let _guard = reset_for_test();
+
+        register_repaint_target(HWND(0x1000 as *mut _));
+        assert_eq!(REPAINT_HWND.load(Ordering::Acquire), 0x1000);
+
+        register_repaint_target(HWND(0x2000 as *mut _));
+        assert_eq!(
+            REPAINT_HWND.load(Ordering::Acquire),
+            0x2000,
+            "a freshly created window must replace the previous repaint target, not be ignored"
+        );
     }
 
     fn wait_for_icon(path: &str) -> Arc<CachedIcon> {
