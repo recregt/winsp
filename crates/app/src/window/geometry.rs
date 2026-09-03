@@ -27,6 +27,7 @@ pub(super) fn show_fresh(handle: &Window) {
         && let Ok(mut state) = state_arc.lock()
     {
         interaction::clear_query(&mut state);
+        resize_window_for_results(handle, state.results.len());
     }
     if let Some(tx) = RECONCILE_TX.get() {
         if tx.send(()).is_err() {
