@@ -158,30 +158,41 @@ fn is_reparse_point(metadata: &std::fs::Metadata) -> bool {
 }
 
 fn directory_identity(dir: &Path) -> Option<DirIdentity> {
+    use std::mem::MaybeUninit;
     use std::os::windows::fs::OpenOptionsExt;
-    use std::os::windows::io::AsRawHandle;
+    use std::os::windows::io::{AsHandle, AsRawHandle};
     use windows::Win32::Foundation::HANDLE;
     use windows::Win32::Storage::FileSystem::{
         FILE_FLAG_BACKUP_SEMANTICS, FILE_ID_INFO, FILE_READ_ATTRIBUTES, FileIdInfo,
         GetFileInformationByHandleEx,
     };
 
-    let file = std::fs::OpenOptions::new()
+    let file = match std::fs::OpenOptions::new()
         .access_mode(FILE_READ_ATTRIBUTES.0)
         .custom_flags(FILE_FLAG_BACKUP_SEMANTICS.0)
         .open(dir)
-        .ok()?;
+    {
+        Ok(file) => file,
+        Err(e) => {
+            eprintln!("failed to open {} for identity lookup: {e}", dir.display());
+            return None;
+        }
+    };
 
-    let mut info = FILE_ID_INFO::default();
-    unsafe {
+    let mut info = MaybeUninit::<FILE_ID_INFO>::uninit();
+    let handle = HANDLE(file.as_handle().as_raw_handle());
+    if let Err(e) = unsafe {
         GetFileInformationByHandleEx(
-            HANDLE(file.as_raw_handle()),
+            handle,
             FileIdInfo,
-            std::ptr::addr_of_mut!(info).cast(),
+            info.as_mut_ptr().cast(),
             size_of::<FILE_ID_INFO>() as u32,
         )
+    } {
+        eprintln!("failed to determine identity of {}: {e}", dir.display());
+        return None;
     }
-    .ok()?;
+    let info = unsafe { info.assume_init() };
 
     Some((info.VolumeSerialNumber, info.FileId.Identifier))
 }
