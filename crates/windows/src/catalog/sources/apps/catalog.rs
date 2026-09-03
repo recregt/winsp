@@ -48,6 +48,7 @@ impl StartMenuCatalog {
 
     fn apply_change(&mut self, path: &Path) {
         self.shortcuts.retain(|p, _| !p.starts_with(path));
+        self.unreadable_dirs.retain(|p| !p.starts_with(path));
 
         if !path.exists() {
             return;
@@ -627,6 +628,21 @@ mod tests {
 
         fs::create_dir(&later_created).unwrap();
         catalog.rescan();
+
+        assert!(catalog.unreadable_dirs().is_empty());
+    }
+
+    #[test]
+    fn apply_changes_clears_a_previously_unreadable_directory_once_it_recovers() {
+        let dir = tempfile::tempdir().unwrap();
+        let later_created = dir.path().join("VendorX");
+
+        let mut catalog = StartMenuCatalog::scan(vec![later_created.clone()]);
+        let expected = [later_created.clone()];
+        assert_eq!(catalog.unreadable_dirs(), &expected);
+
+        fs::create_dir(&later_created).unwrap();
+        catalog.apply_changes(&[later_created]);
 
         assert!(catalog.unreadable_dirs().is_empty());
     }
