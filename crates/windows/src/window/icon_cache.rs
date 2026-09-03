@@ -113,19 +113,23 @@ pub fn icon_for_path(path: &str) -> Option<Arc<CachedIcon>> {
 
 fn extract_icon(path: &str) -> Option<HICON> {
     let wide = HSTRING::from(path);
-    let mut info = SHFILEINFOW::default();
+    let mut info = std::mem::MaybeUninit::<SHFILEINFOW>::uninit();
 
     let result = unsafe {
         SHGetFileInfoW(
             &wide,
             FILE_FLAGS_AND_ATTRIBUTES(0),
-            Some(&mut info),
+            Some(info.as_mut_ptr()),
             std::mem::size_of::<SHFILEINFOW>() as u32,
             SHGFI_ICON | SHGFI_LARGEICON,
         )
     };
+    if result == 0 {
+        return None;
+    }
+    let info = unsafe { info.assume_init() };
 
-    (result != 0 && !info.hIcon.is_invalid()).then_some(info.hIcon)
+    (!info.hIcon.is_invalid()).then_some(info.hIcon)
 }
 
 #[cfg(test)]

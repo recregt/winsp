@@ -97,9 +97,12 @@ impl Canvas {
                 &mut gdi_rect,
                 DT_LEFT | DT_SINGLELINE | DT_VCENTER,
             );
-            let mut size = std::mem::zeroed::<SIZE>();
-            let _ = GetTextExtentPoint32W(self.hdc, &wide, &mut size);
-            size.cx
+            let mut size = std::mem::MaybeUninit::<SIZE>::uninit();
+            if GetTextExtentPoint32W(self.hdc, &wide, size.as_mut_ptr()).as_bool() {
+                size.assume_init().cx
+            } else {
+                0
+            }
         }
     }
 

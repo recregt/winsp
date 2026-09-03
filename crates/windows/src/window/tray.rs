@@ -118,8 +118,12 @@ pub(super) fn show_menu(hwnd: HWND, current_position: Anchor) {
         );
         let _ = AppendMenuW(menu, MF_STRING, TrayCommand::Exit as usize, w!("Exit"));
 
-        let mut cursor = std::mem::zeroed::<POINT>();
-        let _ = GetCursorPos(&mut cursor);
+        let mut cursor = std::mem::MaybeUninit::<POINT>::uninit();
+        let cursor = if GetCursorPos(cursor.as_mut_ptr()).is_ok() {
+            cursor.assume_init()
+        } else {
+            POINT { x: 0, y: 0 }
+        };
 
         let _ = SetForegroundWindow(hwnd);
         let _ = TrackPopupMenu(menu, TPM_RIGHTBUTTON, cursor.x, cursor.y, None, hwnd, None);
