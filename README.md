@@ -51,7 +51,14 @@ Get WinSP from the Microsoft Store:
 	<img src="https://get.microsoft.com/images/en-us%20dark.svg" width="200"/>
 </a>
 
-Alternatively, download the latest `winsp.msix` from the [Releases](https://github.com/recregt/winsp/releases) page and install it manually (`Add-AppxPackage`), or build it from source.
+Alternatively, download the latest `winsp.msix` from the [Releases](https://github.com/recregt/winsp/releases) page and install it manually, or build it from source. Manual installs use a self-signed certificate, so trust it once before installing:
+
+```powershell
+$cert = (Get-AuthenticodeSignature .\winsp.msix).SignerCertificate
+Export-Certificate -Cert $cert -FilePath winsp.cer
+Import-Certificate -FilePath winsp.cer -CertStoreLocation Cert:\LocalMachine\TrustedPeople
+Add-AppxPackage .\winsp.msix
+```
 
 ### Build from Source
 
