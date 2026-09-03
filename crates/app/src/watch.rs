@@ -68,16 +68,31 @@ pub(crate) fn refresh_state(catalog: &StartMenuCatalog) {
     winsp_windows::window::notify_catalog_ready();
 }
 
+fn next_wait(pending: bool, last_rescan: Instant) -> Duration {
+    if pending {
+        MIN_RECONCILE_GAP.saturating_sub(last_rescan.elapsed())
+    } else {
+        RECONCILE_INTERVAL
+    }
+}
+
 pub(crate) fn spawn_reconciler(catalog: Arc<Mutex<StartMenuCatalog>>) -> Sender<()> {
     let (reconcile_tx, reconcile_rx) = std::sync::mpsc::channel::<()>();
 
     std::thread::spawn(move || {
         let mut last_rescan = Instant::now();
+        let mut pending = false;
         loop {
-            let _ = reconcile_rx.recv_timeout(RECONCILE_INTERVAL);
-            while reconcile_rx.try_recv().is_ok() {}
+            let wait = next_wait(pending, last_rescan);
 
-            if last_rescan.elapsed() < MIN_RECONCILE_GAP {
+            if reconcile_rx.recv_timeout(wait).is_ok() {
+                pending = true;
+            }
+            while reconcile_rx.try_recv().is_ok() {
+                pending = true;
+            }
+
+            if pending && last_rescan.elapsed() < MIN_RECONCILE_GAP {
                 continue;
             }
 
@@ -87,6 +102,7 @@ pub(crate) fn spawn_reconciler(catalog: Arc<Mutex<StartMenuCatalog>>) -> Sender<
                 refresh_state(&cat);
             }
             last_rescan = Instant::now();
+            pending = false;
         }
     });
 
@@ -111,5 +127,29 @@ pub(crate) fn handle_watch_event(
                 notify_reconcile_channel_broken();
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn next_wait_uses_full_interval_when_nothing_pending() {
+        assert_eq!(next_wait(false, Instant::now()), RECONCILE_INTERVAL);
+    }
+
+    #[test]
+    fn next_wait_uses_the_remaining_cooldown_when_pending() {
+        let last_rescan = Instant::now() - Duration::from_secs(10);
+        let wait = next_wait(true, last_rescan);
+        assert!(wait <= MIN_RECONCILE_GAP);
+        assert!(wait > Duration::ZERO);
+    }
+
+    #[test]
+    fn next_wait_is_zero_once_the_cooldown_has_already_elapsed() {
+        let last_rescan = Instant::now() - MIN_RECONCILE_GAP - Duration::from_secs(1);
+        assert_eq!(next_wait(true, last_rescan), Duration::ZERO);
     }
 }
