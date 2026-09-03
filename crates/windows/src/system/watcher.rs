@@ -8,7 +8,10 @@ pub enum WatchEvent {
     Uncertain,
 }
 
-pub fn for_dirs<F>(dirs: &[PathBuf], on_event: F) -> notify::Result<Debouncer<RecommendedWatcher>>
+pub fn for_dirs<F>(
+    dirs: &[PathBuf],
+    on_event: F,
+) -> notify::Result<(Debouncer<RecommendedWatcher>, Vec<PathBuf>)>
 where
     F: Fn(WatchEvent) + Send + 'static,
 {
@@ -30,17 +33,13 @@ where
             failed_dirs.push(dir.clone());
         }
     }
-    if !failed_dirs.is_empty() {
-        super::toast::show(
-            "WinSP",
-            "Some folders couldn't be watched for changes. New apps there may not appear until WinSP restarts.",
-        );
-    }
 
-    Ok(debouncer)
+    Ok((debouncer, failed_dirs))
 }
 
-pub fn for_start_menu<F>(on_event: F) -> notify::Result<Debouncer<RecommendedWatcher>>
+pub fn for_start_menu<F>(
+    on_event: F,
+) -> notify::Result<(Debouncer<RecommendedWatcher>, Vec<PathBuf>)>
 where
     F: Fn(WatchEvent) + Send + 'static,
 {
@@ -59,10 +58,11 @@ mod tests {
         let (tx, rx) = channel();
         let new_app = dir.path().join("new_app.lnk");
 
-        let _watcher = for_dirs(&[dir.path().to_path_buf()], move |event| {
+        let (_watcher, failed_dirs) = for_dirs(&[dir.path().to_path_buf()], move |event| {
             let _ = tx.send(event);
         })
         .unwrap();
+        assert!(failed_dirs.is_empty());
 
         std::fs::write(&new_app, b"").unwrap();
 
@@ -83,10 +83,12 @@ mod tests {
         let (tx, rx) = channel();
         let new_app = dir.path().join("new_app.lnk");
 
-        let _watcher = for_dirs(&[missing, dir.path().to_path_buf()], move |event| {
-            let _ = tx.send(event);
-        })
-        .expect("for_dirs should still succeed even if one directory fails to watch");
+        let (_watcher, failed_dirs) =
+            for_dirs(&[missing.clone(), dir.path().to_path_buf()], move |event| {
+                let _ = tx.send(event);
+            })
+            .expect("for_dirs should still succeed even if one directory fails to watch");
+        assert_eq!(failed_dirs, vec![missing]);
 
         std::fs::write(&new_app, b"").unwrap();
 

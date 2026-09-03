@@ -15,6 +15,8 @@ const CMD_CHANGE_HOTKEY: usize = 1004;
 const CMD_POSITION_TOP: usize = 1005;
 const CMD_POSITION_CENTER: usize = 1006;
 
+const STARTUP_TASK_ID: &str = "WinSPStartup";
+
 pub(super) fn handle_event(window: &Window, event: WindowEvent) {
     match event {
         WindowEvent::Hotkey => toggle_visibility(window),
@@ -32,7 +34,10 @@ pub(super) fn handle_event(window: &Window, event: WindowEvent) {
             CMD_TOGGLE => toggle_visibility(window),
             CMD_AUTOSTART => {
                 use winsp_windows::system::autostart;
-                autostart::set_enabled(!autostart::is_enabled());
+                let enabled = autostart::is_enabled(STARTUP_TASK_ID);
+                if let Err(error) = autostart::set_enabled(STARTUP_TASK_ID, !enabled) {
+                    winsp_windows::system::toast::show("WinSP", &error.to_string());
+                }
             }
             CMD_CHANGE_HOTKEY => {
                 if let Some(state_arc) = APP_STATE.get()
@@ -162,7 +167,7 @@ fn build_tray_menu() -> Vec<MenuItem<'static>> {
         MenuItem {
             id: CMD_AUTOSTART,
             label: "Start with Windows",
-            checked: winsp_windows::system::autostart::is_enabled(),
+            checked: winsp_windows::system::autostart::is_enabled(STARTUP_TASK_ID),
         },
         MenuItem {
             id: CMD_CHANGE_HOTKEY,

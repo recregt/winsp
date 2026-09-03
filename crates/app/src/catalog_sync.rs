@@ -67,6 +67,13 @@ pub(crate) fn notify_watcher_init_failed() {
     );
 }
 
+pub(crate) fn notify_watch_dirs_failed() {
+    winsp_windows::system::toast::show(
+        "WinSP",
+        "Some folders couldn't be watched for changes. New apps there may not appear until WinSP restarts.",
+    );
+}
+
 pub(crate) fn refresh_state(catalog: &Catalog) {
     let index = engine_from_catalog(catalog);
     if let Ok(mut slot) = pending_index().lock() {
