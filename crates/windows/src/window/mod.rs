@@ -26,11 +26,11 @@ use windows::Win32::UI::WindowsAndMessaging::{
     DispatchMessageW, GWLP_USERDATA, GetClientRect, GetCursorPos, GetMessageW, GetSystemMetrics,
     GetWindowLongPtrW, GetWindowRect, HCURSOR, HICON, HWND_TOPMOST, IDC_ARROW, IsWindowVisible,
     LoadCursorW, LoadIconW, MSG, PM_REMOVE, PeekMessageW, PostMessageW, PostQuitMessage,
-    RegisterClassExW, SM_CXSCREEN, SM_CYSCREEN, SW_HIDE, SW_SHOW, SWP_NOACTIVATE, SWP_NOMOVE,
-    SWP_NOSIZE, SetForegroundWindow, SetWindowLongPtrW, SetWindowPos, ShowWindow, TranslateMessage,
-    WM_APP, WM_CHAR, WM_COMMAND, WM_DESTROY, WM_ERASEBKGND, WM_HOTKEY, WM_KEYDOWN, WM_KILLFOCUS,
-    WM_NCCREATE, WM_PAINT, WM_RBUTTONUP, WM_SYSKEYDOWN, WNDCLASSEXW, WS_EX_TOOLWINDOW,
-    WS_EX_TOPMOST, WS_POPUP,
+    RegisterClassExW, SM_CXSCREEN, SM_CYSCREEN, SPI_GETWORKAREA, SW_HIDE, SW_SHOW, SWP_NOACTIVATE,
+    SWP_NOMOVE, SWP_NOSIZE, SetForegroundWindow, SetWindowLongPtrW, SetWindowPos, ShowWindow,
+    SystemParametersInfoW, TranslateMessage, WM_APP, WM_CHAR, WM_COMMAND, WM_DESTROY,
+    WM_ERASEBKGND, WM_HOTKEY, WM_KEYDOWN, WM_KILLFOCUS, WM_NCCREATE, WM_PAINT, WM_RBUTTONUP,
+    WM_SYSKEYDOWN, WNDCLASSEXW, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP,
 };
 use windows::core::{HSTRING, PCWSTR};
 
@@ -201,11 +201,17 @@ fn active_monitor_rect() -> RECT {
 
 fn primary_work_area() -> RECT {
     unsafe {
-        RECT {
-            left: 0,
-            top: 0,
-            right: GetSystemMetrics(SM_CXSCREEN),
-            bottom: GetSystemMetrics(SM_CYSCREEN),
+        let mut rect = RECT::default();
+        let pvparam = Some(&mut rect as *mut RECT as *mut std::ffi::c_void);
+        if SystemParametersInfoW(SPI_GETWORKAREA, 0, pvparam, Default::default()).is_ok() {
+            rect
+        } else {
+            RECT {
+                left: 0,
+                top: 0,
+                right: GetSystemMetrics(SM_CXSCREEN),
+                bottom: GetSystemMetrics(SM_CYSCREEN),
+            }
         }
     }
 }
@@ -802,7 +808,7 @@ mod tests {
     #[test]
     fn position_for_top_horizontally_centers_and_anchors_near_the_top() {
         let monitor = active_monitor_rect();
-        let (x, y) = Anchor::Top.position_for(680, 64);
+        let (x, y) = Anchor::Top.position_within(monitor, 680, 64);
         assert_eq!(x, monitor.left + (monitor.right - monitor.left - 680) / 2);
         assert_eq!(y, monitor.top + (monitor.bottom - monitor.top) / 4);
     }
@@ -810,7 +816,7 @@ mod tests {
     #[test]
     fn position_for_center_vertically_centers_using_the_given_height() {
         let monitor = active_monitor_rect();
-        let (x, y) = Anchor::Center.position_for(680, 400);
+        let (x, y) = Anchor::Center.position_within(monitor, 680, 400);
         assert_eq!(x, monitor.left + (monitor.right - monitor.left - 680) / 2);
         assert_eq!(y, monitor.top + (monitor.bottom - monitor.top - 400) / 2);
     }
