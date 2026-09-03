@@ -1,6 +1,14 @@
 use lnk::encoding::WINDOWS_1252;
 
-pub(super) fn resolve_lnk_target(path: &std::path::Path) -> Option<String> {
+pub(crate) fn resolve_target(path: &std::path::Path, ext_lower: &str) -> Option<String> {
+    match ext_lower {
+        "lnk" => resolve_lnk_target(path),
+        "url" => resolve_url_target(path),
+        _ => None,
+    }
+}
+
+fn resolve_lnk_target(path: &std::path::Path) -> Option<String> {
     let shell_link = lnk::ShellLink::open(path, WINDOWS_1252).ok()?;
     identity_from_shell_link(&shell_link)
 }
@@ -68,6 +76,18 @@ fn expand_env_vars(raw: &str) -> String {
 
     result.push_str(rest);
     result
+}
+
+fn resolve_url_target(path: &std::path::Path) -> Option<String> {
+    let contents = std::fs::read_to_string(path).ok()?;
+    contents.lines().find_map(|line| {
+        let (key, value) = line.split_once('=')?;
+        if key.trim().eq_ignore_ascii_case("URL") {
+            Some(value.trim().to_string())
+        } else {
+            None
+        }
+    })
 }
 
 #[cfg(test)]

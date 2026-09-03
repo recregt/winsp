@@ -5,8 +5,8 @@ use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 use winsp_core::search::Engine;
-use winsp_windows::catalog::sources::apps::StartMenuCatalog;
-use winsp_windows::catalog::sources::watcher::WatchEvent;
+use winsp_windows::catalog::Catalog;
+use winsp_windows::system::watcher::WatchEvent;
 
 use crate::index::engine_from_catalog;
 
@@ -15,21 +15,21 @@ const MIN_RECONCILE_GAP: Duration = Duration::from_secs(30);
 
 pub(crate) enum StartupMode {
     TestWatch(std::path::PathBuf),
-    Real(StartMenuCatalog),
+    Real(Catalog),
 }
 
 pub(crate) fn startup_mode() -> StartupMode {
     match crate::test_watch_dir() {
         Some(dir) => StartupMode::TestWatch(dir),
         None => {
-            let catalog = StartMenuCatalog::for_start_menu();
+            let catalog = Catalog::scan();
             notify_if_scan_incomplete(&catalog);
             StartupMode::Real(catalog)
         }
     }
 }
 
-pub(crate) fn notify_if_scan_incomplete(catalog: &StartMenuCatalog) {
+pub(crate) fn notify_if_scan_incomplete(catalog: &Catalog) {
     static NOTIFIED: std::sync::Once = std::sync::Once::new();
     if !catalog.unreadable_dirs().is_empty() {
         NOTIFIED.call_once(|| {
@@ -67,7 +67,7 @@ pub(crate) fn notify_watcher_init_failed() {
     );
 }
 
-pub(crate) fn refresh_state(catalog: &StartMenuCatalog) {
+pub(crate) fn refresh_state(catalog: &Catalog) {
     let index = engine_from_catalog(catalog);
     if let Ok(mut slot) = pending_index().lock() {
         *slot = Some(index);
@@ -83,7 +83,7 @@ fn next_wait(pending: bool, last_rescan: Instant) -> Duration {
     }
 }
 
-pub(crate) fn spawn_reconciler(catalog: Arc<Mutex<StartMenuCatalog>>) -> Sender<()> {
+pub(crate) fn spawn_reconciler(catalog: Arc<Mutex<Catalog>>) -> Sender<()> {
     let (reconcile_tx, reconcile_rx) = std::sync::mpsc::channel::<()>();
 
     std::thread::spawn(move || {
@@ -118,7 +118,7 @@ pub(crate) fn spawn_reconciler(catalog: Arc<Mutex<StartMenuCatalog>>) -> Sender<
 
 pub(crate) fn handle_watch_event(
     event: WatchEvent,
-    catalog: &Arc<Mutex<StartMenuCatalog>>,
+    catalog: &Arc<Mutex<Catalog>>,
     reconcile_tx: &Sender<()>,
 ) {
     match event {
