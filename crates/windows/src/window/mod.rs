@@ -806,25 +806,41 @@ mod tests {
     }
 
     #[test]
-    fn position_for_top_horizontally_centers_and_anchors_near_the_top() {
-        let monitor = active_monitor_rect();
+    fn position_within_top_horizontally_centers_and_anchors_near_the_top() {
+        let monitor = RECT {
+            left: 0,
+            top: 0,
+            right: 1920,
+            bottom: 1080,
+        };
         let (x, y) = Anchor::Top.position_within(monitor, 680, 64);
-        assert_eq!(x, monitor.left + (monitor.right - monitor.left - 680) / 2);
-        assert_eq!(y, monitor.top + (monitor.bottom - monitor.top) / 4);
+        assert_eq!(x, (1920 - 680) / 2);
+        assert_eq!(y, 1080 / 4);
     }
 
     #[test]
-    fn position_for_center_vertically_centers_using_the_given_height() {
-        let monitor = active_monitor_rect();
+    fn position_within_center_vertically_centers_using_the_given_height() {
+        let monitor = RECT {
+            left: 0,
+            top: 0,
+            right: 1920,
+            bottom: 1080,
+        };
         let (x, y) = Anchor::Center.position_within(monitor, 680, 400);
-        assert_eq!(x, monitor.left + (monitor.right - monitor.left - 680) / 2);
-        assert_eq!(y, monitor.top + (monitor.bottom - monitor.top - 400) / 2);
+        assert_eq!(x, (1920 - 680) / 2);
+        assert_eq!(y, (1080 - 400) / 2);
     }
 
     #[test]
     fn top_and_center_agree_on_x_but_differ_on_y() {
-        let (top_x, top_y) = Anchor::Top.position_for(680, 64);
-        let (center_x, center_y) = Anchor::Center.position_for(680, 64);
+        let monitor = RECT {
+            left: 0,
+            top: 0,
+            right: 1920,
+            bottom: 1080,
+        };
+        let (top_x, top_y) = Anchor::Top.position_within(monitor, 680, 64);
+        let (center_x, center_y) = Anchor::Center.position_within(monitor, 680, 64);
         assert_eq!(top_x, center_x);
         assert_ne!(top_y, center_y);
     }
