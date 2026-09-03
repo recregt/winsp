@@ -23,7 +23,7 @@ use windows::Win32::UI::Input::KeyboardAndMouse::{MOD_NOREPEAT, RegisterHotKey, 
 use windows::Win32::UI::WindowsAndMessaging::{
     CS_HREDRAW, CS_VREDRAW, CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW,
     GetClientRect, GetMessageW, GetSystemMetrics, GetWindowRect, HCURSOR, HICON, HWND_TOPMOST,
-    IDC_ARROW, IsWindowVisible, LoadCursorW, LoadIconW, MSG, PM_REMOVE, PeekMessageW,
+    IDC_ARROW, IsWindowVisible, LoadCursorW, LoadIconW, MSG, PM_REMOVE, PeekMessageW, PostMessageW,
     PostQuitMessage, RegisterClassExW, SM_CXSCREEN, SM_CYSCREEN, SW_HIDE, SW_SHOW, SWP_NOACTIVATE,
     SWP_NOMOVE, SWP_NOSIZE, SetForegroundWindow, SetWindowPos, ShowWindow, TranslateMessage,
     WM_APP, WM_CHAR, WM_COMMAND, WM_DESTROY, WM_ERASEBKGND, WM_HOTKEY, WM_KEYDOWN, WM_KILLFOCUS,
@@ -42,6 +42,22 @@ pub use canvas::testing;
 static HANDLER: OnceLock<fn(&Window, Message)> = OnceLock::new();
 
 pub(crate) const WM_SHOW_REQUEST: u32 = WM_APP + 2;
+const WM_CATALOG_READY: u32 = WM_APP + 3;
+
+static MAIN_HWND: OnceLock<isize> = OnceLock::new();
+
+pub fn notify_catalog_ready() {
+    if let Some(&raw) = MAIN_HWND.get() {
+        unsafe {
+            let _ = PostMessageW(
+                Some(HWND(raw as *mut _)),
+                WM_CATALOG_READY,
+                WPARAM(0),
+                LPARAM(0),
+            );
+        }
+    }
+}
 
 unsafe extern "system" fn dispatch(
     hwnd: HWND,
@@ -100,6 +116,10 @@ unsafe extern "system" fn dispatch(
         }
         WM_SHOW_REQUEST => {
             handler(&window, Message::ShowRequest);
+            LRESULT(0)
+        }
+        WM_CATALOG_READY => {
+            handler(&window, Message::CatalogReady);
             LRESULT(0)
         }
         WM_PAINT => {
@@ -203,6 +223,7 @@ impl Window {
 
             let handle = Self { hwnd };
             icon_cache::register_repaint_target(hwnd);
+            let _ = MAIN_HWND.set(hwnd.0 as isize);
 
             let backdrop = DWMSBT_TRANSIENTWINDOW;
             let _ = DwmSetWindowAttribute(
@@ -581,8 +602,6 @@ mod tests {
 
     #[test]
     fn discard_pending_char_removes_a_queued_char_message() {
-        use windows::Win32::UI::WindowsAndMessaging::PostMessageW;
-
         let class_name = HSTRING::from("WinSpTest_DiscardPendingCharWindow");
         let hwnd = create_test_window(&class_name);
         assert!(!hwnd.is_invalid(), "test window creation should succeed");
@@ -611,8 +630,6 @@ mod tests {
 
     #[test]
     fn discard_pending_char_leaves_unrelated_messages_alone() {
-        use windows::Win32::UI::WindowsAndMessaging::PostMessageW;
-
         let class_name = HSTRING::from("WinSpTest_DiscardPendingCharUnrelatedWindow");
         let hwnd = create_test_window(&class_name);
         assert!(!hwnd.is_invalid(), "test window creation should succeed");

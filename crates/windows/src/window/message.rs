@@ -128,6 +128,7 @@ pub enum Message {
     Char(char),
     KeyDown(Key, Modifiers),
     ShowRequest,
+    CatalogReady,
     Paint,
 }
 
