@@ -2,13 +2,13 @@ use super::registry::read_dword;
 use std::sync::OnceLock;
 use windows::Win32::Foundation::{FARPROC, HMODULE, HWND};
 use windows::Win32::System::LibraryLoader::{GetProcAddress, LoadLibraryA};
-use windows::Win32::System::Registry::HKEY_CURRENT_USER;
 use windows::Win32::UI::WindowsAndMessaging::IsWindow;
 use windows::core::{PCSTR, s};
+use windows_registry::CURRENT_USER;
 
 pub(crate) fn system_uses_dark_mode() -> bool {
     read_dword(
-        HKEY_CURRENT_USER,
+        CURRENT_USER,
         r"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize",
         "AppsUseLightTheme",
     )

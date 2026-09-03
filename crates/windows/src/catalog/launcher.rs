@@ -4,7 +4,7 @@ pub fn run(target: &AppTarget) -> Result<(), String> {
     match target {
         AppTarget::Path(path) => launch_path(path),
         AppTarget::Aumid(aumid) => launch_aumid(aumid),
-        AppTarget::SettingUri(uri) => launch_uri(uri),
+        AppTarget::Uri(uri) => launch_uri(uri),
         AppTarget::SystemCommand(cmd) => launch_command(cmd),
     }
 }
@@ -52,12 +52,12 @@ fn shell_execute_error_message(code: usize) -> String {
     }
 }
 
-fn launch_aumid(aumid: &str) -> Result<(), String> {
+fn launch_via_explorer(param: &str) -> bool {
     use windows::Win32::UI::Shell::ShellExecuteW;
     use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
     use windows::core::{HSTRING, w};
 
-    let param = HSTRING::from(format!("shell:AppsFolder\\{aumid}"));
+    let param = HSTRING::from(param);
 
     let instance = unsafe {
         ShellExecuteW(
@@ -70,7 +70,11 @@ fn launch_aumid(aumid: &str) -> Result<(), String> {
         )
     };
 
-    if instance.0 as usize > 32 {
+    instance.0 as usize > 32
+}
+
+fn launch_aumid(aumid: &str) -> Result<(), String> {
+    if launch_via_explorer(&format!("shell:AppsFolder\\{aumid}")) {
         Ok(())
     } else {
         Err(format!("Failed to launch UWP app: {aumid}"))
@@ -78,7 +82,11 @@ fn launch_aumid(aumid: &str) -> Result<(), String> {
 }
 
 fn launch_uri(uri: &str) -> Result<(), String> {
-    launch_path(uri)
+    if launch_via_explorer(uri) {
+        Ok(())
+    } else {
+        Err(format!("Failed to open: {uri}"))
+    }
 }
 
 fn launch_command(cmd: &str) -> Result<(), String> {

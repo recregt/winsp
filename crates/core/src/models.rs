@@ -4,7 +4,7 @@ use std::sync::Arc;
 pub enum AppTarget {
     Path(String),
     Aumid(String),
-    SettingUri(String),
+    Uri(String),
     SystemCommand(String),
 }
 
@@ -92,7 +92,7 @@ impl SearchResult {
         let subtitle = item.description.clone().or_else(|| match &item.target {
             AppTarget::Path(p) => Some(p.clone().into()),
             AppTarget::Aumid(a) => Some(format!("Store App: {a}").into()),
-            AppTarget::SettingUri(u) => Some(format!("Settings: {u}").into()),
+            AppTarget::Uri(u) => Some(format!("Settings: {u}").into()),
             AppTarget::SystemCommand(c) => Some(format!("System: {c}").into()),
         });
 

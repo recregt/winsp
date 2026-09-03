@@ -33,23 +33,24 @@ pub(super) fn select_prev(state: &mut AppState) {
     }
 }
 
-pub(super) fn execute_selected(state: &AppState) -> Result<Option<String>, String> {
+pub(super) enum ExecuteOutcome {
+    Copy(String),
+    Launch(AppTarget),
+    None,
+}
+
+pub(super) fn execute_selected(state: &AppState) -> ExecuteOutcome {
     let Some(selected) = state.results.get(state.selected_index) else {
-        return Ok(None);
+        return ExecuteOutcome::None;
     };
     match &selected.kind {
-        SearchResultKind::App(item) => {
-            winsp_windows::catalog::launcher::run(&item.target)?;
-            Ok(None)
-        }
-        SearchResultKind::Calculation { result, .. } => Ok(Some(result.clone())),
+        SearchResultKind::App(item) => ExecuteOutcome::Launch(item.target.clone()),
+        SearchResultKind::Calculation { result, .. } => ExecuteOutcome::Copy(result.clone()),
         SearchResultKind::WebSearch { url, .. } => {
-            winsp_windows::catalog::launcher::run(&AppTarget::Path(url.clone()))?;
-            Ok(None)
+            ExecuteOutcome::Launch(AppTarget::Uri(url.clone()))
         }
         SearchResultKind::SystemCommand { command, .. } => {
-            winsp_windows::catalog::launcher::run(&AppTarget::SystemCommand(command.clone()))?;
-            Ok(None)
+            ExecuteOutcome::Launch(AppTarget::SystemCommand(command.clone()))
         }
     }
 }
@@ -62,6 +63,43 @@ mod tests {
     fn sample_state() -> AppState {
         let index = populate_search_index();
         AppState::new(index)
+    }
+
+    #[test]
+    fn execute_selected_with_no_matches_returns_none() {
+        let mut state = sample_state();
+        for c in "zzzznomatchzzzz".chars() {
+            insert_char(&mut state, c);
+        }
+        assert!(state.results.is_empty());
+        assert!(matches!(execute_selected(&state), ExecuteOutcome::None));
+    }
+
+    #[test]
+    fn execute_selected_on_a_calculation_returns_a_value_to_copy_without_launching() {
+        let mut state = sample_state();
+        for c in "1+1".chars() {
+            insert_char(&mut state, c);
+        }
+
+        match execute_selected(&state) {
+            ExecuteOutcome::Copy(result) => assert_eq!(result, "2"),
+            _ => panic!("expected a Copy outcome, got a different variant instead"),
+        }
+    }
+
+    #[test]
+    fn execute_selected_on_an_app_returns_its_target_without_launching() {
+        let mut state = sample_state();
+        for c in "calc".chars() {
+            insert_char(&mut state, c);
+        }
+        assert!(!state.results.is_empty());
+
+        assert!(matches!(
+            execute_selected(&state),
+            ExecuteOutcome::Launch(_)
+        ));
     }
 
     #[test]

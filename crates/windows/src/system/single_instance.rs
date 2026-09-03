@@ -26,16 +26,24 @@ pub fn acquire(mutex_name: &str, window_class_name: &str) -> Option<InstanceGuar
             let _ = CloseHandle(handle);
         }
         if !request_show(window_class_name) {
-            crate::system::toast::show(
-                "WinSP",
-                "WinSP is already running but couldn't be brought to the front.",
-            );
+            notify_already_running();
         }
         return None;
     }
 
     Some(InstanceGuard(handle))
 }
+
+#[cfg(not(test))]
+fn notify_already_running() {
+    crate::system::toast::show(
+        "WinSP",
+        "WinSP is already running but couldn't be brought to the front.",
+    );
+}
+
+#[cfg(test)]
+fn notify_already_running() {}
 
 fn request_show(window_class_name: &str) -> bool {
     let class_name = HSTRING::from(window_class_name);

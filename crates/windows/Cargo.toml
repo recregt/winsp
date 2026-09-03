@@ -11,6 +11,7 @@ test-support = []
 
 [dependencies]
 lnk = "0.6"
+lru = "0.18"
 notify-debouncer-mini = "0.7.0"
 winsp-core = { path = "../core" }
 
@@ -19,6 +20,7 @@ tempfile = "3.27.0"
 
 [target.'cfg(windows)'.dependencies]
 num_enum = "0.7"
+windows-registry = "0.6"
 windows = { version = "0.62", features = [
     "ApplicationModel",
     "ApplicationModel_DataTransfer",
@@ -30,12 +32,12 @@ windows = { version = "0.62", features = [
     "Win32_Security",
     "Win32_System_Com",
     "Win32_System_LibraryLoader",
-    "Win32_System_Registry",
     "Win32_System_Threading",
     "Win32_UI_HiDpi",
     "Win32_UI_Input_KeyboardAndMouse",
     "Win32_UI_Shell",
     "Win32_UI_WindowsAndMessaging",
     "Win32_Storage_FileSystem",
+    "Win32_Storage_Packaging_Appx",
 ] }
 

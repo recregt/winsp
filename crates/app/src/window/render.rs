@@ -2,7 +2,8 @@ use std::sync::OnceLock;
 
 use winsp_core::models::{IconSource, SearchResult, SearchResultKind};
 use winsp_windows::window::{
-    Canvas, Color, Font, FontWeight, Rect, icon_for_path, register_embedded_font,
+    Canvas, Color, Font, FontWeight, Rect, icon_for_path, mark_paint_started,
+    register_embedded_font,
 };
 
 use super::{APP_STATE, ITEM_ROW_HEIGHT, SEARCH_BAR_HEIGHT, WINDOW_WIDTH};
@@ -46,7 +47,7 @@ fn draw_result_icon(canvas: &Canvas, result: &SearchResult, rect: Rect) {
     match &item.icon {
         Some(IconSource::Path(path)) => {
             if let Some(icon) = icon_for_path(path) {
-                canvas.draw_icon(icon, rect);
+                canvas.draw_icon(icon.handle(), rect);
             }
         }
         Some(IconSource::Glyph(glyph)) => {
@@ -105,6 +106,7 @@ fn draw_highlighted_title(
 }
 
 pub(super) fn render_ui(canvas: &Canvas, client_rect: Rect) {
+    mark_paint_started();
     canvas.fill_rect(client_rect, Color(0x001E1E1E));
 
     let Some(state_arc) = APP_STATE.get() else {
@@ -238,11 +240,21 @@ mod tests {
         SearchResult::from_app(std::sync::Arc::new(item), 0, Vec::new())
     }
 
+    fn wait_for_icon(path: &str) {
+        for _ in 0..200 {
+            if icon_for_path(path).is_some() {
+                return;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        panic!("icon for {path} did not resolve in time");
+    }
+
     #[test]
     fn draw_result_icon_paints_the_glyph_color_for_a_glyph_icon() {
         let surface = OffscreenSurface::new(40, 40);
-        let item = AppItem::new("id", "Name", AppTarget::SettingUri("ms-settings:".into()))
-            .with_icon_glyph('A');
+        let item =
+            AppItem::new("id", "Name", AppTarget::Uri("ms-settings:".into())).with_icon_glyph('A');
 
         draw_result_icon(&surface.canvas(), &app_result(item), ICON_BOUNDS);
 
@@ -253,9 +265,11 @@ mod tests {
     fn draw_result_icon_paints_a_real_shell_icon_for_a_resolvable_path() {
         let surface = OffscreenSurface::new(40, 40);
         let exe = std::env::current_exe().unwrap();
-        let item = AppItem::new("id", "Name", AppTarget::Path(exe.to_string_lossy().into()))
-            .with_icon(exe.to_string_lossy());
+        let exe_path = exe.to_string_lossy().into_owned();
+        let item = AppItem::new("id", "Name", AppTarget::Path(exe_path.clone()))
+            .with_icon(exe_path.clone());
 
+        wait_for_icon(&exe_path);
         draw_result_icon(&surface.canvas(), &app_result(item), ICON_BOUNDS);
 
         assert!(surface.contains_pixel_other_than(Color(0x00000000)));

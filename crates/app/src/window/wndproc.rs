@@ -91,15 +91,23 @@ pub(super) fn handle_message(window: &Window, message: Message) {
                     }
                     Key::Enter => {
                         match interaction::execute_selected(&state) {
-                            Ok(Some(result)) => {
+                            interaction::ExecuteOutcome::Copy(result) => {
                                 winsp_windows::system::clipboard::copy(&result);
                                 winsp_windows::system::toast::show(
                                     "WinSP",
                                     &format!("Copied: {result}"),
                                 );
                             }
-                            Ok(None) => {}
-                            Err(error) => winsp_windows::system::toast::show("WinSP", &error),
+                            interaction::ExecuteOutcome::Launch(target) => {
+                                std::thread::spawn(move || {
+                                    if let Err(error) =
+                                        winsp_windows::catalog::launcher::run(&target)
+                                    {
+                                        winsp_windows::system::toast::show("WinSP", &error);
+                                    }
+                                });
+                            }
+                            interaction::ExecuteOutcome::None => {}
                         }
                         should_hide = true;
                     }

@@ -14,7 +14,7 @@ fn test_full_flow_from_construction_to_search_result() {
         AppItem::new(
             "display",
             "Display Settings",
-            AppTarget::SettingUri("ms-settings:display".into()),
+            AppTarget::Uri("ms-settings:display".into()),
         )
         .with_description("Change your display resolution")
         .with_keywords(vec!["screen".into(), "monitor".into()]),

@@ -149,7 +149,7 @@ mod tests {
             AppItem::new(
                 "settings",
                 "Windows Settings",
-                AppTarget::SettingUri("ms-settings:".into()),
+                AppTarget::Uri("ms-settings:".into()),
             ),
         ]);
         index

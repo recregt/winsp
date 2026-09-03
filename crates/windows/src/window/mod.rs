@@ -26,13 +26,13 @@ use windows::Win32::UI::WindowsAndMessaging::{
     IDC_ARROW, IsWindowVisible, LoadCursorW, LoadIconW, MSG, PM_REMOVE, PeekMessageW,
     PostQuitMessage, RegisterClassExW, SM_CXSCREEN, SM_CYSCREEN, SW_HIDE, SW_SHOW, SWP_NOACTIVATE,
     SWP_NOMOVE, SWP_NOSIZE, SetForegroundWindow, SetWindowPos, ShowWindow, TranslateMessage,
-    WM_APP, WM_CHAR, WM_COMMAND, WM_DESTROY, WM_HOTKEY, WM_KEYDOWN, WM_KILLFOCUS, WM_PAINT,
-    WM_RBUTTONUP, WM_SYSKEYDOWN, WNDCLASSEXW, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP,
+    WM_APP, WM_CHAR, WM_COMMAND, WM_DESTROY, WM_ERASEBKGND, WM_HOTKEY, WM_KEYDOWN, WM_KILLFOCUS,
+    WM_PAINT, WM_RBUTTONUP, WM_SYSKEYDOWN, WNDCLASSEXW, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP,
 };
 use windows::core::{HSTRING, PCWSTR};
 
 pub use canvas::{Canvas, Color, Font, FontGuard, FontWeight, Rect, register_embedded_font};
-pub use icon_cache::icon_for_path;
+pub use icon_cache::{icon_for_path, mark_paint_started};
 pub use message::{Hotkey, HotkeySlot, Key, Message, Modifiers};
 pub use tray::TrayCommand;
 
@@ -49,11 +49,15 @@ unsafe extern "system" fn dispatch(
     wparam: WPARAM,
     lparam: LPARAM,
 ) -> LRESULT {
+    if msg == WM_ERASEBKGND {
+        return LRESULT(1);
+    }
+
     let Some(handler) = HANDLER.get() else {
         return unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) };
     };
     let window = Window::new(hwnd);
-    match msg {
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| match msg {
         WM_HOTKEY => {
             handler(&window, Message::Hotkey);
             LRESULT(0)
@@ -108,7 +112,9 @@ unsafe extern "system" fn dispatch(
             LRESULT(0)
         }
         _ => unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) },
-    }
+    }));
+
+    result.unwrap_or_else(|_| unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) })
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -196,6 +202,7 @@ impl Window {
             };
 
             let handle = Self { hwnd };
+            icon_cache::register_repaint_target(hwnd);
 
             let backdrop = DWMSBT_TRANSIENTWINDOW;
             let _ = DwmSetWindowAttribute(
@@ -283,7 +290,7 @@ impl Window {
 
     pub fn invalidate(&self) {
         unsafe {
-            let _ = InvalidateRect(Some(self.hwnd), None, true);
+            let _ = InvalidateRect(Some(self.hwnd), None, false);
         }
     }
 
@@ -457,6 +464,60 @@ mod tests {
                 None,
             )
             .unwrap_or(HWND(std::ptr::null_mut()))
+        }
+    }
+
+    #[test]
+    fn erase_background_is_suppressed_to_avoid_a_white_flash() {
+        let result = unsafe {
+            dispatch(
+                HWND(std::ptr::null_mut()),
+                WM_ERASEBKGND,
+                WPARAM(0),
+                LPARAM(0),
+            )
+        };
+        assert_eq!(result, LRESULT(1));
+    }
+
+    static SURVIVED_HANDLER_CALLED: std::sync::atomic::AtomicBool =
+        std::sync::atomic::AtomicBool::new(false);
+
+    fn panicking_test_handler(_window: &Window, message: Message) {
+        if matches!(message, Message::TrayRightClick) {
+            panic!("deliberate panic to prove dispatch recovers from it");
+        }
+        SURVIVED_HANDLER_CALLED.store(true, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    #[test]
+    fn dispatch_survives_a_panicking_handler_and_keeps_working() {
+        let class_name = HSTRING::from("WinSpTest_DispatchPanicWindow");
+        let hwnd = create_test_window(&class_name);
+        assert!(!hwnd.is_invalid(), "test window creation should succeed");
+
+        let _ = HANDLER.set(panicking_test_handler);
+
+        let panicked_result = unsafe {
+            dispatch(
+                hwnd,
+                tray::WM_TRAYICON,
+                WPARAM(0),
+                LPARAM(WM_RBUTTONUP as isize),
+            )
+        };
+        assert_eq!(panicked_result, LRESULT(0));
+
+        SURVIVED_HANDLER_CALLED.store(false, std::sync::atomic::Ordering::SeqCst);
+        let _ = unsafe { dispatch(hwnd, WM_HOTKEY, WPARAM(0), LPARAM(0)) };
+        assert!(
+            SURVIVED_HANDLER_CALLED.load(std::sync::atomic::Ordering::SeqCst),
+            "the handler must still run on a later message after an earlier one panicked"
+        );
+
+        unsafe {
+            let _ = DestroyWindow(hwnd);
+            let _ = UnregisterClassW(&class_name, Some(GetModuleHandleW(None).unwrap().into()));
         }
     }
 
