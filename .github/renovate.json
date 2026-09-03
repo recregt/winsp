@@ -3,7 +3,7 @@
   "extends": [
     "config:recommended"
   ],
-  "fetchChangeLogs": "on",
+  "fetchChangeLogs": "pr",
   "semanticCommits": "enabled",
   "semanticCommitType": "chore",
   "semanticCommitScope": "cargo",
