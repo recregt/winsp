@@ -29,8 +29,8 @@ use windows::Win32::UI::WindowsAndMessaging::{
 };
 use windows::core::{HSTRING, PCWSTR};
 
-use super::canvas::{Canvas, Rect as CanvasRect};
 use super::event::{self, Hotkey, HotkeySlot, Key, WindowEvent};
+use super::gfx::{Canvas, Rect};
 use super::icon_cache;
 use super::tray::{self, MenuItem};
 
@@ -76,9 +76,8 @@ unsafe extern "system" fn dispatch(
     if handler_ptr == 0 {
         return unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) };
     }
-    let handler: fn(&NativeWindow, WindowEvent) =
-        unsafe { std::mem::transmute(handler_ptr as usize) };
-    let window = NativeWindow::new(hwnd);
+    let handler: fn(&Window, WindowEvent) = unsafe { std::mem::transmute(handler_ptr as usize) };
+    let window = Window::new(hwnd);
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| match msg {
         WM_HOTKEY => {
             handler(&window, WindowEvent::Hotkey);
@@ -207,11 +206,11 @@ fn primary_work_area() -> RECT {
     }
 }
 
-pub struct NativeWindow {
+pub struct Window {
     hwnd: HWND,
 }
 
-impl NativeWindow {
+impl Window {
     fn new(hwnd: HWND) -> Self {
         Self { hwnd }
     }
@@ -221,7 +220,7 @@ impl NativeWindow {
         title: &str,
         width: i32,
         height: i32,
-        handler: fn(&NativeWindow, WindowEvent),
+        handler: fn(&Window, WindowEvent),
     ) -> Result<Self, std::io::Error> {
         let handler_ptr = handler as *const () as *mut std::ffi::c_void;
         unsafe {
@@ -372,7 +371,8 @@ impl NativeWindow {
         }
     }
 
-    pub fn paint(&self, draw: impl FnOnce(&Canvas, CanvasRect)) {
+    pub fn paint(&self, draw: impl FnOnce(&Canvas, Rect)) {
+        icon_cache::mark_paint_started();
         unsafe {
             let mut ps = std::mem::MaybeUninit::<PAINTSTRUCT>::uninit();
             let hdc = BeginPaint(self.hwnd, ps.as_mut_ptr());
@@ -395,7 +395,7 @@ impl NativeWindow {
             let canvas = Canvas::new(mem_dc);
             draw(
                 &canvas,
-                CanvasRect {
+                Rect {
                     left: client_rect.left,
                     top: client_rect.top,
                     right: client_rect.right,
@@ -577,7 +577,7 @@ mod tests {
     static TASKBAR_RESTARTED_CALLED: std::sync::atomic::AtomicBool =
         std::sync::atomic::AtomicBool::new(false);
 
-    fn taskbar_restart_test_handler(_window: &NativeWindow, event: WindowEvent) {
+    fn taskbar_restart_test_handler(_window: &Window, event: WindowEvent) {
         if matches!(event, WindowEvent::TaskbarRestarted) {
             TASKBAR_RESTARTED_CALLED.store(true, std::sync::atomic::Ordering::SeqCst);
         }
@@ -614,7 +614,7 @@ mod tests {
     static SURVIVED_HANDLER_CALLED: std::sync::atomic::AtomicBool =
         std::sync::atomic::AtomicBool::new(false);
 
-    fn panicking_test_handler(_window: &NativeWindow, event: WindowEvent) {
+    fn panicking_test_handler(_window: &Window, event: WindowEvent) {
         if matches!(event, WindowEvent::TrayRightClick) {
             panic!("deliberate panic to prove dispatch recovers from it");
         }
@@ -663,11 +663,11 @@ mod tests {
     static SECOND_WINDOW_HANDLER_CALLED: std::sync::atomic::AtomicBool =
         std::sync::atomic::AtomicBool::new(false);
 
-    fn first_window_test_handler(_window: &NativeWindow, _event: WindowEvent) {
+    fn first_window_test_handler(_window: &Window, _event: WindowEvent) {
         FIRST_WINDOW_HANDLER_CALLED.store(true, std::sync::atomic::Ordering::SeqCst);
     }
 
-    fn second_window_test_handler(_window: &NativeWindow, _event: WindowEvent) {
+    fn second_window_test_handler(_window: &Window, _event: WindowEvent) {
         SECOND_WINDOW_HANDLER_CALLED.store(true, std::sync::atomic::Ordering::SeqCst);
     }
 
@@ -676,7 +676,7 @@ mod tests {
         FIRST_WINDOW_HANDLER_CALLED.store(false, std::sync::atomic::Ordering::SeqCst);
         SECOND_WINDOW_HANDLER_CALLED.store(false, std::sync::atomic::Ordering::SeqCst);
 
-        let first = NativeWindow::create(
+        let first = Window::create(
             "WinSpTest_FirstRecreatedWindow",
             "first",
             10,
@@ -684,7 +684,7 @@ mod tests {
             first_window_test_handler,
         )
         .expect("first window creation should succeed");
-        let second = NativeWindow::create(
+        let second = Window::create(
             "WinSpTest_SecondRecreatedWindow",
             "second",
             10,
@@ -712,7 +712,7 @@ mod tests {
         let class_name = HSTRING::from("WinSpTest_HotkeySlotsWindow");
         let hwnd = create_test_window(&class_name);
         assert!(!hwnd.is_invalid(), "test window creation should succeed");
-        let window = NativeWindow::new(hwnd);
+        let window = Window::new(hwnd);
 
         let primary = Hotkey::new(
             Modifiers {
@@ -746,7 +746,7 @@ mod tests {
         let class_name = HSTRING::from("WinSpTest_DiscardPendingCharWindow");
         let hwnd = create_test_window(&class_name);
         assert!(!hwnd.is_invalid(), "test window creation should succeed");
-        let window = NativeWindow::new(hwnd);
+        let window = Window::new(hwnd);
 
         unsafe {
             let _ = PostMessageW(Some(hwnd), WM_CHAR, WPARAM('a' as usize), LPARAM(0));
@@ -774,7 +774,7 @@ mod tests {
         let class_name = HSTRING::from("WinSpTest_DiscardPendingCharUnrelatedWindow");
         let hwnd = create_test_window(&class_name);
         assert!(!hwnd.is_invalid(), "test window creation should succeed");
-        let window = NativeWindow::new(hwnd);
+        let window = Window::new(hwnd);
 
         unsafe {
             let _ = PostMessageW(Some(hwnd), WM_APP, WPARAM(0), LPARAM(0));
@@ -868,7 +868,7 @@ mod tests {
         let class_name = HSTRING::from("WinSpTest_CenterWindow");
         let hwnd = create_test_window(&class_name);
         assert!(!hwnd.is_invalid(), "test window creation should succeed");
-        let window = NativeWindow::new(hwnd);
+        let window = Window::new(hwnd);
 
         window.center(680, 64, Anchor::Center);
 
@@ -894,7 +894,7 @@ mod tests {
         let class_name = HSTRING::from("WinSpTest_RepositionWindow");
         let hwnd = create_test_window(&class_name);
         assert!(!hwnd.is_invalid(), "test window creation should succeed");
-        let window = NativeWindow::new(hwnd);
+        let window = Window::new(hwnd);
 
         window.center(680, 64, Anchor::Top);
         window.resize(680, 400);

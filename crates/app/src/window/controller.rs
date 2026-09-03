@@ -1,4 +1,4 @@
-use winsp_windows::window::{Anchor, Key, MenuItem, Modifiers, NativeWindow, WindowEvent};
+use winsp_windows::window::{Anchor, Key, MenuItem, Modifiers, Window, WindowEvent};
 
 use crate::config::WindowPosition;
 use crate::state::ExecuteOutcome;
@@ -15,7 +15,7 @@ const CMD_CHANGE_HOTKEY: usize = 1004;
 const CMD_POSITION_TOP: usize = 1005;
 const CMD_POSITION_CENTER: usize = 1006;
 
-pub(super) fn handle_event(window: &NativeWindow, event: WindowEvent) {
+pub(super) fn handle_event(window: &Window, event: WindowEvent) {
     match event {
         WindowEvent::Hotkey => toggle_visibility(window),
         WindowEvent::ShowRequest => show_fresh(window),
@@ -189,7 +189,7 @@ fn build_tray_menu() -> Vec<MenuItem<'static>> {
     ]
 }
 
-pub(super) fn show_fresh(handle: &NativeWindow) {
+pub(super) fn show_fresh(handle: &Window) {
     handle.center(
         super::WINDOW_WIDTH,
         super::SEARCH_BAR_HEIGHT,
@@ -210,7 +210,7 @@ pub(super) fn show_fresh(handle: &NativeWindow) {
     handle.invalidate();
 }
 
-pub(super) fn toggle_visibility(handle: &NativeWindow) {
+pub(super) fn toggle_visibility(handle: &Window) {
     if handle.is_visible() {
         handle.hide();
     } else {
@@ -218,11 +218,11 @@ pub(super) fn toggle_visibility(handle: &NativeWindow) {
     }
 }
 
-pub(super) fn resize_window_for_results(handle: &NativeWindow, results_count: usize) {
+pub(super) fn resize_window_for_results(handle: &Window, results_count: usize) {
     handle.resize(super::WINDOW_WIDTH, result_list_height(results_count));
 }
 
-pub(super) fn begin_hotkey_capture(handle: &NativeWindow) {
+pub(super) fn begin_hotkey_capture(handle: &Window) {
     handle.center(
         super::WINDOW_WIDTH,
         super::SEARCH_BAR_HEIGHT,
@@ -233,7 +233,7 @@ pub(super) fn begin_hotkey_capture(handle: &NativeWindow) {
     handle.invalidate();
 }
 
-fn apply_catalog_ready(window: &NativeWindow) {
+fn apply_catalog_ready(window: &Window) {
     let Some(index) = crate::catalog_sync::take_pending_index() else {
         return;
     };
@@ -252,7 +252,7 @@ fn apply_catalog_ready(window: &NativeWindow) {
     window.invalidate();
 }
 
-fn set_position(window: &NativeWindow, position: WindowPosition) {
+fn set_position(window: &Window, position: WindowPosition) {
     let Some(settings_mutex) = SETTINGS.get() else {
         return;
     };
@@ -277,7 +277,7 @@ fn set_position(window: &NativeWindow, position: WindowPosition) {
     }
 }
 
-fn handle_capture_key(window: &NativeWindow, key: Key, modifiers: Modifiers) {
+fn handle_capture_key(window: &Window, key: Key, modifiers: Modifiers) {
     match hotkey::evaluate(key, modifiers) {
         CaptureOutcome::Cancelled => end_capture(window),
         CaptureOutcome::Invalid => {}
@@ -303,7 +303,7 @@ fn handle_capture_key(window: &NativeWindow, key: Key, modifiers: Modifiers) {
     }
 }
 
-fn end_capture(window: &NativeWindow) {
+fn end_capture(window: &Window) {
     if let Some(state_arc) = APP_STATE.get()
         && let Ok(mut state) = state_arc.lock()
     {

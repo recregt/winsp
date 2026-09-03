@@ -51,7 +51,7 @@ pub(super) fn register_repaint_target(hwnd: HWND) {
     REPAINT_HWND.store(hwnd.0 as isize, Ordering::Release);
 }
 
-pub fn mark_paint_started() {
+pub(super) fn mark_paint_started() {
     REPAINT_PENDING.store(false, Ordering::Release);
 }
 
@@ -264,10 +264,10 @@ mod tests {
             "the cache's own reference should be gone, proving eviction doesn't wait on callers"
         );
 
-        let surface = super::super::testing::OffscreenSurface::new(40, 40);
+        let surface = super::super::gfx::testing::OffscreenSurface::new(40, 40);
         surface.canvas().draw_icon(
             held.handle(),
-            super::super::Rect {
+            super::super::gfx::Rect {
                 left: 4,
                 top: 4,
                 right: 36,
@@ -275,7 +275,7 @@ mod tests {
             },
         );
         assert!(
-            surface.contains_pixel_other_than(super::super::Color(0x00000000)),
+            surface.contains_pixel_other_than(super::super::gfx::Color(0x00000000)),
             "the icon handle must still be valid and drawable after the cache dropped its copy"
         );
     }

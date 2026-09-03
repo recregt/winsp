@@ -188,19 +188,19 @@ impl Font {
             Self { handle }
         }
     }
-}
 
-pub fn register_embedded_font(data: &'static [u8]) -> bool {
-    let num_fonts: u32 = 0;
-    let result = unsafe {
-        AddFontMemResourceEx(
-            data.as_ptr() as *const _,
-            data.len() as u32,
-            None,
-            &num_fonts,
-        )
-    };
-    !result.is_invalid()
+    pub fn register(data: &'static [u8]) -> bool {
+        let num_fonts: u32 = 0;
+        let result = unsafe {
+            AddFontMemResourceEx(
+                data.as_ptr() as *const _,
+                data.len() as u32,
+                None,
+                &num_fonts,
+            )
+        };
+        !result.is_invalid()
+    }
 }
 
 impl Drop for Font {

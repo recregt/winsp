@@ -1,10 +1,8 @@
 use std::sync::OnceLock;
 
 use winsp_core::models::{IconSource, SearchResult, SearchResultKind};
-use winsp_windows::window::{
-    Canvas, Color, Font, FontWeight, Rect, icon_for_path, mark_paint_started,
-    register_embedded_font,
-};
+use winsp_windows::window::gfx::{Canvas, Color, Font, FontWeight, Rect};
+use winsp_windows::window::icon_for_path;
 
 use super::{APP_STATE, ITEM_ROW_HEIGHT, SEARCH_BAR_HEIGHT, WINDOW_WIDTH};
 
@@ -27,9 +25,9 @@ struct Fonts {
 fn fonts() -> &'static Fonts {
     static FONTS: OnceLock<Fonts> = OnceLock::new();
     FONTS.get_or_init(|| {
-        register_embedded_font(INTER_REGULAR);
-        register_embedded_font(INTER_SEMIBOLD);
-        register_embedded_font(INTER_DISPLAY_REGULAR);
+        Font::register(INTER_REGULAR);
+        Font::register(INTER_SEMIBOLD);
+        Font::register(INTER_DISPLAY_REGULAR);
 
         Fonts {
             search: Font::new("Inter Display", 26, FontWeight::Normal),
@@ -106,7 +104,6 @@ fn draw_highlighted_title(
 }
 
 pub(super) fn render_ui(canvas: &Canvas, client_rect: Rect) {
-    mark_paint_started();
     canvas.fill_rect(client_rect, Color(0x001E1E1E));
 
     let Some(state_arc) = APP_STATE.get() else {
@@ -224,7 +221,7 @@ pub(super) fn render_ui(canvas: &Canvas, client_rect: Rect) {
 mod tests {
     use super::*;
     use winsp_core::models::{AppItem, AppTarget};
-    use winsp_windows::window::testing::OffscreenSurface;
+    use winsp_windows::window::gfx::testing::OffscreenSurface;
 
     const BITMAP_WIDTH: i32 = 300;
     const BITMAP_HEIGHT: i32 = 40;

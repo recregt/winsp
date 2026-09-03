@@ -8,7 +8,7 @@ mod view;
 use std::sync::mpsc::Sender;
 use std::sync::{Arc, Mutex, OnceLock};
 
-use winsp_windows::window::{Hotkey, Key, Modifiers, NativeWindow};
+use winsp_windows::window::{Hotkey, Key, Modifiers, Window};
 
 use crate::config::Settings;
 use crate::state::AppState;
@@ -50,7 +50,7 @@ pub fn run_app(state: Arc<Mutex<AppState>>) -> Result<(), String> {
 
     winsp_windows::system::theme::allow_dark_mode_for_app();
 
-    let window_handle = NativeWindow::create(
+    let window_handle = Window::create(
         WINDOW_CLASS_NAME,
         "WinSP",
         WINDOW_WIDTH,

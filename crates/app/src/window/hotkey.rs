@@ -1,7 +1,7 @@
 use std::io;
 use std::sync::Mutex;
 
-use winsp_windows::window::{Hotkey, HotkeySlot, Key, Modifiers, NativeWindow};
+use winsp_windows::window::{Hotkey, HotkeySlot, Key, Modifiers, Window};
 
 use crate::config::{HotkeyBinding, Settings};
 
@@ -59,7 +59,7 @@ fn to_hotkey(binding: HotkeyBinding) -> Hotkey {
 }
 
 pub(super) fn try_commit(
-    window: &NativeWindow,
+    window: &Window,
     settings: &mut Settings,
     candidate: HotkeyBinding,
 ) -> CommitResult {
