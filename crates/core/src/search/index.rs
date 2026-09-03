@@ -56,7 +56,7 @@ impl Engine {
         let mut top: Vec<(Arc<AppItem>, i32)> = self
             .items
             .iter()
-            .map(|item| (Arc::clone(item), (item.launch_count as i32) * 10))
+            .map(|item| (Arc::clone(item), launch_score(item.launch_count, 10)))
             .collect();
         top.sort_by_key(|(_, score)| std::cmp::Reverse(*score));
         top.truncate(limit);
@@ -96,17 +96,29 @@ fn match_all_items(
         let haystack = Utf32Str::new(&item.name, &mut hay_buf);
         raw_indices.clear();
 
-        let frecency_boost = (item.launch_count as i32) * 50;
+        let frecency_boost = launch_score(item.launch_count, 50);
 
         if let Some(score) = matcher.fuzzy_indices(haystack, needle, &mut raw_indices) {
             let indices = raw_indices.iter().map(|&i| i as usize).collect();
-            candidates.push((Arc::clone(item), score as i32 + frecency_boost, indices));
+            candidates.push((
+                Arc::clone(item),
+                (score as i32).saturating_add(frecency_boost),
+                indices,
+            ));
         } else if let Some(kw_score) = match_keywords(&item.keywords, &query_lower) {
-            candidates.push((Arc::clone(item), kw_score + frecency_boost, Vec::new()));
+            candidates.push((
+                Arc::clone(item),
+                kw_score.saturating_add(frecency_boost),
+                Vec::new(),
+            ));
         }
     }
 
     candidates
+}
+
+fn launch_score(launch_count: u32, multiplier: i64) -> i32 {
+    ((launch_count as i64) * multiplier).min(i32::MAX as i64) as i32
 }
 
 fn match_keywords(keywords: &[String], query_lower: &str) -> Option<i32> {
@@ -368,5 +380,27 @@ mod tests {
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].title.as_ref(), "日本語アプリ");
         assert_eq!(results[0].matched_indices, vec![3, 4, 5]);
+    }
+
+    #[test]
+    fn test_launch_score_saturates_instead_of_overflowing() {
+        assert_eq!(launch_score(u32::MAX, 50), i32::MAX);
+        assert_eq!(launch_score(0, 50), 0);
+    }
+
+    #[test]
+    fn test_extreme_launch_count_does_not_panic_or_go_negative() {
+        let mut item = AppItem::new("bulk", "Bulk App", AppTarget::Path("bulk.exe".into()));
+        item.launch_count = u32::MAX;
+        let mut index = Engine::new();
+        index.add_item(item);
+
+        let top = index.top_items(1);
+        assert_eq!(top.len(), 1);
+        assert!(top[0].score >= 0);
+
+        let found = index.find("bulk", 1);
+        assert_eq!(found.len(), 1);
+        assert!(found[0].score >= 0);
     }
 }
