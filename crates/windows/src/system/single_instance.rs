@@ -117,9 +117,9 @@ mod tests {
         assert!(posted, "expected request_show to report success");
 
         let received = unsafe {
-            let mut msg = std::mem::zeroed::<MSG>();
+            let mut msg = std::mem::MaybeUninit::<MSG>::uninit();
             PeekMessageW(
-                &mut msg,
+                msg.as_mut_ptr(),
                 Some(hwnd),
                 WM_SHOW_REQUEST,
                 WM_SHOW_REQUEST,

@@ -248,10 +248,11 @@ impl Window {
         }
 
         unsafe {
-            let mut msg = std::mem::zeroed::<MSG>();
-            while GetMessageW(&mut msg, None, 0, 0).0 > 0 {
-                let _ = TranslateMessage(&msg);
-                DispatchMessageW(&msg);
+            let mut msg = std::mem::MaybeUninit::<MSG>::uninit();
+            while GetMessageW(msg.as_mut_ptr(), None, 0, 0).0 > 0 {
+                let msg = msg.assume_init_ref();
+                let _ = TranslateMessage(msg);
+                DispatchMessageW(msg);
             }
         }
 
@@ -260,8 +261,16 @@ impl Window {
 
     pub fn discard_pending_char(&self) {
         unsafe {
-            let mut msg = std::mem::zeroed::<MSG>();
-            while PeekMessageW(&mut msg, Some(self.hwnd), WM_CHAR, WM_CHAR, PM_REMOVE).as_bool() {}
+            let mut msg = std::mem::MaybeUninit::<MSG>::uninit();
+            while PeekMessageW(
+                msg.as_mut_ptr(),
+                Some(self.hwnd),
+                WM_CHAR,
+                WM_CHAR,
+                PM_REMOVE,
+            )
+            .as_bool()
+            {}
         }
     }
 
@@ -296,11 +305,18 @@ impl Window {
 
     pub fn paint(&self, draw: impl FnOnce(&Canvas, Rect)) {
         unsafe {
-            let mut ps = std::mem::zeroed::<PAINTSTRUCT>();
-            let hdc = BeginPaint(self.hwnd, &mut ps);
+            let mut ps = std::mem::MaybeUninit::<PAINTSTRUCT>::uninit();
+            let hdc = BeginPaint(self.hwnd, ps.as_mut_ptr());
+            if hdc.is_invalid() {
+                return;
+            }
 
-            let mut client_rect = std::mem::zeroed::<RECT>();
-            let _ = GetClientRect(self.hwnd, &mut client_rect);
+            let mut client_rect = std::mem::MaybeUninit::<RECT>::uninit();
+            let client_rect = if GetClientRect(self.hwnd, client_rect.as_mut_ptr()).is_ok() {
+                client_rect.assume_init()
+            } else {
+                RECT::default()
+            };
 
             let mem_dc = CreateCompatibleDC(Some(hdc));
             let mem_bmp = CreateCompatibleBitmap(hdc, client_rect.right, client_rect.bottom);
@@ -334,7 +350,7 @@ impl Window {
             let _ = DeleteObject(mem_bmp.into());
             let _ = DeleteDC(mem_dc);
 
-            let _ = EndPaint(self.hwnd, &ps);
+            let _ = EndPaint(self.hwnd, ps.as_ptr());
         }
     }
 
@@ -355,8 +371,12 @@ impl Window {
 
     pub fn resize(&self, width: i32, height: i32) {
         unsafe {
-            let mut rect = std::mem::zeroed::<RECT>();
-            let _ = GetWindowRect(self.hwnd, &mut rect);
+            let mut rect = std::mem::MaybeUninit::<RECT>::uninit();
+            let rect = if GetWindowRect(self.hwnd, rect.as_mut_ptr()).is_ok() {
+                rect.assume_init()
+            } else {
+                RECT::default()
+            };
             let _ = SetWindowPos(
                 self.hwnd,
                 Some(HWND_TOPMOST),
@@ -371,8 +391,12 @@ impl Window {
 
     pub fn reposition(&self, anchor: Anchor) {
         unsafe {
-            let mut rect = std::mem::zeroed::<RECT>();
-            let _ = GetWindowRect(self.hwnd, &mut rect);
+            let mut rect = std::mem::MaybeUninit::<RECT>::uninit();
+            let rect = if GetWindowRect(self.hwnd, rect.as_mut_ptr()).is_ok() {
+                rect.assume_init()
+            } else {
+                RECT::default()
+            };
             let (x, y) = anchor.position_for(rect.right - rect.left, rect.bottom - rect.top);
             let _ = SetWindowPos(
                 self.hwnd,
@@ -571,8 +595,8 @@ mod tests {
         window.discard_pending_char();
 
         let still_pending = unsafe {
-            let mut msg = std::mem::zeroed::<MSG>();
-            PeekMessageW(&mut msg, Some(hwnd), WM_CHAR, WM_CHAR, PM_REMOVE).as_bool()
+            let mut msg = std::mem::MaybeUninit::<MSG>::uninit();
+            PeekMessageW(msg.as_mut_ptr(), Some(hwnd), WM_CHAR, WM_CHAR, PM_REMOVE).as_bool()
         };
         assert!(
             !still_pending,
@@ -601,8 +625,8 @@ mod tests {
         window.discard_pending_char();
 
         let still_pending = unsafe {
-            let mut msg = std::mem::zeroed::<MSG>();
-            PeekMessageW(&mut msg, Some(hwnd), WM_APP, WM_APP, PM_REMOVE).as_bool()
+            let mut msg = std::mem::MaybeUninit::<MSG>::uninit();
+            PeekMessageW(msg.as_mut_ptr(), Some(hwnd), WM_APP, WM_APP, PM_REMOVE).as_bool()
         };
         assert!(
             still_pending,
@@ -651,10 +675,11 @@ mod tests {
         window.center(680, 64, Anchor::Center);
 
         let (expected_x, expected_y) = Anchor::Center.position_for(680, 64);
-        let mut rect = unsafe { std::mem::zeroed::<RECT>() };
-        unsafe {
-            let _ = GetWindowRect(hwnd, &mut rect);
-        }
+        let mut rect = std::mem::MaybeUninit::<RECT>::uninit();
+        let rect = unsafe {
+            GetWindowRect(hwnd, rect.as_mut_ptr()).unwrap();
+            rect.assume_init()
+        };
         assert_eq!(rect.left, expected_x);
         assert_eq!(rect.top, expected_y);
         assert_eq!(rect.right - rect.left, 680);
@@ -679,10 +704,11 @@ mod tests {
         window.reposition(Anchor::Center);
 
         let (expected_x, expected_y) = Anchor::Center.position_for(680, 400);
-        let mut rect = unsafe { std::mem::zeroed::<RECT>() };
-        unsafe {
-            let _ = GetWindowRect(hwnd, &mut rect);
-        }
+        let mut rect = std::mem::MaybeUninit::<RECT>::uninit();
+        let rect = unsafe {
+            GetWindowRect(hwnd, rect.as_mut_ptr()).unwrap();
+            rect.assume_init()
+        };
         assert_eq!(rect.left, expected_x);
         assert_eq!(rect.top, expected_y);
         assert_eq!(
