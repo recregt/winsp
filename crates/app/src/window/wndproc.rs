@@ -14,6 +14,7 @@ pub(super) fn handle_message(window: &Window, message: Message) {
     match message {
         Message::Hotkey => toggle_visibility(window),
         Message::ShowRequest => show_fresh(window),
+        Message::CatalogReady => apply_catalog_ready(window),
         Message::TrayRightClick => window.show_tray_menu(current_anchor()),
         Message::Command(cmd) => match cmd {
             TrayCommand::Toggle => toggle_visibility(window),
@@ -129,6 +130,25 @@ pub(super) fn handle_message(window: &Window, message: Message) {
         }
         Message::Paint => window.paint(render_ui),
     }
+}
+
+fn apply_catalog_ready(window: &Window) {
+    let Some(index) = crate::watch::take_pending_index() else {
+        return;
+    };
+    let Some(state_arc) = APP_STATE.get() else {
+        return;
+    };
+    let Ok(mut state) = state_arc.lock() else {
+        return;
+    };
+    state.index = index;
+    state.refresh_results();
+    let results_count = state.results.len();
+    drop(state);
+
+    resize_window_for_results(window, results_count);
+    window.invalidate();
 }
 
 fn set_position(window: &Window, position: WindowPosition) {

@@ -47,12 +47,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         watch::StartupMode::Real(catalog) => {
             let catalog = Arc::new(Mutex::new(catalog));
-            let reconcile_tx = watch::spawn_reconciler(Arc::clone(&state), Arc::clone(&catalog));
+            let reconcile_tx = watch::spawn_reconciler(Arc::clone(&catalog));
             window::set_reconcile_hook(reconcile_tx.clone());
 
-            let state = Arc::clone(&state);
             winsp_windows::catalog::sources::watcher::for_start_menu(move |event| {
-                watch::handle_watch_event(event, &state, &catalog, &reconcile_tx);
+                watch::handle_watch_event(event, &catalog, &reconcile_tx);
             })
             .ok()
         }

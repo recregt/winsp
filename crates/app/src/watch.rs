@@ -1,14 +1,14 @@
 #![cfg(windows)]
 
 use std::sync::mpsc::Sender;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
+use winsp_core::search::Engine;
 use winsp_windows::catalog::sources::apps::StartMenuCatalog;
 use winsp_windows::catalog::sources::watcher::WatchEvent;
 
 use crate::index::engine_from_catalog;
-use crate::state::AppState;
 
 const RECONCILE_INTERVAL: Duration = Duration::from_secs(600);
 const MIN_RECONCILE_GAP: Duration = Duration::from_secs(30);
@@ -51,18 +51,24 @@ pub(crate) fn notify_reconcile_channel_broken() {
     });
 }
 
-pub(crate) fn refresh_state(state: &Arc<Mutex<AppState>>, catalog: &StartMenuCatalog) {
-    let index = engine_from_catalog(catalog);
-    if let Ok(mut app_state) = state.lock() {
-        app_state.index = index;
-        app_state.refresh_results();
-    }
+fn pending_index() -> &'static Mutex<Option<Engine>> {
+    static PENDING_INDEX: OnceLock<Mutex<Option<Engine>>> = OnceLock::new();
+    PENDING_INDEX.get_or_init(|| Mutex::new(None))
 }
 
-pub(crate) fn spawn_reconciler(
-    state: Arc<Mutex<AppState>>,
-    catalog: Arc<Mutex<StartMenuCatalog>>,
-) -> Sender<()> {
+pub(crate) fn take_pending_index() -> Option<Engine> {
+    pending_index().lock().ok().and_then(|mut slot| slot.take())
+}
+
+pub(crate) fn refresh_state(catalog: &StartMenuCatalog) {
+    let index = engine_from_catalog(catalog);
+    if let Ok(mut slot) = pending_index().lock() {
+        *slot = Some(index);
+    }
+    winsp_windows::window::notify_catalog_ready();
+}
+
+pub(crate) fn spawn_reconciler(catalog: Arc<Mutex<StartMenuCatalog>>) -> Sender<()> {
     let (reconcile_tx, reconcile_rx) = std::sync::mpsc::channel::<()>();
 
     std::thread::spawn(move || {
@@ -78,7 +84,7 @@ pub(crate) fn spawn_reconciler(
             if let Ok(mut cat) = catalog.lock() {
                 cat.rescan();
                 notify_if_scan_incomplete(&cat);
-                refresh_state(&state, &cat);
+                refresh_state(&cat);
             }
             last_rescan = Instant::now();
         }
@@ -89,7 +95,6 @@ pub(crate) fn spawn_reconciler(
 
 pub(crate) fn handle_watch_event(
     event: WatchEvent,
-    state: &Arc<Mutex<AppState>>,
     catalog: &Arc<Mutex<StartMenuCatalog>>,
     reconcile_tx: &Sender<()>,
 ) {
@@ -98,7 +103,7 @@ pub(crate) fn handle_watch_event(
             if let Ok(mut cat) = catalog.lock() {
                 cat.apply_changes(&paths);
                 notify_if_scan_incomplete(&cat);
-                refresh_state(state, &cat);
+                refresh_state(&cat);
             }
         }
         WatchEvent::Uncertain => {
