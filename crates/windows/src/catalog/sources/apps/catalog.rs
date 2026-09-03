@@ -1,6 +1,7 @@
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
+use walkdir::WalkDir;
 use winsp_core::models::{AppItem, AppTarget};
 
 use super::resolve_shortcut_target;
@@ -97,18 +98,21 @@ fn collect_shortcuts(
     shortcuts: &mut std::collections::HashMap<PathBuf, ScannedShortcut>,
     unreadable_dirs: &mut Vec<PathBuf>,
 ) {
-    match std::fs::read_dir(dir) {
-        Ok(entries) => {
-            for entry in entries.flatten() {
-                let path = entry.path();
-                if path.is_dir() {
-                    collect_shortcuts(&path, priority, shortcuts, unreadable_dirs);
-                } else {
-                    insert_if_shortcut(&path, priority, shortcuts);
+    for entry in WalkDir::new(dir).follow_links(true) {
+        match entry {
+            Ok(entry) => {
+                if !entry.file_type().is_dir() {
+                    insert_if_shortcut(entry.path(), priority, shortcuts);
+                }
+            }
+            Err(err) => {
+                if err.loop_ancestor().is_none()
+                    && let Some(path) = err.path()
+                {
+                    unreadable_dirs.push(path.to_path_buf());
                 }
             }
         }
-        Err(_) => unreadable_dirs.push(dir.to_path_buf()),
     }
 }
 
@@ -543,6 +547,69 @@ mod tests {
     #[test]
     fn unreadable_dirs_is_empty_for_a_clean_scan() {
         let dir = tempfile::tempdir().unwrap();
+
+        let catalog = StartMenuCatalog::scan(vec![dir.path().into()]);
+
+        assert!(catalog.unreadable_dirs().is_empty());
+    }
+
+    fn try_create_directory_symlink(real: &Path, link: &Path) -> bool {
+        if let Err(e) = std::os::windows::fs::symlink_dir(real, link) {
+            eprintln!("skipping: cannot create a directory symlink here ({e})");
+            return false;
+        }
+        if !link.exists() {
+            eprintln!("skipping: directory symlink was not actually created here");
+            return false;
+        }
+        true
+    }
+
+    #[test]
+    fn follows_a_legitimate_directory_junction_to_a_new_target() {
+        let dir = tempfile::tempdir().unwrap();
+        let target = tempfile::tempdir().unwrap();
+        let contents = "[InternetShortcut]\nURL=https://example.com/app\n";
+        fs::write(target.path().join("App.url"), contents).unwrap();
+
+        let link = dir.path().join("Vendor");
+        if !try_create_directory_symlink(target.path(), &link) {
+            return;
+        }
+
+        let catalog = StartMenuCatalog::scan(vec![dir.path().into()]);
+
+        assert_eq!(names(&catalog.items()), vec!["App"]);
+    }
+
+    #[test]
+    fn does_not_recurse_infinitely_through_a_self_referencing_junction() {
+        let dir = tempfile::tempdir().unwrap();
+        let real = dir.path().join("Real");
+        fs::create_dir(&real).unwrap();
+        let contents = "[InternetShortcut]\nURL=https://example.com/app\n";
+        fs::write(real.join("App.url"), contents).unwrap();
+
+        let loop_link = real.join("Loop");
+        if !try_create_directory_symlink(&real, &loop_link) {
+            return;
+        }
+
+        let catalog = StartMenuCatalog::scan(vec![dir.path().into()]);
+
+        assert_eq!(names(&catalog.items()), vec!["App"]);
+    }
+
+    #[test]
+    fn a_self_referencing_junction_is_not_reported_as_unreadable() {
+        let dir = tempfile::tempdir().unwrap();
+        let real = dir.path().join("Real");
+        fs::create_dir(&real).unwrap();
+
+        let loop_link = real.join("Loop");
+        if !try_create_directory_symlink(&real, &loop_link) {
+            return;
+        }
 
         let catalog = StartMenuCatalog::scan(vec![dir.path().into()]);
 
