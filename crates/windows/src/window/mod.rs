@@ -457,8 +457,8 @@ impl Window {
         }
     }
 
-    pub fn add_tray_icon(&self) {
-        tray::add(self.hwnd);
+    pub fn add_tray_icon(&self) -> bool {
+        tray::add(self.hwnd)
     }
 
     pub fn show_tray_menu(&self, current_position: Anchor) {

@@ -36,24 +36,31 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let _reindex_watcher = match mode {
         watch::StartupMode::TestWatch(dir) => {
             let state = Arc::clone(&state);
-            winsp_windows::catalog::sources::watcher::for_dirs(&[dir], move |_event| {
-                let index = index::populate_search_index();
-                if let Ok(mut app_state) = state.lock() {
-                    app_state.index = index;
-                    app_state.refresh_results();
-                }
-            })
-            .ok()
+            let watcher =
+                winsp_windows::catalog::sources::watcher::for_dirs(&[dir], move |_event| {
+                    let index = index::populate_search_index();
+                    if let Ok(mut app_state) = state.lock() {
+                        app_state.index = index;
+                        app_state.refresh_results();
+                    }
+                });
+            if watcher.is_err() {
+                watch::notify_watcher_init_failed();
+            }
+            watcher.ok()
         }
         watch::StartupMode::Real(catalog) => {
             let catalog = Arc::new(Mutex::new(catalog));
             let reconcile_tx = watch::spawn_reconciler(Arc::clone(&catalog));
             window::set_reconcile_hook(reconcile_tx.clone());
 
-            winsp_windows::catalog::sources::watcher::for_start_menu(move |event| {
+            let watcher = winsp_windows::catalog::sources::watcher::for_start_menu(move |event| {
                 watch::handle_watch_event(event, &catalog, &reconcile_tx);
-            })
-            .ok()
+            });
+            if watcher.is_err() {
+                watch::notify_watcher_init_failed();
+            }
+            watcher.ok()
         }
     };
 

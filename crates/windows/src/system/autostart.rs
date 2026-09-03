@@ -12,11 +12,25 @@ pub fn is_enabled() -> bool {
 
 pub fn set_enabled(enabled: bool) {
     let _com = ComGuard::new();
-    if let Err(error) = startup_task_set_enabled(enabled) {
-        super::toast::show(
-            "WinSP",
-            &format!("Failed to update Start with Windows: {error}"),
-        );
+    match startup_task_set_enabled(enabled) {
+        Ok(state) => {
+            let is_enabled = matches!(
+                state,
+                StartupTaskState::Enabled | StartupTaskState::EnabledByPolicy
+            );
+            if enabled && !is_enabled {
+                super::toast::show(
+                    "WinSP",
+                    "Windows denied the request to start with Windows. Check Task Manager's Startup Apps settings or your system policy.",
+                );
+            }
+        }
+        Err(error) => {
+            super::toast::show(
+                "WinSP",
+                &format!("Failed to update Start with Windows: {error}"),
+            );
+        }
     }
 }
 
@@ -32,14 +46,14 @@ fn startup_task_is_enabled() -> windows::core::Result<bool> {
     ))
 }
 
-fn startup_task_set_enabled(enabled: bool) -> windows::core::Result<()> {
+fn startup_task_set_enabled(enabled: bool) -> windows::core::Result<StartupTaskState> {
     let task = startup_task()?;
     if enabled {
-        task.RequestEnableAsync()?.join()?;
+        task.RequestEnableAsync()?.join()
     } else {
         task.Disable()?;
+        Ok(StartupTaskState::Disabled)
     }
-    Ok(())
 }
 
 #[cfg(test)]

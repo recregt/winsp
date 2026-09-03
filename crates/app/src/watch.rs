@@ -60,6 +60,13 @@ pub(crate) fn take_pending_index() -> Option<Engine> {
     pending_index().lock().ok().and_then(|mut slot| slot.take())
 }
 
+pub(crate) fn notify_watcher_init_failed() {
+    winsp_windows::system::toast::show(
+        "WinSP",
+        "Couldn't watch the Start Menu for changes. New or removed shortcuts won't appear until WinSP restarts.",
+    );
+}
+
 pub(crate) fn refresh_state(catalog: &StartMenuCatalog) {
     let index = engine_from_catalog(catalog);
     if let Ok(mut slot) = pending_index().lock() {
