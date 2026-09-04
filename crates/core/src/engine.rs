@@ -2,7 +2,6 @@ use crate::models::{AppItem, MatchedCharIndices, SearchResult};
 use compact_str::CompactString;
 use nucleo_matcher::chars::{normalize, to_lower_case};
 use nucleo_matcher::{Config, Matcher, Utf32Str};
-use smallvec::SmallVec;
 use std::borrow::Cow;
 use std::cell::RefCell;
 use std::sync::Arc;
@@ -10,7 +9,6 @@ use std::sync::Arc;
 const KEYWORD_MATCH_SCORE: i32 = 5_000;
 const SEARCH_FRECENCY_MULTIPLIER: i64 = 50;
 const TOP_ITEMS_FRECENCY_MULTIPLIER: i64 = 10;
-const INLINE_TOP: usize = 8;
 
 pub struct Engine {
     items: Vec<Arc<AppItem>>,
@@ -79,7 +77,7 @@ impl Engine {
 
         // Bounded selection over the launch count column: scoring the whole
         // index does not require touching a single `AppItem`.
-        let mut top: SmallVec<[(u32, i32); INLINE_TOP]> = SmallVec::new();
+        let mut top: Vec<(u32, i32)> = Vec::with_capacity(limit.min(self.items.len()));
         for (idx, &launch_count) in self.scan.launch_counts.iter().enumerate() {
             let score = launch_score(launch_count, TOP_ITEMS_FRECENCY_MULTIPLIER);
             if top.len() == limit {
@@ -181,8 +179,6 @@ struct Candidate {
     matched_by_name: bool,
 }
 
-type TopCandidates = SmallVec<[Candidate; INLINE_TOP]>;
-
 /// The query in the two spellings a scan compares against: normalized and
 /// lowercased for fuzzy name matching, and lowercased for keyword matching,
 /// which compares characters as they are.
@@ -258,7 +254,7 @@ fn narrowing_capacity(items: usize) -> usize {
 /// What one scan produced: the best `limit` candidates, and the complete match
 /// set when it is small enough to narrow the next scan with.
 struct Scan {
-    top: TopCandidates,
+    top: Vec<Candidate>,
     matched: Option<Vec<u32>>,
 }
 
@@ -451,7 +447,7 @@ impl ScanTable {
         query_mask: u32,
         limit: usize,
     ) -> Scan {
-        let mut top: TopCandidates = SmallVec::new();
+        let mut top: Vec<Candidate> = Vec::with_capacity(limit.min(self.rows.len()));
         let mut matched: Option<Vec<u32>> = Some(Vec::new());
         let capacity = narrowing_capacity(self.rows.len());
         let mut hay_buf = Vec::new();
@@ -547,7 +543,7 @@ fn match_unicode_name(
 /// Inserts `candidate` into the descending, `limit` long `top` list. Kept out of
 /// line so the scan loop that calls it stays tight.
 #[inline(never)]
-fn keep_best(top: &mut TopCandidates, limit: usize, candidate: Candidate) {
+fn keep_best(top: &mut Vec<Candidate>, limit: usize, candidate: Candidate) {
     if top.len() == limit {
         top.pop();
     }
