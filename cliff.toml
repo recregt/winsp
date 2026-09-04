@@ -11,10 +11,21 @@ body = """
 {%- else %}
 ## [Unreleased]
 {%- endif %}
+{%- set_global solo_ids = [] %}
+{%- for id, id_commits in commits | group_by(attribute="id") %}
+{%- if id_commits | unique(attribute="group") | length == 1 %}
+{%- set_global solo_ids = solo_ids | concat(with=[id]) %}
+{%- endif %}
+{%- endfor %}
 {% for group, commits in commits | group_by(attribute="group") %}
 ### {{ group | striptags | trim | upper_first }}
-{% for commit in commits | unique(attribute="message") -%}
-- {% if commit.breaking %}**BREAKING:** {% endif %}{{ commit.message | upper_first }}{% if commit.remote.pr_number %} by {% if commit.remote.username is ending_with("[bot]") %}[@{{ commit.remote.username }}](https://github.com/apps/{{ commit.remote.username | replace(from="[bot]", to="") }}){% else %}@{{ commit.remote.username }}{% endif %} in #{{ commit.remote.pr_number }}{% endif %}
+{% for commit in commits | unique(attribute="message") | unique(attribute="id") -%}
+{%- if commit.id in solo_ids and commit.remote.pr_title -%}
+{%- set display_message = commit.remote.pr_title | replace_regex(from="^\\w+(\\([^)]*\\))?!?:\\s*", to="") -%}
+{%- else -%}
+{%- set display_message = commit.message -%}
+{%- endif -%}
+- {% if commit.breaking %}**BREAKING:** {% endif %}{{ display_message | upper_first }}{% if commit.remote.pr_number %} by {% if commit.remote.username is ending_with("[bot]") %}[@{{ commit.remote.username }}](https://github.com/apps/{{ commit.remote.username | replace(from="[bot]", to="") }}){% else %}@{{ commit.remote.username }}{% endif %} in #{{ commit.remote.pr_number }}{% endif %}
 {% endfor %}
 {%- endfor %}
 {% if previous and previous.version and version %}
@@ -46,4 +57,5 @@ commit_parsers = [
   { message = "^fix", group = "<!-- 1 -->Fixed" },
   { message = "^(perf|refactor)", group = "<!-- 2 -->Changed" },
   { message = "^(ci|docs|test|chore)", skip = true },
+  { message = ".*", skip = true },
 ]
