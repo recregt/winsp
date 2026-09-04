@@ -1,4 +1,5 @@
 use logos::Logos;
+use std::fmt::Write;
 
 const MAX_INPUT_LEN: usize = 1024;
 
@@ -349,15 +350,42 @@ fn try_eval_percentage(input: &str) -> Option<f64> {
     result.is_finite().then_some(result)
 }
 
+/// Renders a whole number without entering the formatting machinery, which a
+/// keystroke that types an expression would otherwise pay for on a result whose
+/// length is bounded by 17 characters.
+fn format_integer(val: i64) -> String {
+    let mut buf = [0u8; 20];
+    let mut start = buf.len();
+    let mut rest = val.unsigned_abs();
+    loop {
+        start -= 1;
+        buf[start] = b'0' + (rest % 10) as u8;
+        rest /= 10;
+        if rest == 0 {
+            break;
+        }
+    }
+    if val < 0 {
+        start -= 1;
+        buf[start] = b'-';
+    }
+    let digits = std::str::from_utf8(&buf[start..]).expect("digits and a sign are ASCII");
+    String::from(digits)
+}
+
 fn format_result(val: f64) -> String {
     if (val.fract() == 0.0) && (val.abs() < 1e15) {
-        format!("{}", val as i64)
+        format_integer(val as i64)
     } else if val.abs() < 1e-6 || val.abs() >= 1e15 {
         format!("{val:e}")
     } else {
-        let s = format!("{:.6}", val);
-        let trimmed = s.trim_end_matches('0').trim_end_matches('.');
-        trimmed.to_string()
+        // Six decimals of a number below 1e15, so the rendering fits in a
+        // string that is sized once and then trimmed in place.
+        let mut text = String::with_capacity(24);
+        let _ = write!(text, "{val:.6}");
+        let trimmed = text.trim_end_matches('0').trim_end_matches('.').len();
+        text.truncate(trimmed);
+        text
     }
 }
 
@@ -618,6 +646,28 @@ mod tests {
         assert_eq!(eval("0.1+0.2"), Some("0.3".to_string()));
         assert_eq!(eval(".5+.5"), Some("1".to_string()));
         assert_eq!(eval("1/3*3"), Some("1".to_string()));
+    }
+
+    #[test]
+    fn test_results_render_as_the_formatting_machinery_would() {
+        for val in [
+            0i64,
+            1,
+            -1,
+            42,
+            -42,
+            1_000_000,
+            999_999_999_999_999,
+            -999_999_999_999_999,
+            i64::MAX,
+            i64::MIN,
+        ] {
+            assert_eq!(format_integer(val), val.to_string(), "integer {val}");
+        }
+        assert_eq!(format_result(8.0), "8");
+        assert_eq!(format_result(-8.0), "-8");
+        assert_eq!(format_result(0.1 + 0.2), "0.3");
+        assert_eq!(format_result(-2.5), "-2.5");
     }
 
     #[test]

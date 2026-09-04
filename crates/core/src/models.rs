@@ -146,8 +146,10 @@ pub struct SearchResult {
 
 impl SearchResult {
     pub fn from_app(item: Arc<AppItem>, score: i32, matched_char_indices: Vec<usize>) -> Self {
+        // Copied straight into the `Arc<str>`: cloning the `String` first would
+        // allocate a buffer that the conversion only reads and then frees.
         let subtitle = item.description_arc().or_else(|| match item.target() {
-            LaunchTarget::Path(p) => Some(p.clone().into()),
+            LaunchTarget::Path(p) => Some(Arc::from(p.as_str())),
             _ => None,
         });
 
@@ -161,9 +163,16 @@ impl SearchResult {
     }
 
     pub fn calculation(expression: String, result: String) -> Self {
+        // Built by hand rather than with `format!`: this runs on the keystroke
+        // that types the expression, and the formatting machinery would grow a
+        // string of a length that is already known.
+        let mut subtitle = String::with_capacity(expression.len() + 2);
+        subtitle.push_str("= ");
+        subtitle.push_str(&expression);
+
         Self {
             title: Arc::from(result.as_str()),
-            subtitle: Some(format!("= {expression}").into()),
+            subtitle: Some(Arc::from(subtitle.as_str())),
             score: CALCULATION_SCORE,
             matched_char_indices: Vec::new(),
             kind: SearchResultKind::Calculation { expression, result },
