@@ -115,8 +115,11 @@ fn match_all_items(
         let keyword_score = match_keywords(item.keywords(), &query_lower);
 
         let best = match (name_score, keyword_score) {
-            (Some(name), Some(kw)) if kw > name => Some((kw, Vec::new())),
-            (Some(name), _) => Some((name, raw_indices.iter().map(|&i| i as usize).collect())),
+            (Some(name), Some(kw)) => {
+                let indices = raw_indices.iter().map(|&i| i as usize).collect();
+                Some((name.max(kw), indices))
+            }
+            (Some(name), None) => Some((name, raw_indices.iter().map(|&i| i as usize).collect())),
             (None, Some(kw)) => Some((kw, Vec::new())),
             (None, None) => None,
         };
@@ -140,7 +143,7 @@ fn launch_score(launch_count: u32, multiplier: i64) -> i32 {
 fn match_keywords(keywords: &[String], query_lower: &str) -> Option<i32> {
     keywords
         .iter()
-        .any(|kw| kw.starts_with(query_lower) || kw.contains(query_lower))
+        .any(|kw| kw.contains(query_lower))
         .then_some(KEYWORD_MATCH_SCORE)
 }
 
@@ -232,6 +235,7 @@ mod tests {
         let results = index.find("term", 5);
         assert_eq!(results.len(), 1);
         assert!(results[0].score >= 5_000);
+        assert!(!results[0].matched_char_indices.is_empty());
     }
 
     #[test]
