@@ -4,6 +4,10 @@ use nucleo_matcher::{Config, Matcher, Utf32Str};
 use std::cell::RefCell;
 use std::sync::Arc;
 
+const KEYWORD_MATCH_SCORE: i32 = 5_000;
+const SEARCH_FRECENCY_MULTIPLIER: i64 = 50;
+const TOP_ITEMS_FRECENCY_MULTIPLIER: i64 = 10;
+
 pub struct Engine {
     items: Vec<Arc<AppItem>>,
     matcher: RefCell<Matcher>,
@@ -33,7 +37,7 @@ impl Engine {
         }
     }
 
-    pub fn set_items(&mut self, items: Vec<AppItem>) {
+    pub fn set_items(&mut self, items: impl IntoIterator<Item = AppItem>) {
         self.items = items.into_iter().map(Arc::new).collect();
     }
 
@@ -57,7 +61,12 @@ impl Engine {
         let mut top: Vec<(Arc<AppItem>, i32)> = self
             .items
             .iter()
-            .map(|item| (Arc::clone(item), launch_score(item.launch_count, 10)))
+            .map(|item| {
+                (
+                    Arc::clone(item),
+                    launch_score(item.launch_count(), TOP_ITEMS_FRECENCY_MULTIPLIER),
+                )
+            })
             .collect();
         top.sort_by_key(|(_, score)| std::cmp::Reverse(*score));
         top.truncate(limit);
@@ -95,15 +104,15 @@ fn match_all_items(
 
     for item in items {
         hay_buf.clear();
-        let haystack = Utf32Str::new(&item.name, &mut hay_buf);
+        let haystack = Utf32Str::new(item.name(), &mut hay_buf);
         raw_indices.clear();
 
-        let frecency_boost = launch_score(item.launch_count, 50);
+        let frecency_boost = launch_score(item.launch_count(), SEARCH_FRECENCY_MULTIPLIER);
 
         let name_score = matcher
             .fuzzy_indices(haystack, needle, &mut raw_indices)
             .map(|score| score as i32);
-        let keyword_score = match_keywords(&item.keywords, &query_lower);
+        let keyword_score = match_keywords(item.keywords(), &query_lower);
 
         let best = match (name_score, keyword_score) {
             (Some(name), Some(kw)) if kw > name => Some((kw, Vec::new())),
@@ -132,7 +141,7 @@ fn match_keywords(keywords: &[String], query_lower: &str) -> Option<i32> {
     keywords
         .iter()
         .any(|kw| kw.starts_with(query_lower) || kw.contains(query_lower))
-        .then_some(5_000)
+        .then_some(KEYWORD_MATCH_SCORE)
 }
 
 #[cfg(test)]
@@ -343,8 +352,8 @@ mod tests {
     fn test_frecency_breaks_ties_between_identical_names() {
         use crate::models::SearchResultKind;
 
-        let mut popular = AppItem::new("a", "Test App", LaunchTarget::Path("a.exe".into()));
-        popular.launch_count = 10;
+        let popular =
+            AppItem::new("a", "Test App", LaunchTarget::Path("a.exe".into())).with_launch_count(10);
         let rare = AppItem::new("b", "Test App", LaunchTarget::Path("b.exe".into()));
 
         let mut index = Engine::new();
@@ -355,14 +364,14 @@ mod tests {
         let SearchResultKind::App(item) = &results[0].kind else {
             panic!("expected an App result");
         };
-        assert_eq!(item.id, "a");
+        assert_eq!(item.id(), "a");
     }
 
     #[test]
     fn test_frecency_applies_to_keyword_matches_too() {
-        let mut popular = AppItem::new("a", "Aardvark Tool", LaunchTarget::Path("a.exe".into()))
-            .with_keywords(vec!["zzzmatch".into()]);
-        popular.launch_count = 10;
+        let popular = AppItem::new("a", "Aardvark Tool", LaunchTarget::Path("a.exe".into()))
+            .with_keywords(vec!["zzzmatch".into()])
+            .with_launch_count(10);
         let rare = AppItem::new("b", "Yak Tool", LaunchTarget::Path("b.exe".into()))
             .with_keywords(vec!["zzzmatch".into()]);
 
@@ -406,12 +415,12 @@ mod tests {
         let results = index.find("CAF", 5);
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].title.as_ref(), "Café");
-        assert_eq!(results[0].matched_indices, vec![0, 1, 2]);
+        assert_eq!(results[0].matched_char_indices, vec![0, 1, 2]);
 
         let results = index.find("アプリ", 5);
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].title.as_ref(), "日本語アプリ");
-        assert_eq!(results[0].matched_indices, vec![3, 4, 5]);
+        assert_eq!(results[0].matched_char_indices, vec![3, 4, 5]);
     }
 
     #[test]
@@ -422,8 +431,8 @@ mod tests {
 
     #[test]
     fn test_extreme_launch_count_does_not_panic_or_go_negative() {
-        let mut item = AppItem::new("bulk", "Bulk App", LaunchTarget::Path("bulk.exe".into()));
-        item.launch_count = u32::MAX;
+        let item = AppItem::new("bulk", "Bulk App", LaunchTarget::Path("bulk.exe".into()))
+            .with_launch_count(u32::MAX);
         let mut index = Engine::new();
         index.add_item(item);
 
@@ -448,6 +457,6 @@ mod tests {
         let results = index.find("İ", 5);
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].title.as_ref(), "İstanbul Maps");
-        assert_eq!(results[0].matched_indices, vec![0]);
+        assert_eq!(results[0].matched_char_indices, vec![0]);
     }
 }

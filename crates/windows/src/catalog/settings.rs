@@ -130,11 +130,11 @@ mod tests {
     #[test]
     fn every_setting_uri_entry_carries_a_glyph_icon() {
         for item in list_settings() {
-            if matches!(item.target, LaunchTarget::OsUri(_)) {
+            if matches!(item.target(), LaunchTarget::OsUri(_)) {
                 assert!(
-                    matches!(item.icon, Some(IconSource::Glyph(_))),
+                    matches!(item.icon(), Some(IconSource::Glyph(_))),
                     "{} has no glyph icon",
-                    item.name
+                    item.name()
                 );
             }
         }

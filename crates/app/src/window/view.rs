@@ -42,7 +42,7 @@ fn draw_result_icon(canvas: &Canvas, result: &SearchResult, rect: Rect) {
     let SearchResultKind::App(item) = &result.kind else {
         return;
     };
-    match &item.icon {
+    match item.icon() {
         Some(IconSource::Path(path)) => {
             if let Some(icon) = icon_for_path(path) {
                 canvas.draw_cached_icon(&icon, rect);
@@ -57,10 +57,10 @@ fn draw_result_icon(canvas: &Canvas, result: &SearchResult, rect: Rect) {
     }
 }
 
-fn highlight_segments(text: &str, matched_indices: &[usize]) -> Vec<(bool, String)> {
+fn highlight_segments(text: &str, matched_char_indices: &[usize]) -> Vec<(bool, String)> {
     let char_count = text.chars().count();
     let mut is_match = vec![false; char_count];
-    for &i in matched_indices {
+    for &i in matched_char_indices {
         if let Some(flag) = is_match.get_mut(i) {
             *flag = true;
         }
@@ -79,12 +79,12 @@ fn highlight_segments(text: &str, matched_indices: &[usize]) -> Vec<(bool, Strin
 fn draw_highlighted_title(
     canvas: &Canvas,
     title: &str,
-    matched_indices: &[usize],
+    matched_char_indices: &[usize],
     bounds: Rect,
     base_color: Color,
 ) {
     let mut seg_left = bounds.left;
-    for (highlighted, segment) in highlight_segments(title, matched_indices) {
+    for (highlighted, segment) in highlight_segments(title, matched_char_indices) {
         if seg_left >= bounds.right {
             break;
         }
@@ -190,7 +190,7 @@ pub(super) fn render_ui(canvas: &Canvas, client_rect: Rect) {
             draw_highlighted_title(
                 canvas,
                 &result.title,
-                &result.matched_indices,
+                &result.matched_char_indices,
                 Rect {
                     left: TEXT_LEFT,
                     top: current_y + 4,

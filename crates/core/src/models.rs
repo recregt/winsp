@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum LaunchTarget {
     Path(String),
     WebUrl(String),
@@ -8,22 +8,22 @@ pub enum LaunchTarget {
     Command(String),
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum IconSource {
     Path(String),
     Glyph(char),
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct AppItem {
-    pub id: String,
-    pub name: Arc<str>,
-    pub description: Option<Arc<str>>,
-    pub target: LaunchTarget,
-    pub icon: Option<IconSource>,
-    pub keywords: Vec<String>,
-    pub launch_count: u32,
-    pub last_launched_timestamp: u64,
+    id: String,
+    name: Arc<str>,
+    description: Option<Arc<str>>,
+    target: LaunchTarget,
+    icon: Option<IconSource>,
+    keywords: Vec<String>,
+    launch_count: u32,
+    last_launched_timestamp: u64,
 }
 
 impl AppItem {
@@ -59,6 +59,61 @@ impl AppItem {
         self.keywords = keywords.into_iter().map(|kw| kw.to_lowercase()).collect();
         self
     }
+
+    pub fn with_launch_count(mut self, count: u32) -> Self {
+        self.launch_count = count;
+        self
+    }
+
+    pub fn with_last_launched_timestamp(mut self, timestamp: u64) -> Self {
+        self.last_launched_timestamp = timestamp;
+        self
+    }
+
+    pub fn record_launch(&mut self, timestamp: u64) {
+        self.launch_count = self.launch_count.saturating_add(1);
+        self.last_launched_timestamp = timestamp;
+    }
+
+    pub fn id(&self) -> &str {
+        &self.id
+    }
+
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    pub fn name_arc(&self) -> Arc<str> {
+        Arc::clone(&self.name)
+    }
+
+    pub fn description(&self) -> Option<&str> {
+        self.description.as_deref()
+    }
+
+    pub fn description_arc(&self) -> Option<Arc<str>> {
+        self.description.clone()
+    }
+
+    pub fn target(&self) -> &LaunchTarget {
+        &self.target
+    }
+
+    pub fn icon(&self) -> Option<&IconSource> {
+        self.icon.as_ref()
+    }
+
+    pub fn keywords(&self) -> &[String] {
+        &self.keywords
+    }
+
+    pub fn launch_count(&self) -> u32 {
+        self.launch_count
+    }
+
+    pub fn last_launched_timestamp(&self) -> u64 {
+        self.last_launched_timestamp
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -78,27 +133,29 @@ pub enum SearchResultKind {
     },
 }
 
+const CALCULATION_SCORE: i32 = i32::MAX;
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct SearchResult {
     pub title: Arc<str>,
     pub subtitle: Option<Arc<str>>,
     pub score: i32,
-    pub matched_indices: Vec<usize>,
+    pub matched_char_indices: Vec<usize>,
     pub kind: SearchResultKind,
 }
 
 impl SearchResult {
-    pub fn from_app(item: Arc<AppItem>, score: i32, matched_indices: Vec<usize>) -> Self {
-        let subtitle = item.description.clone().or_else(|| match &item.target {
+    pub fn from_app(item: Arc<AppItem>, score: i32, matched_char_indices: Vec<usize>) -> Self {
+        let subtitle = item.description_arc().or_else(|| match item.target() {
             LaunchTarget::Path(p) => Some(p.clone().into()),
             _ => None,
         });
 
         Self {
-            title: Arc::clone(&item.name),
+            title: item.name_arc(),
             subtitle,
             score,
-            matched_indices,
+            matched_char_indices,
             kind: SearchResultKind::App(item),
         }
     }
@@ -107,8 +164,8 @@ impl SearchResult {
         Self {
             title: Arc::from(result.as_str()),
             subtitle: Some(format!("= {expression}").into()),
-            score: i32::MAX,
-            matched_indices: Vec::new(),
+            score: CALCULATION_SCORE,
+            matched_char_indices: Vec::new(),
             kind: SearchResultKind::Calculation { expression, result },
         }
     }

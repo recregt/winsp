@@ -36,7 +36,7 @@ fn test_full_flow_from_construction_to_search_result() {
     let SearchResultKind::App(item) = &results[0].kind else {
         panic!("expected an App result");
     };
-    assert_eq!(item.id, "notepad");
+    assert_eq!(item.id(), "notepad");
 
     let results = index.search("calc", 5);
     assert_eq!(results[0].subtitle.as_deref(), None);
@@ -72,7 +72,7 @@ fn test_search_result_kind_is_exhaustively_matchable() {
     let kind = &results[0].kind;
 
     let description = match kind {
-        SearchResultKind::App(item) => item.name.to_string(),
+        SearchResultKind::App(item) => item.name().to_string(),
         SearchResultKind::Calculation { result, .. } => result.clone(),
         SearchResultKind::WebSearch { query, .. } => query.clone(),
         SearchResultKind::SystemCommand { command, .. } => command.clone(),
