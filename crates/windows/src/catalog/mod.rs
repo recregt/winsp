@@ -39,7 +39,7 @@ impl Catalog {
             .chain(self.builtins.iter().cloned())
             .chain(self.settings.iter().cloned())
         {
-            if seen_ids.insert(item.id.clone()) {
+            if seen_ids.insert(item.id().to_string()) {
                 apps.push(item);
             }
         }

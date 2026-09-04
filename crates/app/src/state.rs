@@ -71,7 +71,7 @@ impl AppState {
             return ExecuteOutcome::None;
         };
         match &selected.kind {
-            SearchResultKind::App(item) => ExecuteOutcome::Launch(item.target.clone()),
+            SearchResultKind::App(item) => ExecuteOutcome::Launch(item.target().clone()),
             SearchResultKind::Calculation { result, .. } => ExecuteOutcome::Copy(result.clone()),
             SearchResultKind::WebSearch { url, .. } => {
                 ExecuteOutcome::Launch(LaunchTarget::WebUrl(url.clone()))

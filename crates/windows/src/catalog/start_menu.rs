@@ -101,7 +101,7 @@ impl Catalog {
         let mut seen_ids = HashSet::new();
         let mut items = Vec::new();
         for (_, scanned) in ordered {
-            if seen_ids.insert(scanned.item.id.clone()) {
+            if seen_ids.insert(scanned.item.id().to_string()) {
                 items.push(scanned.item.clone());
             }
         }
@@ -288,7 +288,7 @@ mod tests {
     }
 
     fn names(items: &[AppItem]) -> Vec<&str> {
-        items.iter().map(|i| i.name.as_ref()).collect()
+        items.iter().map(|i| i.name()).collect()
     }
 
     #[test]
@@ -304,8 +304,8 @@ mod tests {
         let items = catalog.shortcut_items();
 
         assert_eq!(
-            items[0].icon,
-            Some(winsp_core::models::IconSource::Path(
+            items[0].icon(),
+            Some(&winsp_core::models::IconSource::Path(
                 dir.path().join("App.url").to_string_lossy().into_owned()
             ))
         );
@@ -382,7 +382,7 @@ mod tests {
         let items = catalog.shortcut_items();
 
         assert_eq!(items.len(), 2);
-        assert!(items.iter().all(|item| item.name.as_ref() == "Chrome"));
+        assert!(items.iter().all(|item| item.name() == "Chrome"));
     }
 
     #[test]
@@ -495,8 +495,8 @@ mod tests {
 
         assert_eq!(items.len(), 1);
         assert_eq!(
-            items[0].target,
-            LaunchTarget::Path(per_user.path().join("App.url").to_string_lossy().into())
+            items[0].target(),
+            &LaunchTarget::Path(per_user.path().join("App.url").to_string_lossy().into())
         );
     }
 

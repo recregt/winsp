@@ -64,7 +64,7 @@ pub(super) fn built_in_tools() -> Vec<AppItem> {
         .with_description("File management"),
     ]
     .into_iter()
-    .map(|item| match &item.target {
+    .map(|item| match item.target() {
         LaunchTarget::Path(exe) => match resolve_system_exe(exe) {
             Some(icon) => item.with_icon(icon),
             None => item,
@@ -103,11 +103,11 @@ mod tests {
     #[test]
     fn every_resolved_builtin_tool_carries_a_path_icon_matching_its_target() {
         for item in built_in_tools() {
-            let LaunchTarget::Path(exe) = &item.target else {
+            let LaunchTarget::Path(exe) = item.target() else {
                 continue;
             };
             if let Some(resolved) = resolve_system_exe(exe) {
-                assert_eq!(item.icon, Some(IconSource::Path(resolved)));
+                assert_eq!(item.icon(), Some(&IconSource::Path(resolved)));
             }
         }
     }

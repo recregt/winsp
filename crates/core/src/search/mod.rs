@@ -54,8 +54,8 @@ mod tests {
     #[test]
     fn test_empty_query_lists_top_items_without_touching_math() {
         let mut index = Engine::new();
-        let mut popular = AppItem::new("a", "Popular App", LaunchTarget::Path("a.exe".into()));
-        popular.launch_count = 10;
+        let popular = AppItem::new("a", "Popular App", LaunchTarget::Path("a.exe".into()))
+            .with_launch_count(10);
         index.set_items(vec![popular]);
 
         let results = index.search("", 5);
