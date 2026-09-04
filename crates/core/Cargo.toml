@@ -7,8 +7,10 @@ license.workspace = true
 authors.workspace = true
 
 [dependencies]
+compact_str = "0.10"
 logos = "0.16"
 nucleo-matcher = "0.3"
+smallvec = "1.16"
 
 [dev-dependencies]
 criterion = { version = "5.0.1", package = "codspeed-criterion-compat", features = ["html_reports"] }

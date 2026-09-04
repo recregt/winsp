@@ -1,6 +1,8 @@
-use crate::models::{AppItem, SearchResult};
+use crate::models::{AppItem, MatchedCharIndices, SearchResult};
+use compact_str::CompactString;
 use nucleo_matcher::chars::{normalize, to_lower_case};
 use nucleo_matcher::{Config, Matcher, Utf32Str};
+use smallvec::SmallVec;
 use std::borrow::Cow;
 use std::cell::RefCell;
 use std::sync::Arc;
@@ -8,6 +10,7 @@ use std::sync::Arc;
 const KEYWORD_MATCH_SCORE: i32 = 5_000;
 const SEARCH_FRECENCY_MULTIPLIER: i64 = 50;
 const TOP_ITEMS_FRECENCY_MULTIPLIER: i64 = 10;
+const INLINE_TOP: usize = 8;
 
 pub struct Engine {
     items: Vec<Arc<AppItem>>,
@@ -76,7 +79,7 @@ impl Engine {
 
         // Bounded selection over the launch count column: scoring the whole
         // index does not require touching a single `AppItem`.
-        let mut top: Vec<(u32, i32)> = Vec::with_capacity(limit.min(self.items.len()));
+        let mut top: SmallVec<[(u32, i32); INLINE_TOP]> = SmallVec::new();
         for (idx, &launch_count) in self.scan.launch_counts.iter().enumerate() {
             let score = launch_score(launch_count, TOP_ITEMS_FRECENCY_MULTIPLIER);
             if top.len() == limit {
@@ -91,7 +94,11 @@ impl Engine {
 
         top.into_iter()
             .map(|(idx, score)| {
-                SearchResult::from_app(Arc::clone(&self.items[idx as usize]), score, Vec::new())
+                SearchResult::from_app(
+                    Arc::clone(&self.items[idx as usize]),
+                    score,
+                    MatchedCharIndices::new(),
+                )
             })
             .collect()
     }
@@ -136,14 +143,14 @@ impl Engine {
             .into_iter()
             .map(|candidate| {
                 let item = Arc::clone(&self.items[candidate.item as usize]);
-                let indices = if candidate.matched_by_name {
+                let indices: MatchedCharIndices = if candidate.matched_by_name {
                     hay_buf.clear();
                     raw_indices.clear();
                     let haystack = Utf32Str::new(item.name(), &mut hay_buf);
                     matcher.fuzzy_indices(haystack, needle, &mut raw_indices);
                     raw_indices.iter().map(|&i| i as usize).collect()
                 } else {
-                    Vec::new()
+                    MatchedCharIndices::new()
                 };
                 SearchResult::from_app(item, candidate.score, indices)
             })
@@ -157,7 +164,7 @@ impl Engine {
         }
 
         let calc_result = crate::calc::eval(trimmed)
-            .map(|res| SearchResult::calculation(trimmed.to_string(), res));
+            .map(|res| SearchResult::calculation(CompactString::new(trimmed), res));
 
         let mut results = self.find(trimmed, limit);
         if let Some(calc) = calc_result {
@@ -173,6 +180,8 @@ struct Candidate {
     score: i32,
     matched_by_name: bool,
 }
+
+type TopCandidates = SmallVec<[Candidate; INLINE_TOP]>;
 
 /// The query in the two spellings a scan compares against: normalized and
 /// lowercased for fuzzy name matching, and lowercased for keyword matching,
@@ -249,7 +258,7 @@ fn narrowing_capacity(items: usize) -> usize {
 /// What one scan produced: the best `limit` candidates, and the complete match
 /// set when it is small enough to narrow the next scan with.
 struct Scan {
-    top: Vec<Candidate>,
+    top: TopCandidates,
     matched: Option<Vec<u32>>,
 }
 
@@ -442,7 +451,7 @@ impl ScanTable {
         query_mask: u32,
         limit: usize,
     ) -> Scan {
-        let mut top: Vec<Candidate> = Vec::with_capacity(limit.min(self.rows.len()));
+        let mut top: TopCandidates = SmallVec::new();
         let mut matched: Option<Vec<u32>> = Some(Vec::new());
         let capacity = narrowing_capacity(self.rows.len());
         let mut hay_buf = Vec::new();
@@ -538,7 +547,7 @@ fn match_unicode_name(
 /// Inserts `candidate` into the descending, `limit` long `top` list. Kept out of
 /// line so the scan loop that calls it stays tight.
 #[inline(never)]
-fn keep_best(top: &mut Vec<Candidate>, limit: usize, candidate: Candidate) {
+fn keep_best(top: &mut TopCandidates, limit: usize, candidate: Candidate) {
     if top.len() == limit {
         top.pop();
     }
@@ -866,12 +875,18 @@ mod tests {
         let results = index.find("CAF", 5);
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].title.as_ref(), "Café");
-        assert_eq!(results[0].matched_char_indices, vec![0, 1, 2]);
+        assert_eq!(
+            results[0].matched_char_indices,
+            MatchedCharIndices::from_slice(&[0, 1, 2])
+        );
 
         let results = index.find("アプリ", 5);
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].title.as_ref(), "日本語アプリ");
-        assert_eq!(results[0].matched_char_indices, vec![3, 4, 5]);
+        assert_eq!(
+            results[0].matched_char_indices,
+            MatchedCharIndices::from_slice(&[3, 4, 5])
+        );
     }
 
     #[test]
@@ -908,7 +923,10 @@ mod tests {
         let results = index.find("İ", 5);
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].title.as_ref(), "İstanbul Maps");
-        assert_eq!(results[0].matched_char_indices, vec![0]);
+        assert_eq!(
+            results[0].matched_char_indices,
+            MatchedCharIndices::from_slice(&[0])
+        );
     }
 
     #[test]

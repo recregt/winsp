@@ -234,7 +234,7 @@ mod tests {
     };
 
     fn app_result(item: AppItem) -> SearchResult {
-        SearchResult::from_app(std::sync::Arc::new(item), 0, Vec::new())
+        SearchResult::from_app(std::sync::Arc::new(item), 0, Vec::new().into())
     }
 
     fn wait_for_icon(path: &str) {

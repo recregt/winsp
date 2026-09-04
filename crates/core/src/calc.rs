@@ -1,7 +1,10 @@
+use compact_str::CompactString;
 use logos::Logos;
+use smallvec::SmallVec;
 use std::fmt::Write;
 
 const MAX_INPUT_LEN: usize = 1024;
+const INLINE_TOKENS: usize = 32;
 
 /// Every identifier the calculator knows. Lookups go through
 /// [`identifier_bucket`], which groups these by first byte; this list is the
@@ -102,7 +105,9 @@ fn known_identifier_prefix(rest: &str) -> Option<&'static str> {
         })
 }
 
-fn push_segmented(out: &mut Vec<Token<'_>>, word: &str) -> Option<()> {
+type Tokens<'a> = SmallVec<[Token<'a>; INLINE_TOKENS]>;
+
+fn push_segmented(out: &mut Tokens<'_>, word: &str) -> Option<()> {
     let mut rest = word;
     while !rest.is_empty() {
         let matched = known_identifier_prefix(rest)?;
@@ -112,7 +117,7 @@ fn push_segmented(out: &mut Vec<Token<'_>>, word: &str) -> Option<()> {
     Some(())
 }
 
-fn push_expanded<'a>(out: &mut Vec<Token<'a>>, tok: Token<'a>) -> Option<()> {
+fn push_expanded<'a>(out: &mut Tokens<'a>, tok: Token<'a>) -> Option<()> {
     match tok {
         Token::Identifier(word) => push_segmented(out, word)?,
         other => push_token(out, other),
@@ -123,12 +128,8 @@ fn push_expanded<'a>(out: &mut Vec<Token<'a>>, tok: Token<'a>) -> Option<()> {
 /// Lexes `input`, expands run-together identifiers and inserts the implicit
 /// multiplications in a single pass, so a rejected query stops at the first
 /// token it cannot handle and a valid one is only collected once.
-///
-/// Every token spans at least one byte, so the input length bounds how many
-/// there can be and the buffer is taken in one allocation instead of growing
-/// through four for an ordinary expression.
-fn tokenize(input: &str) -> Option<Vec<Token<'_>>> {
-    let mut out = Vec::with_capacity(input.len());
+fn tokenize(input: &str) -> Option<Tokens<'_>> {
+    let mut out = Tokens::new();
     for tok in Token::lexer(input) {
         push_expanded(&mut out, tok.ok()?)?;
     }
@@ -137,7 +138,7 @@ fn tokenize(input: &str) -> Option<Vec<Token<'_>>> {
 
 /// Pushes `tok`, preceded by the multiplication it implies when it starts a
 /// value right after one ended, as in `2pi` or `(1+2)(3)`.
-fn push_token<'a>(out: &mut Vec<Token<'a>>, tok: Token<'a>) {
+fn push_token<'a>(out: &mut Tokens<'a>, tok: Token<'a>) {
     if let Some(prev) = out.last() {
         let value_ends = matches!(
             prev,
@@ -190,9 +191,11 @@ enum RpnItem<'a> {
     Op(Op<'a>),
 }
 
-fn to_rpn<'a>(tokens: &[Token<'a>]) -> Option<Vec<RpnItem<'a>>> {
-    let mut output: Vec<RpnItem<'a>> = Vec::with_capacity(tokens.len());
-    let mut ops: Vec<Op<'a>> = Vec::with_capacity(tokens.len());
+type RpnOutput<'a> = SmallVec<[RpnItem<'a>; INLINE_TOKENS]>;
+
+fn to_rpn<'a>(tokens: &[Token<'a>]) -> Option<RpnOutput<'a>> {
+    let mut output: RpnOutput<'a> = SmallVec::new();
+    let mut ops: SmallVec<[Op<'a>; INLINE_TOKENS]> = SmallVec::new();
     let mut prev_value_ended = false;
 
     for (i, tok) in tokens.iter().enumerate() {
@@ -286,7 +289,7 @@ fn to_rpn<'a>(tokens: &[Token<'a>]) -> Option<Vec<RpnItem<'a>>> {
 }
 
 fn eval_rpn(rpn: &[RpnItem<'_>]) -> Option<f64> {
-    let mut stack: Vec<f64> = Vec::with_capacity(rpn.len());
+    let mut stack: SmallVec<[f64; INLINE_TOKENS]> = SmallVec::new();
     for item in rpn {
         match item {
             RpnItem::Value(v) => stack.push(*v),
@@ -353,7 +356,7 @@ fn try_eval_percentage(input: &str) -> Option<f64> {
 /// Renders a whole number without entering the formatting machinery, which a
 /// keystroke that types an expression would otherwise pay for on a result whose
 /// length is bounded by 17 characters.
-fn format_integer(val: i64) -> String {
+fn format_integer(val: i64) -> CompactString {
     let mut buf = [0u8; 20];
     let mut start = buf.len();
     let mut rest = val.unsigned_abs();
@@ -370,18 +373,20 @@ fn format_integer(val: i64) -> String {
         buf[start] = b'-';
     }
     let digits = std::str::from_utf8(&buf[start..]).expect("digits and a sign are ASCII");
-    String::from(digits)
+    CompactString::new(digits)
 }
 
-fn format_result(val: f64) -> String {
+fn format_result(val: f64) -> CompactString {
     if (val.fract() == 0.0) && (val.abs() < 1e15) {
         format_integer(val as i64)
     } else if val.abs() < 1e-6 || val.abs() >= 1e15 {
-        format!("{val:e}")
+        let mut text = CompactString::default();
+        let _ = write!(text, "{val:e}");
+        text
     } else {
         // Six decimals of a number below 1e15, so the rendering fits in a
         // string that is sized once and then trimmed in place.
-        let mut text = String::with_capacity(24);
+        let mut text = CompactString::with_capacity(24);
         let _ = write!(text, "{val:.6}");
         let trimmed = text.trim_end_matches('0').trim_end_matches('.').len();
         text.truncate(trimmed);
@@ -389,7 +394,7 @@ fn format_result(val: f64) -> String {
     }
 }
 
-pub fn eval(input: &str) -> Option<String> {
+pub fn eval(input: &str) -> Option<CompactString> {
     let trimmed = input.trim();
     if trimmed.is_empty() || trimmed.len() > MAX_INPUT_LEN {
         return None;
@@ -446,31 +451,31 @@ mod tests {
 
     #[test]
     fn test_basic_arithmetic() {
-        assert_eq!(eval("2 + 2"), Some("4".to_string()));
-        assert_eq!(eval("10 - 3 * 2"), Some("4".to_string()));
-        assert_eq!(eval("(10 - 3) * 2"), Some("14".to_string()));
-        assert_eq!(eval("10 / 4"), Some("2.5".to_string()));
-        assert_eq!(eval("2 ^ 8"), Some("256".to_string()));
-        assert_eq!(eval("2*3+4*5"), Some("26".to_string()));
-        assert_eq!(eval("2*(3+4)*5"), Some("70".to_string()));
-        assert_eq!(eval("10%3"), Some("1".to_string()));
+        assert_eq!(eval("2 + 2"), Some("4".into()));
+        assert_eq!(eval("10 - 3 * 2"), Some("4".into()));
+        assert_eq!(eval("(10 - 3) * 2"), Some("14".into()));
+        assert_eq!(eval("10 / 4"), Some("2.5".into()));
+        assert_eq!(eval("2 ^ 8"), Some("256".into()));
+        assert_eq!(eval("2*3+4*5"), Some("26".into()));
+        assert_eq!(eval("2*(3+4)*5"), Some("70".into()));
+        assert_eq!(eval("10%3"), Some("1".into()));
     }
 
     #[test]
     fn test_math_functions() {
-        assert_eq!(eval("sqrt(144)"), Some("12".to_string()));
-        assert_eq!(eval("abs(-42)"), Some("42".to_string()));
-        assert_eq!(eval("sin(pi/2)"), Some("1".to_string()));
-        assert_eq!(eval("log10(100)"), Some("2".to_string()));
-        assert_eq!(eval("floor(4.7)"), Some("4".to_string()));
-        assert_eq!(eval("ceil(4.2)"), Some("5".to_string()));
-        assert_eq!(eval("round(4.5)"), Some("5".to_string()));
+        assert_eq!(eval("sqrt(144)"), Some("12".into()));
+        assert_eq!(eval("abs(-42)"), Some("42".into()));
+        assert_eq!(eval("sin(pi/2)"), Some("1".into()));
+        assert_eq!(eval("log10(100)"), Some("2".into()));
+        assert_eq!(eval("floor(4.7)"), Some("4".into()));
+        assert_eq!(eval("ceil(4.2)"), Some("5".into()));
+        assert_eq!(eval("round(4.5)"), Some("5".into()));
     }
 
     #[test]
     fn test_percentage() {
-        assert_eq!(eval("15% of 200"), Some("30".to_string()));
-        assert_eq!(eval("25% of 80"), Some("20".to_string()));
+        assert_eq!(eval("15% of 200"), Some("30".into()));
+        assert_eq!(eval("25% of 80"), Some("20".into()));
     }
 
     #[test]
@@ -501,10 +506,10 @@ mod tests {
         assert_eq!(eval("* 2"), None);
         assert_eq!(eval(") + 1"), None);
         // Still reached: these do start like an expression.
-        assert_eq!(eval("+2 + 3"), Some("5".to_string()));
-        assert_eq!(eval(".5 + 2"), Some("2.5".to_string()));
-        assert_eq!(eval("(1 + 2)"), Some("3".to_string()));
-        assert_eq!(eval("+15% of 200"), Some("30".to_string()));
+        assert_eq!(eval("+2 + 3"), Some("5".into()));
+        assert_eq!(eval(".5 + 2"), Some("2.5".into()));
+        assert_eq!(eval("(1 + 2)"), Some("3".into()));
+        assert_eq!(eval("+15% of 200"), Some("30".into()));
     }
 
     #[test]
@@ -517,7 +522,7 @@ mod tests {
         assert_eq!(eval("tan(pi/2)"), None);
         assert_eq!(eval("tan(3*pi/2)"), None);
         assert_eq!(eval("tan(-pi/2)"), None);
-        assert_eq!(eval("tan(pi/4)"), Some("1".to_string()));
+        assert_eq!(eval("tan(pi/4)"), Some("1".into()));
     }
 
     #[test]
@@ -528,29 +533,29 @@ mod tests {
 
     #[test]
     fn test_unary_minus_binds_looser_than_power() {
-        assert_eq!(eval("-2^2"), Some("-4".to_string()));
-        assert_eq!(eval("-3^2"), Some("-9".to_string()));
-        assert_eq!(eval("(-3)^2"), Some("9".to_string()));
+        assert_eq!(eval("-2^2"), Some("-4".into()));
+        assert_eq!(eval("-3^2"), Some("-9".into()));
+        assert_eq!(eval("(-3)^2"), Some("9".into()));
     }
 
     #[test]
     fn test_power_is_right_associative() {
-        assert_eq!(eval("2^3^2"), Some("512".to_string()));
+        assert_eq!(eval("2^3^2"), Some("512".into()));
     }
 
     #[test]
     fn test_chained_unary_operators() {
-        assert_eq!(eval("5 - - 2"), Some("7".to_string()));
-        assert_eq!(eval("--5"), Some("5".to_string()));
-        assert_eq!(eval("2 * -3"), Some("-6".to_string()));
-        assert_eq!(eval("2^-2"), Some("0.25".to_string()));
+        assert_eq!(eval("5 - - 2"), Some("7".into()));
+        assert_eq!(eval("--5"), Some("5".into()));
+        assert_eq!(eval("2 * -3"), Some("-6".into()));
+        assert_eq!(eval("2^-2"), Some("0.25".into()));
     }
 
     #[test]
     fn test_implicit_multiplication() {
-        assert_eq!(eval("2(3+4)"), Some("14".to_string()));
-        assert_eq!(eval("2(3)(4)"), Some("24".to_string()));
-        assert_eq!(eval("(2)(3)"), Some("6".to_string()));
+        assert_eq!(eval("2(3+4)"), Some("14".into()));
+        assert_eq!(eval("2(3)(4)"), Some("24".into()));
+        assert_eq!(eval("(2)(3)"), Some("6".into()));
         assert_eq!(eval("2pi"), Some(format_result(2.0 * std::f64::consts::PI)));
         assert_eq!(eval("3log(100)"), Some(format_result(3.0 * 2.0)));
         assert_eq!(
@@ -569,8 +574,8 @@ mod tests {
 
     #[test]
     fn test_identifiers_are_case_insensitive() {
-        assert_eq!(eval("SQRT(144)"), Some("12".to_string()));
-        assert_eq!(eval("Log10(100)"), Some("2".to_string()));
+        assert_eq!(eval("SQRT(144)"), Some("12".into()));
+        assert_eq!(eval("Log10(100)"), Some("2".into()));
         assert_eq!(eval("2PI"), Some(format_result(2.0 * std::f64::consts::PI)));
         assert_eq!(
             eval("PIE"),
@@ -632,20 +637,20 @@ mod tests {
 
     #[test]
     fn test_scientific_notation_vs_eulers_number() {
-        assert_eq!(eval("1.2E2"), Some("120".to_string()));
-        assert_eq!(eval("2E-2"), Some("0.02".to_string()));
-        assert_eq!(eval("-1.0E-2"), Some("-0.01".to_string()));
-        assert_eq!(eval("1e3"), Some("1000".to_string()));
-        assert_eq!(eval("2e-2"), Some("0.02".to_string()));
-        assert_eq!(eval("-1.0e-2"), Some("-0.01".to_string()));
+        assert_eq!(eval("1.2E2"), Some("120".into()));
+        assert_eq!(eval("2E-2"), Some("0.02".into()));
+        assert_eq!(eval("-1.0E-2"), Some("-0.01".into()));
+        assert_eq!(eval("1e3"), Some("1000".into()));
+        assert_eq!(eval("2e-2"), Some("0.02".into()));
+        assert_eq!(eval("-1.0e-2"), Some("-0.01".into()));
         assert_eq!(eval("2e"), Some(format_result(2.0 * std::f64::consts::E)));
     }
 
     #[test]
     fn test_floating_point_display_hides_ieee754_noise() {
-        assert_eq!(eval("0.1+0.2"), Some("0.3".to_string()));
-        assert_eq!(eval(".5+.5"), Some("1".to_string()));
-        assert_eq!(eval("1/3*3"), Some("1".to_string()));
+        assert_eq!(eval("0.1+0.2"), Some("0.3".into()));
+        assert_eq!(eval(".5+.5"), Some("1".into()));
+        assert_eq!(eval("1/3*3"), Some("1".into()));
     }
 
     #[test]
