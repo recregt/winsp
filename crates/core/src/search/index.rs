@@ -12,6 +12,7 @@ pub struct Engine {
     items: Vec<Arc<AppItem>>,
     scan: ScanTable,
     matcher: RefCell<Matcher>,
+    narrowing: RefCell<Option<Narrowing>>,
 }
 
 impl std::fmt::Debug for Engine {
@@ -36,23 +37,27 @@ impl Engine {
             items: Vec::new(),
             scan: ScanTable::default(),
             matcher: RefCell::new(Matcher::new(config)),
+            narrowing: RefCell::new(None),
         }
     }
 
     pub fn set_items(&mut self, items: impl IntoIterator<Item = AppItem>) {
         self.items = items.into_iter().map(Arc::new).collect();
         self.scan = ScanTable::build(&self.items);
+        self.narrowing.get_mut().take();
     }
 
     pub fn add_item(&mut self, item: AppItem) {
         let item = Arc::new(item);
         self.scan.push(&item);
         self.items.push(item);
+        self.narrowing.get_mut().take();
     }
 
     pub fn clear(&mut self) {
         self.items.clear();
         self.scan = ScanTable::default();
+        self.narrowing.get_mut().take();
     }
 
     pub fn len(&self) -> usize {
@@ -91,6 +96,10 @@ impl Engine {
     }
 
     pub(super) fn find(&self, query: &str, limit: usize) -> Vec<SearchResult> {
+        if limit == 0 {
+            return Vec::new();
+        }
+
         let mut matcher = self.matcher.borrow_mut();
         let needle_string: String = query.chars().map(normalize).map(to_lower_case).collect();
         let mut needle_buf = Vec::new();
@@ -98,14 +107,31 @@ impl Engine {
         let query_lower = query.to_lowercase();
         let query_mask = needle_mask(&needle_string);
 
-        let candidates =
-            self.scan
-                .best_matches(&mut matcher, needle, &query_lower, query_mask, limit);
+        // A keystroke only ever shrinks the previous match set, so the scan can
+        // start from it instead of from the whole index.
+        let previous = self.narrowing.borrow_mut().take();
+        let narrowed = previous
+            .as_ref()
+            .filter(|previous| narrows(&previous.query, query))
+            .map(|previous| previous.items.as_slice());
+
+        let scan = self.scan.best_matches(
+            &mut matcher,
+            needle,
+            &query_lower,
+            query_mask,
+            limit,
+            narrowed,
+        );
+        *self.narrowing.borrow_mut() = scan.matched.map(|items| Narrowing {
+            query: query.to_owned(),
+            items,
+        });
 
         let mut hay_buf = Vec::new();
         let mut raw_indices = Vec::new();
 
-        candidates
+        scan.top
             .into_iter()
             .map(|candidate| {
                 let item = Arc::clone(&self.items[candidate.item as usize]);
@@ -128,6 +154,42 @@ struct Candidate {
     item: u32,
     score: i32,
     matched_by_name: bool,
+}
+
+/// Complete match set of the last query, kept so the next keystroke can rescan
+/// those items only.
+struct Narrowing {
+    query: String,
+    items: Vec<u32>,
+}
+
+/// Whether the items matching `query` are a subset of the ones that matched
+/// `previous`. Appending characters to a query can only shrink the match set:
+/// fuzzy name matching needs the needle to be a subsequence of the name, and
+/// keyword matching needs the query to be a substring of a keyword, and both
+/// still hold for any prefix of the query.
+///
+/// Restricted to ASCII queries because `str::to_lowercase`, which the keyword
+/// comparison uses, is context sensitive: a final sigma lowercases differently
+/// once another character follows it, so the lowercased queries would not be
+/// prefixes of each other.
+fn narrows(previous: &str, query: &str) -> bool {
+    query.is_ascii() && query.starts_with(previous)
+}
+
+/// Items retained for the next keystroke, as a share of the index. Rescanning a
+/// list costs a cache miss per item, where a full scan streams through the
+/// columnar buffers, so a barely narrowed set is not worth reusing. Small
+/// indexes are scanned quickly either way, hence the floor.
+fn narrowing_capacity(items: usize) -> usize {
+    (items / 8).max(64)
+}
+
+/// What one scan produced: the best `limit` candidates, and the complete match
+/// set when it is small enough to narrow the next scan with.
+struct Scan {
+    top: Vec<Candidate>,
+    matched: Option<Vec<u32>>,
 }
 
 /// Keyword separator inside [`ScanTable::keywords`]. Queries come from a
@@ -268,6 +330,9 @@ impl ScanTable {
     /// `limit` of them, highest score first, ties going to the lower item index.
     /// The selection is a bounded insertion, which assumes the small result
     /// limits a launcher UI asks for.
+    ///
+    /// `narrowed`, when given, is the complete match set of a query this one
+    /// extends, and replaces the index as the set of items to score.
     fn best_matches(
         &self,
         matcher: &mut Matcher,
@@ -275,33 +340,73 @@ impl ScanTable {
         query_lower: &str,
         query_mask: u32,
         limit: usize,
-    ) -> Vec<Candidate> {
-        if limit == 0 {
-            return Vec::new();
+        narrowed: Option<&[u32]>,
+    ) -> Scan {
+        match narrowed {
+            Some(items) => {
+                let rows = items.iter().map(|&idx| {
+                    let index = idx as usize;
+                    (
+                        idx,
+                        &self.rows[index],
+                        self.name_masks[index],
+                        self.keyword_masks[index],
+                    )
+                });
+                self.scan(rows, matcher, needle, query_lower, query_mask, limit)
+            }
+            None => {
+                // Walked as parallel iterators: the whole index is read in
+                // order, so none of the columns needs a bounds check.
+                let rows = self
+                    .rows
+                    .iter()
+                    .zip(self.name_masks.iter().copied())
+                    .zip(self.keyword_masks.iter().copied())
+                    .enumerate()
+                    .map(|(idx, ((row, name_mask), keyword_mask))| {
+                        (idx as u32, row, name_mask, keyword_mask)
+                    });
+                self.scan(rows, matcher, needle, query_lower, query_mask, limit)
+            }
         }
+    }
 
+    fn scan<'a, I: Iterator<Item = (u32, &'a ScanRow, u32, u32)>>(
+        &self,
+        source: I,
+        matcher: &mut Matcher,
+        needle: Utf32Str<'_>,
+        query_lower: &str,
+        query_mask: u32,
+        limit: usize,
+    ) -> Scan {
         let mut top: Vec<Candidate> = Vec::with_capacity(limit.min(self.rows.len()));
+        let mut matched: Option<Vec<u32>> = Some(Vec::new());
+        let capacity = narrowing_capacity(self.rows.len());
         let mut hay_buf = Vec::new();
+        let needle_len = needle.len() as u32;
 
-        for (idx, row) in self.rows.iter().enumerate() {
-            let name_possible = query_mask & !self.name_masks[idx] == 0;
-            let keyword_possible = query_mask & !self.keyword_masks[idx] == 0;
+        for (idx, row, name_mask, keyword_mask) in source {
+            // A name shorter than the needle cannot hold it, which the matcher
+            // would have to be called to find out.
+            let name_possible =
+                query_mask & !name_mask == 0 && needle_len <= row.name_end - row.name_start;
+            let keyword_possible = query_mask & !keyword_mask == 0;
             if !name_possible && !keyword_possible {
                 continue;
             }
 
             let name_score = if name_possible {
                 let name_range = row.name_start as usize..row.name_end as usize;
-                let haystack = if row.name_is_ascii {
+                let score = if row.name_is_ascii {
                     // Byte indexing skips the UTF-8 boundary checks of `str`.
-                    Utf32Str::Ascii(&self.names.as_bytes()[name_range])
+                    let haystack = Utf32Str::Ascii(&self.names.as_bytes()[name_range]);
+                    matcher.fuzzy_match(haystack, needle)
                 } else {
-                    hay_buf.clear();
-                    Utf32Str::new(&self.names[name_range], &mut hay_buf)
+                    match_unicode_name(matcher, &self.names[name_range], needle, &mut hay_buf)
                 };
-                matcher
-                    .fuzzy_match(haystack, needle)
-                    .map(|score| score as i32)
+                score.map(|score| score as i32)
             } else {
                 None
             };
@@ -324,6 +429,15 @@ impl ScanTable {
             };
 
             if let Some((score, matched_by_name)) = best {
+                if let Some(items) = &mut matched {
+                    if items.len() == capacity {
+                        // Too many matches left to narrow the next scan with.
+                        matched = None;
+                    } else {
+                        items.push(idx);
+                    }
+                }
+
                 let frecency_boost = launch_score(row.launch_count, SEARCH_FRECENCY_MULTIPLIER);
                 let score = score.saturating_add(frecency_boost);
                 if top.len() == limit && score <= top[limit - 1].score {
@@ -333,7 +447,7 @@ impl ScanTable {
                     &mut top,
                     limit,
                     Candidate {
-                        item: idx as u32,
+                        item: idx,
                         score,
                         matched_by_name,
                     },
@@ -341,8 +455,23 @@ impl ScanTable {
             }
         }
 
-        top
+        Scan { top, matched }
     }
+}
+
+/// Matches a name that is not pure ASCII, which has to be decoded into
+/// codepoints first. Kept out of line: names are ASCII in the common case, and
+/// the decoding would otherwise sit in the middle of the scan loop.
+#[inline(never)]
+fn match_unicode_name(
+    matcher: &mut Matcher,
+    name: &str,
+    needle: Utf32Str<'_>,
+    buf: &mut Vec<char>,
+) -> Option<u16> {
+    buf.clear();
+    let haystack = Utf32Str::new(name, buf);
+    matcher.fuzzy_match(haystack, needle)
 }
 
 /// Inserts `candidate` into the descending, `limit` long `top` list. Kept out of
@@ -675,6 +804,106 @@ mod tests {
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].title.as_ref(), "İstanbul Maps");
         assert_eq!(results[0].matched_char_indices, vec![0]);
+    }
+
+    #[test]
+    fn test_typing_a_query_matches_searching_it_directly() {
+        let sessions = [
+            "visual studio code",
+            "browser",
+            "windows ",
+            "café",
+            "İst",
+            "calc",
+            "qqq",
+        ];
+
+        for session in sessions {
+            let typed = sample_index();
+            for (offset, ch) in session.char_indices() {
+                let query = &session[..offset + ch.len_utf8()];
+                let cold = sample_index();
+                assert_eq!(
+                    titles(&typed.find(query, 5)),
+                    titles(&cold.find(query, 5)),
+                    "query: {query:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_narrowing_survives_a_result_limit_smaller_than_the_match_set() {
+        let index = sample_index();
+        let cold = sample_index();
+
+        // The first search drops matches it cannot return, the second one still
+        // has to see them.
+        assert_eq!(index.find("windows", 1).len(), 1);
+        let results = index.find("windows t", 5);
+        assert!(!results.is_empty());
+        assert_eq!(titles(&results), titles(&cold.find("windows t", 5)));
+    }
+
+    #[test]
+    fn test_typing_matches_a_cold_search_past_the_narrowing_capacity() {
+        // Wide enough that early keystrokes match more items than the engine
+        // keeps, which forces the following keystroke back to a full scan.
+        fn large_index() -> Engine {
+            let items: Vec<AppItem> = (0..500)
+                .map(|i| {
+                    let name = match i % 3 {
+                        0 => format!("Visual Studio {i}"),
+                        1 => format!("Video Editor {i}"),
+                        _ => format!("Notepad {i}"),
+                    };
+                    AppItem::new(
+                        format!("id-{i}"),
+                        name,
+                        LaunchTarget::Path(format!("{i}.exe")),
+                    )
+                    .with_keywords(vec!["tool".into()])
+                })
+                .collect();
+            let mut index = Engine::new();
+            index.set_items(items);
+            index
+        }
+
+        let session = "visual studio 42";
+        let typed = large_index();
+        for (offset, ch) in session.char_indices() {
+            let query = &session[..offset + ch.len_utf8()];
+            let cold = large_index();
+            assert_eq!(
+                titles(&typed.find(query, 6)),
+                titles(&cold.find(query, 6)),
+                "query: {query:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_editing_the_index_invalidates_the_narrowed_scan() {
+        let mut index = sample_index();
+        assert!(titles(&index.find("vis", 5)).contains(&"Visual Studio Code"));
+
+        index.add_item(AppItem::new(
+            "vim",
+            "Vim",
+            LaunchTarget::Path("vim.exe".into()),
+        ));
+        assert!(titles(&index.find("vi", 5)).contains(&"Vim"));
+
+        index.set_items(vec![AppItem::new(
+            "gimp",
+            "GIMP",
+            LaunchTarget::Path("gimp.exe".into()),
+        )]);
+        assert_eq!(titles(&index.find("gi", 5)), vec!["GIMP"]);
+
+        index.clear();
+        assert!(index.find("gi", 5).is_empty());
     }
 
     /// Same scoring rules as [`ScanTable::best_matches`], without any prefilter.
