@@ -11,6 +11,8 @@ const EXPRESSIONS: &[(&str, &str)] = &[
     ("constants_and_power", "pi * e ^ 2"),
     ("implicit_multiplication", "3(4 + 5)2"),
     ("invalid_expression", "notafunction(12) +"),
+    ("plain_text_query", "visual studio code"),
+    ("single_word_query", "chrome"),
 ];
 
 const POPULATED_INDEX_SIZE: usize = 10_000;

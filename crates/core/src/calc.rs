@@ -62,20 +62,25 @@ fn segment_identifier(word: &str) -> Option<Vec<String>> {
     Some(parts)
 }
 
-fn expand_identifiers(tokens: Vec<Token>) -> Option<Vec<Token>> {
-    let mut out = Vec::with_capacity(tokens.len());
-    for tok in tokens {
-        match tok {
-            Token::Identifier(word) if KNOWN_IDENTIFIERS.contains(&word.as_str()) => {
-                out.push(Token::Identifier(word));
-            }
-            Token::Identifier(word) => {
-                for part in segment_identifier(&word)? {
-                    out.push(Token::Identifier(part));
-                }
-            }
-            other => out.push(other),
+fn push_expanded(out: &mut Vec<Token>, tok: Token) -> Option<()> {
+    match tok {
+        Token::Identifier(word) if KNOWN_IDENTIFIERS.contains(&word.as_str()) => {
+            out.push(Token::Identifier(word));
         }
+        Token::Identifier(word) => {
+            for part in segment_identifier(&word)? {
+                out.push(Token::Identifier(part));
+            }
+        }
+        other => out.push(other),
+    }
+    Some(())
+}
+
+fn lex_and_expand(input: &str) -> Option<Vec<Token>> {
+    let mut out = Vec::new();
+    for tok in Token::lexer(input) {
+        push_expanded(&mut out, tok.ok()?)?;
     }
     Some(out)
 }
@@ -280,19 +285,21 @@ fn eval_rpn(rpn: &[RpnItem]) -> Option<f64> {
 }
 
 fn try_eval_percentage(input: &str) -> Option<f64> {
-    let lower = input.to_lowercase();
-    let parts: Vec<&str> = lower.split_whitespace().collect();
-    if parts.len() == 3 && parts[1] == "of" {
-        let pct_str = parts[0].strip_suffix('%')?;
-        let pct: f64 = pct_str.parse().ok()?;
-        let total: f64 = parts[2].parse().ok()?;
-        if !pct.is_finite() || !total.is_finite() {
-            return None;
-        }
-        let result = (pct / 100.0) * total;
-        return result.is_finite().then_some(result);
+    let mut parts = input.split_whitespace();
+    let pct_str = parts.next()?;
+    let of_str = parts.next()?;
+    let total_str = parts.next()?;
+    if parts.next().is_some() || !of_str.eq_ignore_ascii_case("of") {
+        return None;
     }
-    None
+    let pct_str = pct_str.strip_suffix('%')?;
+    let pct: f64 = pct_str.parse().ok()?;
+    let total: f64 = total_str.parse().ok()?;
+    if !pct.is_finite() || !total.is_finite() {
+        return None;
+    }
+    let result = (pct / 100.0) * total;
+    result.is_finite().then_some(result)
 }
 
 fn format_result(val: f64) -> String {
@@ -317,12 +324,11 @@ pub fn eval(input: &str) -> Option<String> {
         return Some(format_result(res));
     }
 
-    let tokens: Vec<Token> = Token::lexer(trimmed).collect::<Result<_, _>>().ok()?;
+    let tokens = lex_and_expand(trimmed)?;
     if tokens.is_empty() {
         return None;
     }
 
-    let tokens = expand_identifiers(tokens)?;
     let tokens = insert_implicit_multiplication(tokens);
 
     let has_op_or_func = trimmed.contains('E')
@@ -468,6 +474,14 @@ mod tests {
     }
 
     #[test]
+    fn test_bare_word_segments_into_known_identifiers_without_parens_or_digits() {
+        assert_eq!(
+            eval("pie"),
+            Some(format_result(std::f64::consts::PI * std::f64::consts::E))
+        );
+    }
+
+    #[test]
     fn test_scientific_notation_vs_eulers_number() {
         assert_eq!(eval("1.2E2"), Some("120".to_string()));
         assert_eq!(eval("2E-2"), Some("0.02".to_string()));
@@ -502,19 +516,13 @@ mod tests {
     #[test]
     fn test_deeply_nested_input_does_not_recurse_even_uncapped() {
         let power_chain: String = "2".to_string() + &"^2".repeat(500_000);
-        let tokens: Vec<Token> = Token::lexer(&power_chain)
-            .collect::<Result<_, _>>()
-            .unwrap();
-        let tokens = expand_identifiers(tokens).unwrap();
+        let tokens = lex_and_expand(&power_chain).unwrap();
         let tokens = insert_implicit_multiplication(tokens);
         let rpn = to_rpn(&tokens).unwrap();
         assert!(eval_rpn(&rpn).unwrap().is_infinite());
 
         let deep_parens: String = "(".repeat(500_000) + "1" + &")".repeat(500_000);
-        let tokens: Vec<Token> = Token::lexer(&deep_parens)
-            .collect::<Result<_, _>>()
-            .unwrap();
-        let tokens = expand_identifiers(tokens).unwrap();
+        let tokens = lex_and_expand(&deep_parens).unwrap();
         let tokens = insert_implicit_multiplication(tokens);
         let rpn = to_rpn(&tokens).unwrap();
         assert_eq!(eval_rpn(&rpn), Some(1.0));
