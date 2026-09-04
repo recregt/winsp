@@ -3,6 +3,98 @@
 All notable changes to WinSP are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [0.3.0] - 2026-09-04
+
+### Added
+- Support installing actionlint locally by @recregt in #114
+- Resolve PR numbers via GitHub API by @recregt in #115
+- Gate release on CHANGELOG.md version by @recregt in #116
+- Dark-themed tray menu via win32-darkmode by @recregt in #118
+- Add toast notifications for errors by @recregt in #125
+- Surface unreadable Start Menu folders by @recregt in #132
+- Add settings persistence layer by @recregt in #136
+- Model hotkey modifiers as a schema by @recregt in #139
+- Add tray hotkey capture flow by @recregt in #140
+- Customizable search bar position by @recregt in #143
+- Auto-detect wine for pre-push tests by @recregt in #153
+- Show application icons in search results by @recregt in #159
+- Position window on the active monitor by @recregt in #218
+
+### Fixed
+- Recover commit types from squash merges by @recregt in #113
+- Add timeout to download requests by @recregt in #114
+- Link bot mentions to their app page by @recregt in #115
+- Recover from COM apartment conflicts by @recregt in #128
+- Detect uninstallers by target by @recregt in #130
+- Dedupe fallback by path not stem by @recregt in #131
+- Show readable launch error messages by @recregt in #133
+- Scan Start Menu once at startup by @recregt in #134
+- Discard trailing char via PeekMessage by @recregt in #140
+- Skip save when position is unchanged by @recregt in #143
+- Relaunch no longer shows a stale window by @recregt in #148
+- Surface previously-silent failures by @recregt in #150
+- Add explicit check=False for ruff PLW1510 by @recregt in #153
+- Evict and destroy icons past a cache size cap by @recregt in #159
+- Wrap cached HICON in a Drop-based RAII guard by @recregt in #160
+- Sign GitHub release MSIX for Add-AppxPackage by @recregt in #190
+- Break directory cycles via file identity by @recregt in #192
+- Guard BeginPaint failure in paint() by @recregt in #197
+- Clear stale unreadable dirs incrementally by @recregt in #198
+- Resize window for results in show_fresh by @recregt in #202
+- Apply catalog refresh on the UI thread by @recregt in #203
+- Use scientific notation for tiny results by @recregt in #207
+- Validate percentage parsing strictly by @recregt in #206
+- Saturate search score arithmetic by @recregt in #205
+- Wait cooldown instead of dropping reconcile by @recregt in #204
+- Scope window handler/repaint state per HWND by @recregt in #209
+- Re-add tray icon after Explorer restarts by @recregt in #210
+- Fold query with matcher's own casefold by @recregt in #208
+- Surface autostart, watcher, and tray failures by @recregt in #211
+- Give calculator score a fixed ceiling by @recregt in #215
+- Flush clipboard after setting content by @recregt in #214
+- Combine name and keyword match scores by @recregt in #216
+- Gate test watch dir override to debug by @recregt in #217
+- Use work area and handle GetCursorPos failure by @recregt in #218
+- Close winsp-windows leaks and hazards by @recregt in #221
+- Preserve name-match indices on keyword win by @recregt in #234
+- Stop cliff splitting squash-merge bodies by @recregt in #237
+- Collapse cliff entries to one per PR/type by @recregt in #238
+
+### Changed
+- Dedupe install scripts into a package by @recregt in #114
+- Group verify scripts under a package by @recregt in #116
+- Make read_dword safe and crate-private by @recregt in #118
+- Move message dispatch into WindowHandle by @recregt in #119
+- Add test-support feature to windows by @recregt in #120
+- Consolidate windows-sys into windows by @recregt in #121
+- Promote window to top-level module by @recregt in #123
+- Rename WindowHandle to Window by @recregt in #124
+- Clean up console output by @recregt in #127
+- Reuse one COM shell-link object per scan by @recregt in #128
+- Incrementally update Start Menu catalog by @recregt in #129
+- Consolidate cfg(windows) via cfg_if by @recregt in #134
+- Drop explanatory comments from #136/#139 by @recregt in #141
+- Rename request_show for accuracy by @recregt in #148
+- Drop unnecessary cfg guard by @recregt in #150
+- Make windows crate fully windows-gated by @recregt in #153
+- Drop dead startup println! calls by @recregt in #156
+- Let-else for single instance check by @recregt in #157
+- Use let-chains, drop nesting by @recregt in #158
+- Use native thread pool for icons by @recregt in #160
+- Match existing house style for FFI code by @recregt in #192
+- Use MaybeUninit for FFI out-params by @recregt in #197
+- Split window modules by responsibility by @recregt in #221
+- Rename AppTarget to LaunchTarget by @recregt in #228
+- Restructure catalog module by @recregt in #230
+- Move UI side effects out of system layer by @recregt in #231
+- Encapsulate AppItem, tidy search API by @recregt in #233
+- Avoid re-sorting sorted search results by @recregt in #234
+- Flatten core module layout by @recregt in #235
+- Cut per-keystroke allocations by @recregt in #236
+
+
+**Full Changelog**: https://github.com/recregt/winsp/compare/v0.2.1...v0.3.0
+
 ## [0.2.1] - 2026-08-31
 
 ### Added
