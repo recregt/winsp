@@ -307,7 +307,7 @@ fn format_result(val: f64) -> String {
     }
 }
 
-pub fn try_eval(input: &str) -> Option<String> {
+pub fn eval(input: &str) -> Option<String> {
     let trimmed = input.trim();
     if trimmed.is_empty() || trimmed.len() > MAX_INPUT_LEN {
         return None;
@@ -359,136 +359,130 @@ mod tests {
 
     #[test]
     fn test_basic_arithmetic() {
-        assert_eq!(try_eval("2 + 2"), Some("4".to_string()));
-        assert_eq!(try_eval("10 - 3 * 2"), Some("4".to_string()));
-        assert_eq!(try_eval("(10 - 3) * 2"), Some("14".to_string()));
-        assert_eq!(try_eval("10 / 4"), Some("2.5".to_string()));
-        assert_eq!(try_eval("2 ^ 8"), Some("256".to_string()));
-        assert_eq!(try_eval("2*3+4*5"), Some("26".to_string()));
-        assert_eq!(try_eval("2*(3+4)*5"), Some("70".to_string()));
-        assert_eq!(try_eval("10%3"), Some("1".to_string()));
+        assert_eq!(eval("2 + 2"), Some("4".to_string()));
+        assert_eq!(eval("10 - 3 * 2"), Some("4".to_string()));
+        assert_eq!(eval("(10 - 3) * 2"), Some("14".to_string()));
+        assert_eq!(eval("10 / 4"), Some("2.5".to_string()));
+        assert_eq!(eval("2 ^ 8"), Some("256".to_string()));
+        assert_eq!(eval("2*3+4*5"), Some("26".to_string()));
+        assert_eq!(eval("2*(3+4)*5"), Some("70".to_string()));
+        assert_eq!(eval("10%3"), Some("1".to_string()));
     }
 
     #[test]
     fn test_math_functions() {
-        assert_eq!(try_eval("sqrt(144)"), Some("12".to_string()));
-        assert_eq!(try_eval("abs(-42)"), Some("42".to_string()));
-        assert_eq!(try_eval("sin(pi/2)"), Some("1".to_string()));
-        assert_eq!(try_eval("log10(100)"), Some("2".to_string()));
-        assert_eq!(try_eval("floor(4.7)"), Some("4".to_string()));
-        assert_eq!(try_eval("ceil(4.2)"), Some("5".to_string()));
-        assert_eq!(try_eval("round(4.5)"), Some("5".to_string()));
+        assert_eq!(eval("sqrt(144)"), Some("12".to_string()));
+        assert_eq!(eval("abs(-42)"), Some("42".to_string()));
+        assert_eq!(eval("sin(pi/2)"), Some("1".to_string()));
+        assert_eq!(eval("log10(100)"), Some("2".to_string()));
+        assert_eq!(eval("floor(4.7)"), Some("4".to_string()));
+        assert_eq!(eval("ceil(4.2)"), Some("5".to_string()));
+        assert_eq!(eval("round(4.5)"), Some("5".to_string()));
     }
 
     #[test]
     fn test_percentage() {
-        assert_eq!(try_eval("15% of 200"), Some("30".to_string()));
-        assert_eq!(try_eval("25% of 80"), Some("20".to_string()));
+        assert_eq!(eval("15% of 200"), Some("30".to_string()));
+        assert_eq!(eval("25% of 80"), Some("20".to_string()));
     }
 
     #[test]
     fn test_percentage_rejects_malformed_and_non_finite_input() {
-        assert_eq!(try_eval("15 of 200"), None);
-        assert_eq!(try_eval("15%% of 200"), None);
-        assert_eq!(try_eval("15%%%% of 200"), None);
-        assert_eq!(try_eval("nan% of 2"), None);
-        assert_eq!(try_eval("inf% of 2"), None);
-        assert_eq!(try_eval("15% of nan"), None);
-        assert_eq!(try_eval("15% of inf"), None);
+        assert_eq!(eval("15 of 200"), None);
+        assert_eq!(eval("15%% of 200"), None);
+        assert_eq!(eval("15%%%% of 200"), None);
+        assert_eq!(eval("nan% of 2"), None);
+        assert_eq!(eval("inf% of 2"), None);
+        assert_eq!(eval("15% of nan"), None);
+        assert_eq!(eval("15% of inf"), None);
     }
 
     #[test]
     fn test_invalid_expressions() {
-        assert_eq!(try_eval("hello"), None);
-        assert_eq!(try_eval("123"), None);
-        assert_eq!(try_eval(""), None);
-        assert_eq!(try_eval("2 +"), None);
-        assert_eq!(try_eval("3.5.2"), None);
-        assert_eq!(try_eval("()"), None);
+        assert_eq!(eval("hello"), None);
+        assert_eq!(eval("123"), None);
+        assert_eq!(eval(""), None);
+        assert_eq!(eval("2 +"), None);
+        assert_eq!(eval("3.5.2"), None);
+        assert_eq!(eval("()"), None);
     }
 
     #[test]
     fn test_domain_errors_return_none_not_panic() {
-        assert_eq!(try_eval("10/0"), None);
-        assert_eq!(try_eval("10%0"), None);
-        assert_eq!(try_eval("sqrt(-1)"), None);
-        assert_eq!(try_eval("ln(-1)"), None);
-        assert_eq!(try_eval("log(-1)"), None);
-        assert_eq!(try_eval("tan(pi/2)"), None);
-        assert_eq!(try_eval("tan(3*pi/2)"), None);
-        assert_eq!(try_eval("tan(-pi/2)"), None);
-        assert_eq!(try_eval("tan(pi/4)"), Some("1".to_string()));
+        assert_eq!(eval("10/0"), None);
+        assert_eq!(eval("10%0"), None);
+        assert_eq!(eval("sqrt(-1)"), None);
+        assert_eq!(eval("ln(-1)"), None);
+        assert_eq!(eval("log(-1)"), None);
+        assert_eq!(eval("tan(pi/2)"), None);
+        assert_eq!(eval("tan(3*pi/2)"), None);
+        assert_eq!(eval("tan(-pi/2)"), None);
+        assert_eq!(eval("tan(pi/4)"), Some("1".to_string()));
     }
 
     #[test]
     fn test_tan_domain_check_cosine_threshold_boundary() {
-        assert!(try_eval("tan(pi/2 + 1.1e-9)").is_some());
-        assert_eq!(try_eval("tan(pi/2 + 0.9e-9)"), None);
+        assert!(eval("tan(pi/2 + 1.1e-9)").is_some());
+        assert_eq!(eval("tan(pi/2 + 0.9e-9)"), None);
     }
 
     #[test]
     fn test_unary_minus_binds_looser_than_power() {
-        assert_eq!(try_eval("-2^2"), Some("-4".to_string()));
-        assert_eq!(try_eval("-3^2"), Some("-9".to_string()));
-        assert_eq!(try_eval("(-3)^2"), Some("9".to_string()));
+        assert_eq!(eval("-2^2"), Some("-4".to_string()));
+        assert_eq!(eval("-3^2"), Some("-9".to_string()));
+        assert_eq!(eval("(-3)^2"), Some("9".to_string()));
     }
 
     #[test]
     fn test_power_is_right_associative() {
-        assert_eq!(try_eval("2^3^2"), Some("512".to_string()));
+        assert_eq!(eval("2^3^2"), Some("512".to_string()));
     }
 
     #[test]
     fn test_chained_unary_operators() {
-        assert_eq!(try_eval("5 - - 2"), Some("7".to_string()));
-        assert_eq!(try_eval("--5"), Some("5".to_string()));
-        assert_eq!(try_eval("2 * -3"), Some("-6".to_string()));
-        assert_eq!(try_eval("2^-2"), Some("0.25".to_string()));
+        assert_eq!(eval("5 - - 2"), Some("7".to_string()));
+        assert_eq!(eval("--5"), Some("5".to_string()));
+        assert_eq!(eval("2 * -3"), Some("-6".to_string()));
+        assert_eq!(eval("2^-2"), Some("0.25".to_string()));
     }
 
     #[test]
     fn test_implicit_multiplication() {
-        assert_eq!(try_eval("2(3+4)"), Some("14".to_string()));
-        assert_eq!(try_eval("2(3)(4)"), Some("24".to_string()));
-        assert_eq!(try_eval("(2)(3)"), Some("6".to_string()));
+        assert_eq!(eval("2(3+4)"), Some("14".to_string()));
+        assert_eq!(eval("2(3)(4)"), Some("24".to_string()));
+        assert_eq!(eval("(2)(3)"), Some("6".to_string()));
+        assert_eq!(eval("2pi"), Some(format_result(2.0 * std::f64::consts::PI)));
+        assert_eq!(eval("3log(100)"), Some(format_result(3.0 * 2.0)));
         assert_eq!(
-            try_eval("2pi"),
-            Some(format_result(2.0 * std::f64::consts::PI))
-        );
-        assert_eq!(try_eval("3log(100)"), Some(format_result(3.0 * 2.0)));
-        assert_eq!(
-            try_eval("pilog(100)"),
+            eval("pilog(100)"),
             Some(format_result(std::f64::consts::PI * 2.0))
         );
-        assert_eq!(try_eval("2log10(100)"), Some(format_result(2.0 * 2.0)));
+        assert_eq!(eval("2log10(100)"), Some(format_result(2.0 * 2.0)));
         assert_eq!(
-            try_eval("sin(pi)cos(pi)"),
+            eval("sin(pi)cos(pi)"),
             Some(format_result(
                 std::f64::consts::PI.sin() * std::f64::consts::PI.cos()
             ))
         );
-        assert_eq!(try_eval("3.5.2"), None);
+        assert_eq!(eval("3.5.2"), None);
     }
 
     #[test]
     fn test_scientific_notation_vs_eulers_number() {
-        assert_eq!(try_eval("1.2E2"), Some("120".to_string()));
-        assert_eq!(try_eval("2E-2"), Some("0.02".to_string()));
-        assert_eq!(try_eval("-1.0E-2"), Some("-0.01".to_string()));
-        assert_eq!(try_eval("1e3"), Some("1000".to_string()));
-        assert_eq!(try_eval("2e-2"), Some("0.02".to_string()));
-        assert_eq!(try_eval("-1.0e-2"), Some("-0.01".to_string()));
-        assert_eq!(
-            try_eval("2e"),
-            Some(format_result(2.0 * std::f64::consts::E))
-        );
+        assert_eq!(eval("1.2E2"), Some("120".to_string()));
+        assert_eq!(eval("2E-2"), Some("0.02".to_string()));
+        assert_eq!(eval("-1.0E-2"), Some("-0.01".to_string()));
+        assert_eq!(eval("1e3"), Some("1000".to_string()));
+        assert_eq!(eval("2e-2"), Some("0.02".to_string()));
+        assert_eq!(eval("-1.0e-2"), Some("-0.01".to_string()));
+        assert_eq!(eval("2e"), Some(format_result(2.0 * std::f64::consts::E)));
     }
 
     #[test]
     fn test_floating_point_display_hides_ieee754_noise() {
-        assert_eq!(try_eval("0.1+0.2"), Some("0.3".to_string()));
-        assert_eq!(try_eval(".5+.5"), Some("1".to_string()));
-        assert_eq!(try_eval("1/3*3"), Some("1".to_string()));
+        assert_eq!(eval("0.1+0.2"), Some("0.3".to_string()));
+        assert_eq!(eval(".5+.5"), Some("1".to_string()));
+        assert_eq!(eval("1/3*3"), Some("1".to_string()));
     }
 
     #[test]
@@ -502,7 +496,7 @@ mod tests {
     #[test]
     fn test_query_longer_than_cap_is_rejected() {
         let too_long = "1".repeat(MAX_INPUT_LEN + 1);
-        assert_eq!(try_eval(&too_long), None);
+        assert_eq!(eval(&too_long), None);
     }
 
     #[test]

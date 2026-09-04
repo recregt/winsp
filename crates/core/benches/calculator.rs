@@ -1,7 +1,7 @@
 use criterion::{BatchSize, Criterion, criterion_group, criterion_main};
 use std::hint::black_box;
+use winsp_core::engine::Engine;
 use winsp_core::models::{AppItem, LaunchTarget};
-use winsp_core::search::Engine;
 
 const EXPRESSIONS: &[(&str, &str)] = &[
     ("simple_arithmetic", "128 * 4"),

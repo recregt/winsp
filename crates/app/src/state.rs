@@ -1,7 +1,7 @@
 #![cfg(windows)]
 
+use winsp_core::engine::Engine;
 use winsp_core::models::{LaunchTarget, SearchResult, SearchResultKind};
-use winsp_core::search::Engine;
 
 #[derive(Debug)]
 pub struct AppState {

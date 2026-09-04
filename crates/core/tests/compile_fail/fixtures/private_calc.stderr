@@ -1,0 +1,13 @@
+error[E0603]: module `calc` is private
+ --> tests/compile_fail/fixtures/private_calc.rs:2:25
+  |
+2 |     let _ = winsp_core::calc::eval("2+2");
+  |                         ^^^^  ---- function `eval` is not publicly re-exported
+  |                         |
+  |                         private module
+  |
+note: the module `calc` is defined here
+ --> src/lib.rs
+  |
+  | mod calc;
+  | ^^^^^^^^
