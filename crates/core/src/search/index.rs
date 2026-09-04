@@ -76,60 +76,76 @@ impl Engine {
     }
 
     pub(super) fn find(&self, query: &str, limit: usize) -> Vec<SearchResult> {
-        let mut candidates = match_all_items(&self.items, &self.matcher, query);
-        candidates.sort_by_key(|(_, score, _)| std::cmp::Reverse(*score));
+        let mut matcher = self.matcher.borrow_mut();
+        let needle_string: String = query.chars().map(normalize).map(to_lower_case).collect();
+        let mut needle_buf = Vec::new();
+        let needle = Utf32Str::new(&needle_string, &mut needle_buf);
+        let query_lower = query.to_lowercase();
+
+        let mut candidates = score_all_items(&self.items, &mut matcher, needle, &query_lower);
+        candidates.sort_by_key(|c| std::cmp::Reverse(c.score));
         candidates.truncate(limit);
+
+        let mut hay_buf = Vec::new();
+        let mut raw_indices = Vec::new();
 
         candidates
             .into_iter()
-            .map(|(item, score, indices)| SearchResult::from_app(item, score, indices))
+            .map(|candidate| {
+                let indices = if candidate.matched_by_name {
+                    hay_buf.clear();
+                    raw_indices.clear();
+                    let haystack = Utf32Str::new(candidate.item.name(), &mut hay_buf);
+                    matcher.fuzzy_indices(haystack, needle, &mut raw_indices);
+                    raw_indices.iter().map(|&i| i as usize).collect()
+                } else {
+                    Vec::new()
+                };
+                SearchResult::from_app(candidate.item, candidate.score, indices)
+            })
             .collect()
     }
 }
 
-fn match_all_items(
-    items: &[Arc<AppItem>],
-    matcher: &RefCell<Matcher>,
-    query: &str,
-) -> Vec<(Arc<AppItem>, i32, Vec<usize>)> {
-    let mut matcher = matcher.borrow_mut();
-    let query_lower = query.to_lowercase();
-    let needle_string: String = query.chars().map(normalize).map(to_lower_case).collect();
-    let mut needle_buf = Vec::new();
-    let needle = Utf32Str::new(&needle_string, &mut needle_buf);
+struct Candidate {
+    item: Arc<AppItem>,
+    score: i32,
+    matched_by_name: bool,
+}
 
+fn score_all_items(
+    items: &[Arc<AppItem>],
+    matcher: &mut Matcher,
+    needle: Utf32Str<'_>,
+    query_lower: &str,
+) -> Vec<Candidate> {
     let mut candidates = Vec::new();
     let mut hay_buf = Vec::new();
-    let mut raw_indices = Vec::new();
 
     for item in items {
         hay_buf.clear();
         let haystack = Utf32Str::new(item.name(), &mut hay_buf);
-        raw_indices.clear();
 
         let frecency_boost = launch_score(item.launch_count(), SEARCH_FRECENCY_MULTIPLIER);
 
         let name_score = matcher
-            .fuzzy_indices(haystack, needle, &mut raw_indices)
+            .fuzzy_match(haystack, needle)
             .map(|score| score as i32);
-        let keyword_score = match_keywords(item.keywords(), &query_lower);
+        let keyword_score = match_keywords(item.keywords(), query_lower);
 
         let best = match (name_score, keyword_score) {
-            (Some(name), Some(kw)) => {
-                let indices = raw_indices.iter().map(|&i| i as usize).collect();
-                Some((name.max(kw), indices))
-            }
-            (Some(name), None) => Some((name, raw_indices.iter().map(|&i| i as usize).collect())),
-            (None, Some(kw)) => Some((kw, Vec::new())),
+            (Some(name), Some(kw)) => Some((name.max(kw), true)),
+            (Some(name), None) => Some((name, true)),
+            (None, Some(kw)) => Some((kw, false)),
             (None, None) => None,
         };
 
-        if let Some((score, indices)) = best {
-            candidates.push((
-                Arc::clone(item),
-                score.saturating_add(frecency_boost),
-                indices,
-            ));
+        if let Some((score, matched_by_name)) = best {
+            candidates.push(Candidate {
+                item: Arc::clone(item),
+                score: score.saturating_add(frecency_boost),
+                matched_by_name,
+            });
         }
     }
 
