@@ -1,5 +1,4 @@
 use compact_str::CompactString;
-use smallvec::SmallVec;
 use std::sync::Arc;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -136,25 +135,18 @@ pub enum SearchResultKind {
 }
 
 const CALCULATION_SCORE: i32 = i32::MAX;
-const INLINE_MATCH_INDICES: usize = 8;
-
-pub type MatchedCharIndices = SmallVec<[usize; INLINE_MATCH_INDICES]>;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct SearchResult {
     pub title: Arc<str>,
     pub subtitle: Option<Arc<str>>,
     pub score: i32,
-    pub matched_char_indices: MatchedCharIndices,
+    pub matched_char_indices: Vec<usize>,
     pub kind: SearchResultKind,
 }
 
 impl SearchResult {
-    pub fn from_app(
-        item: Arc<AppItem>,
-        score: i32,
-        matched_char_indices: MatchedCharIndices,
-    ) -> Self {
+    pub fn from_app(item: Arc<AppItem>, score: i32, matched_char_indices: Vec<usize>) -> Self {
         // Copied straight into the `Arc<str>`: cloning the `String` first would
         // allocate a buffer that the conversion only reads and then frees.
         let subtitle = item.description_arc().or_else(|| match item.target() {
@@ -183,7 +175,7 @@ impl SearchResult {
             title: Arc::from(result.as_str()),
             subtitle: Some(Arc::from(subtitle.as_str())),
             score: CALCULATION_SCORE,
-            matched_char_indices: MatchedCharIndices::new(),
+            matched_char_indices: Vec::new(),
             kind: SearchResultKind::Calculation { expression, result },
         }
     }

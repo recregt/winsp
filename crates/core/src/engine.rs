@@ -1,4 +1,4 @@
-use crate::models::{AppItem, MatchedCharIndices, SearchResult};
+use crate::models::{AppItem, SearchResult};
 use compact_str::CompactString;
 use nucleo_matcher::chars::{normalize, to_lower_case};
 use nucleo_matcher::{Config, Matcher, Utf32Str};
@@ -92,11 +92,7 @@ impl Engine {
 
         top.into_iter()
             .map(|(idx, score)| {
-                SearchResult::from_app(
-                    Arc::clone(&self.items[idx as usize]),
-                    score,
-                    MatchedCharIndices::new(),
-                )
+                SearchResult::from_app(Arc::clone(&self.items[idx as usize]), score, Vec::new())
             })
             .collect()
     }
@@ -141,14 +137,14 @@ impl Engine {
             .into_iter()
             .map(|candidate| {
                 let item = Arc::clone(&self.items[candidate.item as usize]);
-                let indices: MatchedCharIndices = if candidate.matched_by_name {
+                let indices = if candidate.matched_by_name {
                     hay_buf.clear();
                     raw_indices.clear();
                     let haystack = Utf32Str::new(item.name(), &mut hay_buf);
                     matcher.fuzzy_indices(haystack, needle, &mut raw_indices);
                     raw_indices.iter().map(|&i| i as usize).collect()
                 } else {
-                    MatchedCharIndices::new()
+                    Vec::new()
                 };
                 SearchResult::from_app(item, candidate.score, indices)
             })
@@ -871,18 +867,12 @@ mod tests {
         let results = index.find("CAF", 5);
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].title.as_ref(), "Café");
-        assert_eq!(
-            results[0].matched_char_indices,
-            MatchedCharIndices::from_slice(&[0, 1, 2])
-        );
+        assert_eq!(results[0].matched_char_indices, vec![0, 1, 2]);
 
         let results = index.find("アプリ", 5);
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].title.as_ref(), "日本語アプリ");
-        assert_eq!(
-            results[0].matched_char_indices,
-            MatchedCharIndices::from_slice(&[3, 4, 5])
-        );
+        assert_eq!(results[0].matched_char_indices, vec![3, 4, 5]);
     }
 
     #[test]
@@ -919,10 +909,7 @@ mod tests {
         let results = index.find("İ", 5);
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].title.as_ref(), "İstanbul Maps");
-        assert_eq!(
-            results[0].matched_char_indices,
-            MatchedCharIndices::from_slice(&[0])
-        );
+        assert_eq!(results[0].matched_char_indices, vec![0]);
     }
 
     #[test]
