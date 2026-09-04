@@ -16,10 +16,10 @@ impl Engine {
             math::try_eval(trimmed).map(|res| SearchResult::calculation(trimmed.to_string(), res));
 
         let mut results = self.find(trimmed, limit);
-        results.extend(calc_result);
-
-        results.sort_by_key(|r| std::cmp::Reverse(r.score));
-        results.truncate(limit);
+        if let Some(calc) = calc_result {
+            results.insert(0, calc);
+            results.truncate(limit);
+        }
         results
     }
 }
