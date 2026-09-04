@@ -1,10 +1,8 @@
 use compact_str::CompactString;
 use logos::Logos;
-use smallvec::SmallVec;
 use std::fmt::Write;
 
 const MAX_INPUT_LEN: usize = 1024;
-const INLINE_TOKENS: usize = 32;
 
 /// Every identifier the calculator knows. Lookups go through
 /// [`identifier_bucket`], which groups these by first byte; this list is the
@@ -105,9 +103,7 @@ fn known_identifier_prefix(rest: &str) -> Option<&'static str> {
         })
 }
 
-type Tokens<'a> = SmallVec<[Token<'a>; INLINE_TOKENS]>;
-
-fn push_segmented(out: &mut Tokens<'_>, word: &str) -> Option<()> {
+fn push_segmented(out: &mut Vec<Token<'_>>, word: &str) -> Option<()> {
     let mut rest = word;
     while !rest.is_empty() {
         let matched = known_identifier_prefix(rest)?;
@@ -117,7 +113,7 @@ fn push_segmented(out: &mut Tokens<'_>, word: &str) -> Option<()> {
     Some(())
 }
 
-fn push_expanded<'a>(out: &mut Tokens<'a>, tok: Token<'a>) -> Option<()> {
+fn push_expanded<'a>(out: &mut Vec<Token<'a>>, tok: Token<'a>) -> Option<()> {
     match tok {
         Token::Identifier(word) => push_segmented(out, word)?,
         other => push_token(out, other),
@@ -128,8 +124,12 @@ fn push_expanded<'a>(out: &mut Tokens<'a>, tok: Token<'a>) -> Option<()> {
 /// Lexes `input`, expands run-together identifiers and inserts the implicit
 /// multiplications in a single pass, so a rejected query stops at the first
 /// token it cannot handle and a valid one is only collected once.
-fn tokenize(input: &str) -> Option<Tokens<'_>> {
-    let mut out = Tokens::new();
+///
+/// Every token spans at least one byte, so the input length bounds how many
+/// there can be and the buffer is taken in one allocation instead of growing
+/// through four for an ordinary expression.
+fn tokenize(input: &str) -> Option<Vec<Token<'_>>> {
+    let mut out = Vec::with_capacity(input.len());
     for tok in Token::lexer(input) {
         push_expanded(&mut out, tok.ok()?)?;
     }
@@ -138,7 +138,7 @@ fn tokenize(input: &str) -> Option<Tokens<'_>> {
 
 /// Pushes `tok`, preceded by the multiplication it implies when it starts a
 /// value right after one ended, as in `2pi` or `(1+2)(3)`.
-fn push_token<'a>(out: &mut Tokens<'a>, tok: Token<'a>) {
+fn push_token<'a>(out: &mut Vec<Token<'a>>, tok: Token<'a>) {
     if let Some(prev) = out.last() {
         let value_ends = matches!(
             prev,
@@ -191,11 +191,9 @@ enum RpnItem<'a> {
     Op(Op<'a>),
 }
 
-type RpnOutput<'a> = SmallVec<[RpnItem<'a>; INLINE_TOKENS]>;
-
-fn to_rpn<'a>(tokens: &[Token<'a>]) -> Option<RpnOutput<'a>> {
-    let mut output: RpnOutput<'a> = SmallVec::new();
-    let mut ops: SmallVec<[Op<'a>; INLINE_TOKENS]> = SmallVec::new();
+fn to_rpn<'a>(tokens: &[Token<'a>]) -> Option<Vec<RpnItem<'a>>> {
+    let mut output: Vec<RpnItem<'a>> = Vec::with_capacity(tokens.len());
+    let mut ops: Vec<Op<'a>> = Vec::with_capacity(tokens.len());
     let mut prev_value_ended = false;
 
     for (i, tok) in tokens.iter().enumerate() {
@@ -289,7 +287,7 @@ fn to_rpn<'a>(tokens: &[Token<'a>]) -> Option<RpnOutput<'a>> {
 }
 
 fn eval_rpn(rpn: &[RpnItem<'_>]) -> Option<f64> {
-    let mut stack: SmallVec<[f64; INLINE_TOKENS]> = SmallVec::new();
+    let mut stack: Vec<f64> = Vec::with_capacity(rpn.len());
     for item in rpn {
         match item {
             RpnItem::Value(v) => stack.push(*v),
