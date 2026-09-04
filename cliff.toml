@@ -13,7 +13,7 @@ body = """
 {%- endif %}
 {% for group, commits in commits | group_by(attribute="group") %}
 ### {{ group | striptags | trim | upper_first }}
-{% for commit in commits -%}
+{% for commit in commits | unique(attribute="message") -%}
 - {% if commit.breaking %}**BREAKING:** {% endif %}{{ commit.message | upper_first }}{% if commit.remote.pr_number %} by {% if commit.remote.username is ending_with("[bot]") %}[@{{ commit.remote.username }}](https://github.com/apps/{{ commit.remote.username | replace(from="[bot]", to="") }}){% else %}@{{ commit.remote.username }}{% endif %} in #{{ commit.remote.pr_number }}{% endif %}
 {% endfor %}
 {%- endfor %}
