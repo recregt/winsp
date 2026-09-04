@@ -1,6 +1,8 @@
 use crate::models::{AppItem, SearchResult};
+use compact_str::CompactString;
 use nucleo_matcher::chars::{normalize, to_lower_case};
 use nucleo_matcher::{Config, Matcher, Utf32Str};
+use std::borrow::Cow;
 use std::cell::RefCell;
 use std::sync::Arc;
 
@@ -101,11 +103,11 @@ impl Engine {
         }
 
         let mut matcher = self.matcher.borrow_mut();
-        let needle_string: String = query.chars().map(normalize).map(to_lower_case).collect();
+        let needles = Needles::new(query);
         let mut needle_buf = Vec::new();
-        let needle = Utf32Str::new(&needle_string, &mut needle_buf);
-        let query_lower = query.to_lowercase();
-        let query_mask = needle_mask(&needle_string);
+        let needle = Utf32Str::new(needles.name(), &mut needle_buf);
+        let query_lower = needles.keyword();
+        let query_mask = needle_mask(needles.name());
 
         // A keystroke only ever shrinks the previous match set, so the scan can
         // start from it instead of from the whole index.
@@ -118,7 +120,7 @@ impl Engine {
         let scan = self.scan.best_matches(
             &mut matcher,
             needle,
-            &query_lower,
+            query_lower,
             query_mask,
             limit,
             narrowed,
@@ -156,7 +158,7 @@ impl Engine {
         }
 
         let calc_result = crate::calc::eval(trimmed)
-            .map(|res| SearchResult::calculation(trimmed.to_string(), res));
+            .map(|res| SearchResult::calculation(CompactString::new(trimmed), res));
 
         let mut results = self.find(trimmed, limit);
         if let Some(calc) = calc_result {
@@ -171,6 +173,49 @@ struct Candidate {
     item: u32,
     score: i32,
     matched_by_name: bool,
+}
+
+/// The query in the two spellings a scan compares against: normalized and
+/// lowercased for fuzzy name matching, and lowercased for keyword matching,
+/// which compares characters as they are.
+///
+/// The two only differ for a query that is not ASCII, because normalization
+/// leaves ASCII alone and lowercasing it is the same operation either way. An
+/// ASCII query therefore needs a single string, and one that is already
+/// lowercase — the common keystroke — is that string, so nothing is allocated.
+enum Needles<'a> {
+    Ascii(Cow<'a, str>),
+    Unicode { name: String, keyword: String },
+}
+
+impl<'a> Needles<'a> {
+    fn new(query: &'a str) -> Self {
+        if !query.is_ascii() {
+            return Self::Unicode {
+                name: query.chars().map(normalize).map(to_lower_case).collect(),
+                keyword: query.to_lowercase(),
+            };
+        }
+        if query.bytes().any(|byte| byte.is_ascii_uppercase()) {
+            Self::Ascii(Cow::Owned(query.to_ascii_lowercase()))
+        } else {
+            Self::Ascii(Cow::Borrowed(query))
+        }
+    }
+
+    fn name(&self) -> &str {
+        match self {
+            Self::Ascii(query) => query,
+            Self::Unicode { name, .. } => name,
+        }
+    }
+
+    fn keyword(&self) -> &str {
+        match self {
+            Self::Ascii(query) => query,
+            Self::Unicode { keyword, .. } => keyword,
+        }
+    }
 }
 
 /// Complete match set of the last query, kept so the next keystroke can rescan
@@ -595,6 +640,50 @@ mod tests {
         assert_eq!(results.len(), 1);
         assert!(results[0].score >= 5_000);
         assert!(!results[0].matched_char_indices.is_empty());
+    }
+
+    #[test]
+    fn test_ascii_needles_are_the_unicode_ones() {
+        // One string serves both matchers on the ASCII path, which holds only
+        // because normalization leaves ASCII alone and the two lowercasings
+        // agree on it.
+        for byte in 0..=127u8 {
+            let query = (byte as char).to_string();
+            let name: String = query.chars().map(normalize).map(to_lower_case).collect();
+            let needles = Needles::new(&query);
+            assert_eq!(needles.name(), name, "name needle for {byte:#04x}");
+            assert_eq!(
+                needles.keyword(),
+                query.to_lowercase(),
+                "keyword needle for {byte:#04x}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_unicode_needles_keep_both_spellings() {
+        let needles = Needles::new("Är");
+        assert_eq!(needles.name(), "ar");
+        assert_eq!(needles.keyword(), "är");
+    }
+
+    #[test]
+    fn test_uppercase_and_accented_queries_still_match() {
+        let mut index = Engine::new();
+        index.set_items(vec![
+            AppItem::new(
+                "chrome",
+                "Google Chrome",
+                LaunchTarget::Path("c.exe".into()),
+            )
+            .with_keywords(vec!["BROWSER".into()]),
+            AppItem::new("uber", "Über Editor", LaunchTarget::Path("u.exe".into())),
+        ]);
+
+        assert_eq!(titles(&index.find("CHROME", 5)), vec!["Google Chrome"]);
+        assert_eq!(titles(&index.find("BrowSer", 5)), vec!["Google Chrome"]);
+        assert_eq!(titles(&index.find("Über", 5)), vec!["Über Editor"]);
+        assert_eq!(titles(&index.find("uber", 5)), vec!["Über Editor"]);
     }
 
     #[test]

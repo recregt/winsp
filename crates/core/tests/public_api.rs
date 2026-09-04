@@ -73,7 +73,7 @@ fn test_search_result_kind_is_exhaustively_matchable() {
 
     let description = match kind {
         SearchResultKind::App(item) => item.name().to_string(),
-        SearchResultKind::Calculation { result, .. } => result.clone(),
+        SearchResultKind::Calculation { result, .. } => result.to_string(),
         SearchResultKind::WebSearch { query, .. } => query.clone(),
         SearchResultKind::SystemCommand { command, .. } => command.clone(),
     };

@@ -1,14 +1,20 @@
+use compact_str::CompactString;
 use logos::Logos;
+use std::fmt::Write;
 
 const MAX_INPUT_LEN: usize = 1024;
 
+/// Every identifier the calculator knows. Lookups go through
+/// [`identifier_bucket`], which groups these by first byte; this list is the
+/// reference the buckets are checked against in the tests.
+#[cfg(test)]
 const KNOWN_IDENTIFIERS: &[&str] = &[
     "sqrt", "abs", "sin", "cos", "tan", "ln", "log10", "log", "floor", "ceil", "round", "pi", "e",
 ];
 
 #[derive(Logos, Debug, Clone, PartialEq)]
 #[logos(skip r"[ \t]+")]
-enum Token {
+enum Token<'a> {
     #[regex(r"[0-9]+\.?[0-9]*([eE][+-]?[0-9]+)?|\.[0-9]+([eE][+-]?[0-9]+)?", |lex| lex.slice().parse().ok())]
     Number(f64),
     #[token("+")]
@@ -27,8 +33,11 @@ enum Token {
     LParen,
     #[token(")")]
     RParen,
-    #[regex(r"[a-zA-Z][a-zA-Z0-9]*", |lex| lex.slice().to_lowercase())]
-    Identifier(String),
+    /// Borrowed from the input, so it is not lowercased yet: every comparison
+    /// on it is ASCII case insensitive, and expansion replaces it with the
+    /// canonical spelling from `KNOWN_IDENTIFIERS`.
+    #[regex(r"[a-zA-Z][a-zA-Z0-9]*", |lex| lex.slice())]
+    Identifier(&'a str),
 }
 
 fn is_function(name: &str) -> bool {
@@ -48,63 +57,108 @@ fn is_function(name: &str) -> bool {
     )
 }
 
-fn segment_identifier(word: &str) -> Option<Vec<String>> {
-    let mut parts = Vec::new();
-    let mut rest = word;
-    while !rest.is_empty() {
-        let matched = KNOWN_IDENTIFIERS
-            .iter()
-            .filter(|name| rest.starts_with(*name))
-            .max_by_key(|name| name.len())?;
-        parts.push((*matched).to_string());
-        rest = &rest[matched.len()..];
+/// Whether `input` can be the start of an expression. An expression starts with
+/// a number, a `.`, an opening parenthesis, a unary sign or a known identifier,
+/// so anything else is a query for the index and is rejected here rather than
+/// after lexing it.
+fn starts_like_expression(input: &str) -> bool {
+    let Some(&first) = input.as_bytes().first() else {
+        return false;
+    };
+    match first {
+        b'0'..=b'9' | b'.' | b'(' | b'+' | b'-' => true,
+        // A leading word only evaluates when it starts with a known identifier,
+        // which is the same check the segmentation does on its first step, so
+        // an unknown word never reaches the lexer.
+        _ => known_identifier_prefix(input).is_some(),
     }
-    Some(parts)
 }
 
-fn expand_identifiers(tokens: Vec<Token>) -> Option<Vec<Token>> {
-    let mut out = Vec::with_capacity(tokens.len());
-    for tok in tokens {
-        match tok {
-            Token::Identifier(word) if KNOWN_IDENTIFIERS.contains(&word.as_str()) => {
-                out.push(Token::Identifier(word));
-            }
-            Token::Identifier(word) => {
-                for part in segment_identifier(&word)? {
-                    out.push(Token::Identifier(part));
-                }
-            }
-            other => out.push(other),
-        }
+/// The known identifiers that can start with `first`, longest first so that the
+/// longest one wins, as it did when the whole list was scanned. Grouping them
+/// keeps a lookup down to at most three comparisons.
+fn identifier_bucket(first: u8) -> Option<&'static [&'static str]> {
+    let bucket: &'static [&'static str] = match first.to_ascii_lowercase() {
+        b's' => &["sqrt", "sin"],
+        b'a' => &["abs"],
+        b'c' => &["ceil", "cos"],
+        b't' => &["tan"],
+        b'l' => &["log10", "log", "ln"],
+        b'f' => &["floor"],
+        b'r' => &["round"],
+        b'p' => &["pi"],
+        b'e' => &["e"],
+        _ => return None,
+    };
+    Some(bucket)
+}
+
+fn known_identifier_prefix(rest: &str) -> Option<&'static str> {
+    let bytes = rest.as_bytes();
+    identifier_bucket(*bytes.first()?)?
+        .iter()
+        .copied()
+        .find(|name| {
+            bytes.len() >= name.len() && bytes[..name.len()].eq_ignore_ascii_case(name.as_bytes())
+        })
+}
+
+fn push_segmented(out: &mut Vec<Token<'_>>, word: &str) -> Option<()> {
+    let mut rest = word;
+    while !rest.is_empty() {
+        let matched = known_identifier_prefix(rest)?;
+        push_token(out, Token::Identifier(matched));
+        rest = &rest[matched.len()..];
+    }
+    Some(())
+}
+
+fn push_expanded<'a>(out: &mut Vec<Token<'a>>, tok: Token<'a>) -> Option<()> {
+    match tok {
+        Token::Identifier(word) => push_segmented(out, word)?,
+        other => push_token(out, other),
+    }
+    Some(())
+}
+
+/// Lexes `input`, expands run-together identifiers and inserts the implicit
+/// multiplications in a single pass, so a rejected query stops at the first
+/// token it cannot handle and a valid one is only collected once.
+///
+/// Every token spans at least one byte, so the input length bounds how many
+/// there can be and the buffer is taken in one allocation instead of growing
+/// through four for an ordinary expression.
+fn tokenize(input: &str) -> Option<Vec<Token<'_>>> {
+    let mut out = Vec::with_capacity(input.len());
+    for tok in Token::lexer(input) {
+        push_expanded(&mut out, tok.ok()?)?;
     }
     Some(out)
 }
 
-fn insert_implicit_multiplication(tokens: Vec<Token>) -> Vec<Token> {
-    let mut out: Vec<Token> = Vec::with_capacity(tokens.len());
-    for tok in tokens {
-        if let Some(prev) = out.last() {
-            let value_ends = matches!(
-                prev,
-                Token::Number(_) | Token::Identifier(_) | Token::RParen
-            );
-            let value_starts = match &tok {
-                Token::Number(_) => !matches!(prev, Token::Number(_)),
-                Token::Identifier(_) => true,
-                Token::LParen => !matches!(prev, Token::Identifier(name) if is_function(name)),
-                _ => false,
-            };
-            if value_ends && value_starts {
-                out.push(Token::Multiply);
-            }
+/// Pushes `tok`, preceded by the multiplication it implies when it starts a
+/// value right after one ended, as in `2pi` or `(1+2)(3)`.
+fn push_token<'a>(out: &mut Vec<Token<'a>>, tok: Token<'a>) {
+    if let Some(prev) = out.last() {
+        let value_ends = matches!(
+            prev,
+            Token::Number(_) | Token::Identifier(_) | Token::RParen
+        );
+        let value_starts = match &tok {
+            Token::Number(_) => !matches!(prev, Token::Number(_)),
+            Token::Identifier(_) => true,
+            Token::LParen => !matches!(prev, Token::Identifier(name) if is_function(name)),
+            _ => false,
+        };
+        if value_ends && value_starts {
+            out.push(Token::Multiply);
         }
-        out.push(tok);
     }
-    out
+    out.push(tok);
 }
 
 #[derive(Debug, Clone, PartialEq)]
-enum Op {
+enum Op<'a> {
     Add,
     Sub,
     Mul,
@@ -113,11 +167,11 @@ enum Op {
     Pow,
     Neg,
     Pos,
-    Func(String),
+    Func(&'a str),
     Group,
 }
 
-fn precedence(op: &Op) -> u8 {
+fn precedence(op: &Op<'_>) -> u8 {
     match op {
         Op::Add | Op::Sub => 1,
         Op::Mul | Op::Div | Op::Mod => 2,
@@ -127,19 +181,19 @@ fn precedence(op: &Op) -> u8 {
     }
 }
 
-fn is_right_associative(op: &Op) -> bool {
+fn is_right_associative(op: &Op<'_>) -> bool {
     matches!(op, Op::Pow | Op::Neg | Op::Pos)
 }
 
 #[derive(Debug, Clone)]
-enum RpnItem {
+enum RpnItem<'a> {
     Value(f64),
-    Op(Op),
+    Op(Op<'a>),
 }
 
-fn to_rpn(tokens: &[Token]) -> Option<Vec<RpnItem>> {
-    let mut output: Vec<RpnItem> = Vec::new();
-    let mut ops: Vec<Op> = Vec::new();
+fn to_rpn<'a>(tokens: &[Token<'a>]) -> Option<Vec<RpnItem<'a>>> {
+    let mut output: Vec<RpnItem<'a>> = Vec::with_capacity(tokens.len());
+    let mut ops: Vec<Op<'a>> = Vec::with_capacity(tokens.len());
     let mut prev_value_ended = false;
 
     for (i, tok) in tokens.iter().enumerate() {
@@ -150,10 +204,10 @@ fn to_rpn(tokens: &[Token]) -> Option<Vec<RpnItem>> {
             }
             Token::Identifier(name) => {
                 if tokens.get(i + 1) == Some(&Token::LParen) && is_function(name) {
-                    ops.push(Op::Func(name.clone()));
+                    ops.push(Op::Func(name));
                     prev_value_ended = false;
                 } else {
-                    let value = match name.as_str() {
+                    let value = match *name {
                         "pi" => std::f64::consts::PI,
                         "e" => std::f64::consts::E,
                         _ => return None,
@@ -232,8 +286,8 @@ fn to_rpn(tokens: &[Token]) -> Option<Vec<RpnItem>> {
     Some(output)
 }
 
-fn eval_rpn(rpn: &[RpnItem]) -> Option<f64> {
-    let mut stack: Vec<f64> = Vec::new();
+fn eval_rpn(rpn: &[RpnItem<'_>]) -> Option<f64> {
+    let mut stack: Vec<f64> = Vec::with_capacity(rpn.len());
     for item in rpn {
         match item {
             RpnItem::Value(v) => stack.push(*v),
@@ -244,7 +298,7 @@ fn eval_rpn(rpn: &[RpnItem]) -> Option<f64> {
             RpnItem::Op(Op::Pos) => {}
             RpnItem::Op(Op::Func(name)) => {
                 let v = stack.pop()?;
-                let result = match name.as_str() {
+                let result = match *name {
                     "sqrt" if v >= 0.0 => v.sqrt(),
                     "abs" => v.abs(),
                     "sin" => v.sin(),
@@ -280,36 +334,74 @@ fn eval_rpn(rpn: &[RpnItem]) -> Option<f64> {
 }
 
 fn try_eval_percentage(input: &str) -> Option<f64> {
-    let lower = input.to_lowercase();
-    let parts: Vec<&str> = lower.split_whitespace().collect();
-    if parts.len() == 3 && parts[1] == "of" {
-        let pct_str = parts[0].strip_suffix('%')?;
-        let pct: f64 = pct_str.parse().ok()?;
-        let total: f64 = parts[2].parse().ok()?;
-        if !pct.is_finite() || !total.is_finite() {
-            return None;
+    let mut parts = input.split_whitespace();
+    let pct_str = parts.next()?;
+    let of_str = parts.next()?;
+    let total_str = parts.next()?;
+    if parts.next().is_some() || !of_str.eq_ignore_ascii_case("of") {
+        return None;
+    }
+    let pct_str = pct_str.strip_suffix('%')?;
+    let pct: f64 = pct_str.parse().ok()?;
+    let total: f64 = total_str.parse().ok()?;
+    if !pct.is_finite() || !total.is_finite() {
+        return None;
+    }
+    let result = (pct / 100.0) * total;
+    result.is_finite().then_some(result)
+}
+
+/// Renders a whole number without entering the formatting machinery, which a
+/// keystroke that types an expression would otherwise pay for on a result whose
+/// length is bounded by 17 characters.
+fn format_integer(val: i64) -> CompactString {
+    let mut buf = [0u8; 20];
+    let mut start = buf.len();
+    let mut rest = val.unsigned_abs();
+    loop {
+        start -= 1;
+        buf[start] = b'0' + (rest % 10) as u8;
+        rest /= 10;
+        if rest == 0 {
+            break;
         }
-        let result = (pct / 100.0) * total;
-        return result.is_finite().then_some(result);
     }
-    None
+    if val < 0 {
+        start -= 1;
+        buf[start] = b'-';
+    }
+    let digits = std::str::from_utf8(&buf[start..]).expect("digits and a sign are ASCII");
+    CompactString::new(digits)
 }
 
-fn format_result(val: f64) -> String {
+fn format_result(val: f64) -> CompactString {
     if (val.fract() == 0.0) && (val.abs() < 1e15) {
-        format!("{}", val as i64)
+        format_integer(val as i64)
     } else if val.abs() < 1e-6 || val.abs() >= 1e15 {
-        format!("{val:e}")
+        let mut text = CompactString::default();
+        let _ = write!(text, "{val:e}");
+        text
     } else {
-        let s = format!("{:.6}", val);
-        let trimmed = s.trim_end_matches('0').trim_end_matches('.');
-        trimmed.to_string()
+        // Six decimals of a number below 1e15, so the rendering fits in a
+        // string that is sized once and then trimmed in place.
+        let mut text = CompactString::with_capacity(24);
+        let _ = write!(text, "{val:.6}");
+        let trimmed = text.trim_end_matches('0').trim_end_matches('.').len();
+        text.truncate(trimmed);
+        text
     }
 }
 
-pub fn eval(input: &str) -> Option<String> {
+pub fn eval(input: &str) -> Option<CompactString> {
     let trimmed = input.trim();
     if trimmed.is_empty() || trimmed.len() > MAX_INPUT_LEN {
+        return None;
+    }
+
+    // Every keystroke reaches this, and most of them are searches for the
+    // index, not expressions. Percentages are covered too: they start with the
+    // number the percentage is taken of.
+    if !starts_like_expression(trimmed) {
         return None;
     }
 
@@ -317,28 +409,26 @@ pub fn eval(input: &str) -> Option<String> {
         return Some(format_result(res));
     }
 
-    let tokens: Vec<Token> = Token::lexer(trimmed).collect::<Result<_, _>>().ok()?;
+    let tokens = tokenize(trimmed)?;
     if tokens.is_empty() {
         return None;
     }
 
-    let tokens = expand_identifiers(tokens)?;
-    let tokens = insert_implicit_multiplication(tokens);
-
-    let has_op_or_func = trimmed.contains('E')
-        || trimmed.contains('e')
-        || tokens.iter().any(|t| {
-            matches!(
-                t,
-                Token::Plus
-                    | Token::Minus
-                    | Token::Multiply
-                    | Token::Divide
-                    | Token::Modulo
-                    | Token::Power
-                    | Token::Identifier(_)
-            )
-        });
+    // A bare number is a query, not a calculation. The scan for an exponent
+    // only has to run when no operator or identifier was lexed, which is the
+    // one case where scientific notation hides inside a single number token.
+    let has_op_or_func = tokens.iter().any(|t| {
+        matches!(
+            t,
+            Token::Plus
+                | Token::Minus
+                | Token::Multiply
+                | Token::Divide
+                | Token::Modulo
+                | Token::Power
+                | Token::Identifier(_)
+        )
+    }) || trimmed.bytes().any(|b| b.eq_ignore_ascii_case(&b'e'));
     if !has_op_or_func {
         return None;
     }
@@ -359,31 +449,31 @@ mod tests {
 
     #[test]
     fn test_basic_arithmetic() {
-        assert_eq!(eval("2 + 2"), Some("4".to_string()));
-        assert_eq!(eval("10 - 3 * 2"), Some("4".to_string()));
-        assert_eq!(eval("(10 - 3) * 2"), Some("14".to_string()));
-        assert_eq!(eval("10 / 4"), Some("2.5".to_string()));
-        assert_eq!(eval("2 ^ 8"), Some("256".to_string()));
-        assert_eq!(eval("2*3+4*5"), Some("26".to_string()));
-        assert_eq!(eval("2*(3+4)*5"), Some("70".to_string()));
-        assert_eq!(eval("10%3"), Some("1".to_string()));
+        assert_eq!(eval("2 + 2"), Some("4".into()));
+        assert_eq!(eval("10 - 3 * 2"), Some("4".into()));
+        assert_eq!(eval("(10 - 3) * 2"), Some("14".into()));
+        assert_eq!(eval("10 / 4"), Some("2.5".into()));
+        assert_eq!(eval("2 ^ 8"), Some("256".into()));
+        assert_eq!(eval("2*3+4*5"), Some("26".into()));
+        assert_eq!(eval("2*(3+4)*5"), Some("70".into()));
+        assert_eq!(eval("10%3"), Some("1".into()));
     }
 
     #[test]
     fn test_math_functions() {
-        assert_eq!(eval("sqrt(144)"), Some("12".to_string()));
-        assert_eq!(eval("abs(-42)"), Some("42".to_string()));
-        assert_eq!(eval("sin(pi/2)"), Some("1".to_string()));
-        assert_eq!(eval("log10(100)"), Some("2".to_string()));
-        assert_eq!(eval("floor(4.7)"), Some("4".to_string()));
-        assert_eq!(eval("ceil(4.2)"), Some("5".to_string()));
-        assert_eq!(eval("round(4.5)"), Some("5".to_string()));
+        assert_eq!(eval("sqrt(144)"), Some("12".into()));
+        assert_eq!(eval("abs(-42)"), Some("42".into()));
+        assert_eq!(eval("sin(pi/2)"), Some("1".into()));
+        assert_eq!(eval("log10(100)"), Some("2".into()));
+        assert_eq!(eval("floor(4.7)"), Some("4".into()));
+        assert_eq!(eval("ceil(4.2)"), Some("5".into()));
+        assert_eq!(eval("round(4.5)"), Some("5".into()));
     }
 
     #[test]
     fn test_percentage() {
-        assert_eq!(eval("15% of 200"), Some("30".to_string()));
-        assert_eq!(eval("25% of 80"), Some("20".to_string()));
+        assert_eq!(eval("15% of 200"), Some("30".into()));
+        assert_eq!(eval("25% of 80"), Some("20".into()));
     }
 
     #[test]
@@ -408,6 +498,19 @@ mod tests {
     }
 
     #[test]
+    fn test_queries_that_cannot_start_an_expression_are_rejected() {
+        assert_eq!(eval("visual studio code"), None);
+        assert_eq!(eval("word"), None);
+        assert_eq!(eval("* 2"), None);
+        assert_eq!(eval(") + 1"), None);
+        // Still reached: these do start like an expression.
+        assert_eq!(eval("+2 + 3"), Some("5".into()));
+        assert_eq!(eval(".5 + 2"), Some("2.5".into()));
+        assert_eq!(eval("(1 + 2)"), Some("3".into()));
+        assert_eq!(eval("+15% of 200"), Some("30".into()));
+    }
+
+    #[test]
     fn test_domain_errors_return_none_not_panic() {
         assert_eq!(eval("10/0"), None);
         assert_eq!(eval("10%0"), None);
@@ -417,7 +520,7 @@ mod tests {
         assert_eq!(eval("tan(pi/2)"), None);
         assert_eq!(eval("tan(3*pi/2)"), None);
         assert_eq!(eval("tan(-pi/2)"), None);
-        assert_eq!(eval("tan(pi/4)"), Some("1".to_string()));
+        assert_eq!(eval("tan(pi/4)"), Some("1".into()));
     }
 
     #[test]
@@ -428,29 +531,29 @@ mod tests {
 
     #[test]
     fn test_unary_minus_binds_looser_than_power() {
-        assert_eq!(eval("-2^2"), Some("-4".to_string()));
-        assert_eq!(eval("-3^2"), Some("-9".to_string()));
-        assert_eq!(eval("(-3)^2"), Some("9".to_string()));
+        assert_eq!(eval("-2^2"), Some("-4".into()));
+        assert_eq!(eval("-3^2"), Some("-9".into()));
+        assert_eq!(eval("(-3)^2"), Some("9".into()));
     }
 
     #[test]
     fn test_power_is_right_associative() {
-        assert_eq!(eval("2^3^2"), Some("512".to_string()));
+        assert_eq!(eval("2^3^2"), Some("512".into()));
     }
 
     #[test]
     fn test_chained_unary_operators() {
-        assert_eq!(eval("5 - - 2"), Some("7".to_string()));
-        assert_eq!(eval("--5"), Some("5".to_string()));
-        assert_eq!(eval("2 * -3"), Some("-6".to_string()));
-        assert_eq!(eval("2^-2"), Some("0.25".to_string()));
+        assert_eq!(eval("5 - - 2"), Some("7".into()));
+        assert_eq!(eval("--5"), Some("5".into()));
+        assert_eq!(eval("2 * -3"), Some("-6".into()));
+        assert_eq!(eval("2^-2"), Some("0.25".into()));
     }
 
     #[test]
     fn test_implicit_multiplication() {
-        assert_eq!(eval("2(3+4)"), Some("14".to_string()));
-        assert_eq!(eval("2(3)(4)"), Some("24".to_string()));
-        assert_eq!(eval("(2)(3)"), Some("6".to_string()));
+        assert_eq!(eval("2(3+4)"), Some("14".into()));
+        assert_eq!(eval("2(3)(4)"), Some("24".into()));
+        assert_eq!(eval("(2)(3)"), Some("6".into()));
         assert_eq!(eval("2pi"), Some(format_result(2.0 * std::f64::consts::PI)));
         assert_eq!(eval("3log(100)"), Some(format_result(3.0 * 2.0)));
         assert_eq!(
@@ -468,21 +571,106 @@ mod tests {
     }
 
     #[test]
+    fn test_identifiers_are_case_insensitive() {
+        assert_eq!(eval("SQRT(144)"), Some("12".into()));
+        assert_eq!(eval("Log10(100)"), Some("2".into()));
+        assert_eq!(eval("2PI"), Some(format_result(2.0 * std::f64::consts::PI)));
+        assert_eq!(
+            eval("PIE"),
+            Some(format_result(std::f64::consts::PI * std::f64::consts::E))
+        );
+    }
+
+    #[test]
+    fn test_bare_word_segments_into_known_identifiers_without_parens_or_digits() {
+        assert_eq!(
+            eval("pie"),
+            Some(format_result(std::f64::consts::PI * std::f64::consts::E))
+        );
+    }
+
+    #[test]
+    fn test_known_identifier_prefix_buckets_stay_in_sync_with_known_identifiers() {
+        for name in KNOWN_IDENTIFIERS {
+            assert_eq!(known_identifier_prefix(name), Some(*name), "name: {name:?}");
+            let upper = name.to_uppercase();
+            assert_eq!(
+                known_identifier_prefix(&upper),
+                Some(*name),
+                "name: {upper:?}"
+            );
+            assert!(
+                starts_like_expression(name),
+                "identifier rejected before lexing: {name:?}"
+            );
+        }
+    }
+
+    /// A bucket holding a name that is no longer known, or holding a short name
+    /// before a longer one it prefixes, would silently change what the longest
+    /// match is, so both are pinned here.
+    #[test]
+    fn test_identifier_buckets_hold_only_known_names_longest_first() {
+        for first in b'a'..=b'z' {
+            let Some(bucket) = identifier_bucket(first) else {
+                continue;
+            };
+            for (i, name) in bucket.iter().enumerate() {
+                assert!(
+                    KNOWN_IDENTIFIERS.contains(name),
+                    "unknown name in bucket {:?}: {name:?}",
+                    first as char
+                );
+                assert_eq!(name.as_bytes()[0], first, "name in wrong bucket: {name:?}");
+                for shorter in &bucket[..i] {
+                    assert!(
+                        shorter.len() >= name.len(),
+                        "bucket {:?} is not longest first: {shorter:?} before {name:?}",
+                        first as char
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
     fn test_scientific_notation_vs_eulers_number() {
-        assert_eq!(eval("1.2E2"), Some("120".to_string()));
-        assert_eq!(eval("2E-2"), Some("0.02".to_string()));
-        assert_eq!(eval("-1.0E-2"), Some("-0.01".to_string()));
-        assert_eq!(eval("1e3"), Some("1000".to_string()));
-        assert_eq!(eval("2e-2"), Some("0.02".to_string()));
-        assert_eq!(eval("-1.0e-2"), Some("-0.01".to_string()));
+        assert_eq!(eval("1.2E2"), Some("120".into()));
+        assert_eq!(eval("2E-2"), Some("0.02".into()));
+        assert_eq!(eval("-1.0E-2"), Some("-0.01".into()));
+        assert_eq!(eval("1e3"), Some("1000".into()));
+        assert_eq!(eval("2e-2"), Some("0.02".into()));
+        assert_eq!(eval("-1.0e-2"), Some("-0.01".into()));
         assert_eq!(eval("2e"), Some(format_result(2.0 * std::f64::consts::E)));
     }
 
     #[test]
     fn test_floating_point_display_hides_ieee754_noise() {
-        assert_eq!(eval("0.1+0.2"), Some("0.3".to_string()));
-        assert_eq!(eval(".5+.5"), Some("1".to_string()));
-        assert_eq!(eval("1/3*3"), Some("1".to_string()));
+        assert_eq!(eval("0.1+0.2"), Some("0.3".into()));
+        assert_eq!(eval(".5+.5"), Some("1".into()));
+        assert_eq!(eval("1/3*3"), Some("1".into()));
+    }
+
+    #[test]
+    fn test_results_render_as_the_formatting_machinery_would() {
+        for val in [
+            0i64,
+            1,
+            -1,
+            42,
+            -42,
+            1_000_000,
+            999_999_999_999_999,
+            -999_999_999_999_999,
+            i64::MAX,
+            i64::MIN,
+        ] {
+            assert_eq!(format_integer(val), val.to_string(), "integer {val}");
+        }
+        assert_eq!(format_result(8.0), "8");
+        assert_eq!(format_result(-8.0), "-8");
+        assert_eq!(format_result(0.1 + 0.2), "0.3");
+        assert_eq!(format_result(-2.5), "-2.5");
     }
 
     #[test]
@@ -502,20 +690,12 @@ mod tests {
     #[test]
     fn test_deeply_nested_input_does_not_recurse_even_uncapped() {
         let power_chain: String = "2".to_string() + &"^2".repeat(500_000);
-        let tokens: Vec<Token> = Token::lexer(&power_chain)
-            .collect::<Result<_, _>>()
-            .unwrap();
-        let tokens = expand_identifiers(tokens).unwrap();
-        let tokens = insert_implicit_multiplication(tokens);
+        let tokens = tokenize(&power_chain).unwrap();
         let rpn = to_rpn(&tokens).unwrap();
         assert!(eval_rpn(&rpn).unwrap().is_infinite());
 
         let deep_parens: String = "(".repeat(500_000) + "1" + &")".repeat(500_000);
-        let tokens: Vec<Token> = Token::lexer(&deep_parens)
-            .collect::<Result<_, _>>()
-            .unwrap();
-        let tokens = expand_identifiers(tokens).unwrap();
-        let tokens = insert_implicit_multiplication(tokens);
+        let tokens = tokenize(&deep_parens).unwrap();
         let rpn = to_rpn(&tokens).unwrap();
         assert_eq!(eval_rpn(&rpn), Some(1.0));
     }
