@@ -68,25 +68,23 @@ fn starts_like_expression(input: &str) -> bool {
     }
 }
 
-/// The canonical spelling of `word`, if it names a known identifier. Words come
-/// straight from the input, which the lexer restricts to ASCII letters and
-/// digits, so case folding a byte at a time is enough.
-fn known_identifier(word: &str) -> Option<&'static str> {
-    KNOWN_IDENTIFIERS
-        .iter()
-        .find(|name| name.eq_ignore_ascii_case(word))
-        .copied()
-}
-
 fn known_identifier_prefix(rest: &str) -> Option<&'static str> {
-    KNOWN_IDENTIFIERS
-        .iter()
-        .filter(|name| {
-            rest.len() >= name.len()
-                && rest.as_bytes()[..name.len()].eq_ignore_ascii_case(name.as_bytes())
-        })
-        .max_by_key(|name| name.len())
-        .copied()
+    let candidates: &[&str] = match rest.as_bytes().first()?.to_ascii_lowercase() {
+        b's' => &["sqrt", "sin"],
+        b'a' => &["abs"],
+        b'c' => &["ceil", "cos"],
+        b't' => &["tan"],
+        b'l' => &["log10", "log", "ln"],
+        b'f' => &["floor"],
+        b'r' => &["round"],
+        b'p' => &["pi"],
+        b'e' => &["e"],
+        _ => return None,
+    };
+    candidates.iter().copied().find(|name| {
+        rest.len() >= name.len()
+            && rest.as_bytes()[..name.len()].eq_ignore_ascii_case(name.as_bytes())
+    })
 }
 
 fn push_segmented(out: &mut Vec<Token<'_>>, word: &str) -> Option<()> {
@@ -101,10 +99,7 @@ fn push_segmented(out: &mut Vec<Token<'_>>, word: &str) -> Option<()> {
 
 fn push_expanded<'a>(out: &mut Vec<Token<'a>>, tok: Token<'a>) -> Option<()> {
     match tok {
-        Token::Identifier(word) => match known_identifier(word) {
-            Some(name) => push_token(out, Token::Identifier(name)),
-            None => push_segmented(out, word)?,
-        },
+        Token::Identifier(word) => push_segmented(out, word)?,
         other => push_token(out, other),
     }
     Some(())
@@ -542,6 +537,19 @@ mod tests {
             eval("pie"),
             Some(format_result(std::f64::consts::PI * std::f64::consts::E))
         );
+    }
+
+    #[test]
+    fn test_known_identifier_prefix_buckets_stay_in_sync_with_known_identifiers() {
+        for name in KNOWN_IDENTIFIERS {
+            assert_eq!(known_identifier_prefix(name), Some(*name), "name: {name:?}");
+            let upper = name.to_uppercase();
+            assert_eq!(
+                known_identifier_prefix(&upper),
+                Some(*name),
+                "name: {upper:?}"
+            );
+        }
     }
 
     #[test]
