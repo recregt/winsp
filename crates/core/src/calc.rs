@@ -2,6 +2,10 @@ use logos::Logos;
 
 const MAX_INPUT_LEN: usize = 1024;
 
+/// Every identifier the calculator knows. Lookups go through
+/// [`identifier_bucket`], which groups these by first byte; this list is the
+/// reference the buckets are checked against in the tests.
+#[cfg(test)]
 const KNOWN_IDENTIFIERS: &[&str] = &[
     "sqrt", "abs", "sin", "cos", "tan", "ln", "log10", "log", "floor", "ceil", "round", "pi", "e",
 ];
@@ -51,25 +55,28 @@ fn is_function(name: &str) -> bool {
     )
 }
 
-/// Whether `input` can be the start of an expression, judged on its first byte
-/// alone. An expression starts with a number, a `.`, an opening parenthesis, a
-/// unary sign or an identifier, and an identifier only evaluates if it starts
-/// with a known one, so anything else is a query for the index and is rejected
-/// here rather than after lexing it.
+/// Whether `input` can be the start of an expression. An expression starts with
+/// a number, a `.`, an opening parenthesis, a unary sign or a known identifier,
+/// so anything else is a query for the index and is rejected here rather than
+/// after lexing it.
 fn starts_like_expression(input: &str) -> bool {
     let Some(&first) = input.as_bytes().first() else {
         return false;
     };
     match first {
         b'0'..=b'9' | b'.' | b'(' | b'+' | b'-' => true,
-        _ => KNOWN_IDENTIFIERS
-            .iter()
-            .any(|name| name.as_bytes()[0].eq_ignore_ascii_case(&first)),
+        // A leading word only evaluates when it starts with a known identifier,
+        // which is the same check the segmentation does on its first step, so
+        // an unknown word never reaches the lexer.
+        _ => known_identifier_prefix(input).is_some(),
     }
 }
 
-fn known_identifier_prefix(rest: &str) -> Option<&'static str> {
-    let candidates: &[&str] = match rest.as_bytes().first()?.to_ascii_lowercase() {
+/// The known identifiers that can start with `first`, longest first so that the
+/// longest one wins, as it did when the whole list was scanned. Grouping them
+/// keeps a lookup down to at most three comparisons.
+fn identifier_bucket(first: u8) -> Option<&'static [&'static str]> {
+    let bucket: &'static [&'static str] = match first.to_ascii_lowercase() {
         b's' => &["sqrt", "sin"],
         b'a' => &["abs"],
         b'c' => &["ceil", "cos"],
@@ -81,10 +88,17 @@ fn known_identifier_prefix(rest: &str) -> Option<&'static str> {
         b'e' => &["e"],
         _ => return None,
     };
-    candidates.iter().copied().find(|name| {
-        rest.len() >= name.len()
-            && rest.as_bytes()[..name.len()].eq_ignore_ascii_case(name.as_bytes())
-    })
+    Some(bucket)
+}
+
+fn known_identifier_prefix(rest: &str) -> Option<&'static str> {
+    let bytes = rest.as_bytes();
+    identifier_bucket(*bytes.first()?)?
+        .iter()
+        .copied()
+        .find(|name| {
+            bytes.len() >= name.len() && bytes[..name.len()].eq_ignore_ascii_case(name.as_bytes())
+        })
 }
 
 fn push_segmented(out: &mut Vec<Token<'_>>, word: &str) -> Option<()> {
@@ -108,8 +122,12 @@ fn push_expanded<'a>(out: &mut Vec<Token<'a>>, tok: Token<'a>) -> Option<()> {
 /// Lexes `input`, expands run-together identifiers and inserts the implicit
 /// multiplications in a single pass, so a rejected query stops at the first
 /// token it cannot handle and a valid one is only collected once.
+///
+/// Every token spans at least one byte, so the input length bounds how many
+/// there can be and the buffer is taken in one allocation instead of growing
+/// through four for an ordinary expression.
 fn tokenize(input: &str) -> Option<Vec<Token<'_>>> {
-    let mut out = Vec::new();
+    let mut out = Vec::with_capacity(input.len());
     for tok in Token::lexer(input) {
         push_expanded(&mut out, tok.ok()?)?;
     }
@@ -365,20 +383,21 @@ pub fn eval(input: &str) -> Option<String> {
         return None;
     }
 
-    let has_op_or_func = trimmed.contains('E')
-        || trimmed.contains('e')
-        || tokens.iter().any(|t| {
-            matches!(
-                t,
-                Token::Plus
-                    | Token::Minus
-                    | Token::Multiply
-                    | Token::Divide
-                    | Token::Modulo
-                    | Token::Power
-                    | Token::Identifier(_)
-            )
-        });
+    // A bare number is a query, not a calculation. The scan for an exponent
+    // only has to run when no operator or identifier was lexed, which is the
+    // one case where scientific notation hides inside a single number token.
+    let has_op_or_func = tokens.iter().any(|t| {
+        matches!(
+            t,
+            Token::Plus
+                | Token::Minus
+                | Token::Multiply
+                | Token::Divide
+                | Token::Modulo
+                | Token::Power
+                | Token::Identifier(_)
+        )
+    }) || trimmed.bytes().any(|b| b.eq_ignore_ascii_case(&b'e'));
     if !has_op_or_func {
         return None;
     }
@@ -549,6 +568,37 @@ mod tests {
                 Some(*name),
                 "name: {upper:?}"
             );
+            assert!(
+                starts_like_expression(name),
+                "identifier rejected before lexing: {name:?}"
+            );
+        }
+    }
+
+    /// A bucket holding a name that is no longer known, or holding a short name
+    /// before a longer one it prefixes, would silently change what the longest
+    /// match is, so both are pinned here.
+    #[test]
+    fn test_identifier_buckets_hold_only_known_names_longest_first() {
+        for first in b'a'..=b'z' {
+            let Some(bucket) = identifier_bucket(first) else {
+                continue;
+            };
+            for (i, name) in bucket.iter().enumerate() {
+                assert!(
+                    KNOWN_IDENTIFIERS.contains(name),
+                    "unknown name in bucket {:?}: {name:?}",
+                    first as char
+                );
+                assert_eq!(name.as_bytes()[0], first, "name in wrong bucket: {name:?}");
+                for shorter in &bucket[..i] {
+                    assert!(
+                        shorter.len() >= name.len(),
+                        "bucket {:?} is not longest first: {shorter:?} before {name:?}",
+                        first as char
+                    );
+                }
+            }
         }
     }
 
