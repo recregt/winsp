@@ -8,7 +8,7 @@ const KNOWN_IDENTIFIERS: &[&str] = &[
 
 #[derive(Logos, Debug, Clone, PartialEq)]
 #[logos(skip r"[ \t]+")]
-enum Token {
+enum Token<'a> {
     #[regex(r"[0-9]+\.?[0-9]*([eE][+-]?[0-9]+)?|\.[0-9]+([eE][+-]?[0-9]+)?", |lex| lex.slice().parse().ok())]
     Number(f64),
     #[token("+")]
@@ -27,8 +27,11 @@ enum Token {
     LParen,
     #[token(")")]
     RParen,
-    #[regex(r"[a-zA-Z][a-zA-Z0-9]*", |lex| lex.slice().to_lowercase())]
-    Identifier(String),
+    /// Borrowed from the input, so it is not lowercased yet: every comparison
+    /// on it is ASCII case insensitive, and expansion replaces it with the
+    /// canonical spelling from `KNOWN_IDENTIFIERS`.
+    #[regex(r"[a-zA-Z][a-zA-Z0-9]*", |lex| lex.slice())]
+    Identifier(&'a str),
 }
 
 fn is_function(name: &str) -> bool {
@@ -48,36 +51,69 @@ fn is_function(name: &str) -> bool {
     )
 }
 
-fn segment_identifier(word: &str) -> Option<Vec<String>> {
-    let mut parts = Vec::new();
-    let mut rest = word;
-    while !rest.is_empty() {
-        let matched = KNOWN_IDENTIFIERS
+/// Whether `input` can be the start of an expression, judged on its first byte
+/// alone. An expression starts with a number, a `.`, an opening parenthesis, a
+/// unary sign or an identifier, and an identifier only evaluates if it starts
+/// with a known one, so anything else is a query for the index and is rejected
+/// here rather than after lexing it.
+fn starts_like_expression(input: &str) -> bool {
+    let Some(&first) = input.as_bytes().first() else {
+        return false;
+    };
+    match first {
+        b'0'..=b'9' | b'.' | b'(' | b'+' | b'-' => true,
+        _ => KNOWN_IDENTIFIERS
             .iter()
-            .filter(|name| rest.starts_with(*name))
-            .max_by_key(|name| name.len())?;
-        parts.push((*matched).to_string());
-        rest = &rest[matched.len()..];
+            .any(|name| name.as_bytes()[0].eq_ignore_ascii_case(&first)),
     }
-    Some(parts)
 }
 
-fn push_expanded(out: &mut Vec<Token>, tok: Token) -> Option<()> {
-    match tok {
-        Token::Identifier(word) if KNOWN_IDENTIFIERS.contains(&word.as_str()) => {
-            out.push(Token::Identifier(word));
-        }
-        Token::Identifier(word) => {
-            for part in segment_identifier(&word)? {
-                out.push(Token::Identifier(part));
-            }
-        }
-        other => out.push(other),
+/// The canonical spelling of `word`, if it names a known identifier. Words come
+/// straight from the input, which the lexer restricts to ASCII letters and
+/// digits, so case folding a byte at a time is enough.
+fn known_identifier(word: &str) -> Option<&'static str> {
+    KNOWN_IDENTIFIERS
+        .iter()
+        .find(|name| name.eq_ignore_ascii_case(word))
+        .copied()
+}
+
+fn known_identifier_prefix(rest: &str) -> Option<&'static str> {
+    KNOWN_IDENTIFIERS
+        .iter()
+        .filter(|name| {
+            rest.len() >= name.len()
+                && rest.as_bytes()[..name.len()].eq_ignore_ascii_case(name.as_bytes())
+        })
+        .max_by_key(|name| name.len())
+        .copied()
+}
+
+fn push_segmented(out: &mut Vec<Token<'_>>, word: &str) -> Option<()> {
+    let mut rest = word;
+    while !rest.is_empty() {
+        let matched = known_identifier_prefix(rest)?;
+        push_token(out, Token::Identifier(matched));
+        rest = &rest[matched.len()..];
     }
     Some(())
 }
 
-fn lex_and_expand(input: &str) -> Option<Vec<Token>> {
+fn push_expanded<'a>(out: &mut Vec<Token<'a>>, tok: Token<'a>) -> Option<()> {
+    match tok {
+        Token::Identifier(word) => match known_identifier(word) {
+            Some(name) => push_token(out, Token::Identifier(name)),
+            None => push_segmented(out, word)?,
+        },
+        other => push_token(out, other),
+    }
+    Some(())
+}
+
+/// Lexes `input`, expands run-together identifiers and inserts the implicit
+/// multiplications in a single pass, so a rejected query stops at the first
+/// token it cannot handle and a valid one is only collected once.
+fn tokenize(input: &str) -> Option<Vec<Token<'_>>> {
     let mut out = Vec::new();
     for tok in Token::lexer(input) {
         push_expanded(&mut out, tok.ok()?)?;
@@ -85,31 +121,29 @@ fn lex_and_expand(input: &str) -> Option<Vec<Token>> {
     Some(out)
 }
 
-fn insert_implicit_multiplication(tokens: Vec<Token>) -> Vec<Token> {
-    let mut out: Vec<Token> = Vec::with_capacity(tokens.len());
-    for tok in tokens {
-        if let Some(prev) = out.last() {
-            let value_ends = matches!(
-                prev,
-                Token::Number(_) | Token::Identifier(_) | Token::RParen
-            );
-            let value_starts = match &tok {
-                Token::Number(_) => !matches!(prev, Token::Number(_)),
-                Token::Identifier(_) => true,
-                Token::LParen => !matches!(prev, Token::Identifier(name) if is_function(name)),
-                _ => false,
-            };
-            if value_ends && value_starts {
-                out.push(Token::Multiply);
-            }
+/// Pushes `tok`, preceded by the multiplication it implies when it starts a
+/// value right after one ended, as in `2pi` or `(1+2)(3)`.
+fn push_token<'a>(out: &mut Vec<Token<'a>>, tok: Token<'a>) {
+    if let Some(prev) = out.last() {
+        let value_ends = matches!(
+            prev,
+            Token::Number(_) | Token::Identifier(_) | Token::RParen
+        );
+        let value_starts = match &tok {
+            Token::Number(_) => !matches!(prev, Token::Number(_)),
+            Token::Identifier(_) => true,
+            Token::LParen => !matches!(prev, Token::Identifier(name) if is_function(name)),
+            _ => false,
+        };
+        if value_ends && value_starts {
+            out.push(Token::Multiply);
         }
-        out.push(tok);
     }
-    out
+    out.push(tok);
 }
 
 #[derive(Debug, Clone, PartialEq)]
-enum Op {
+enum Op<'a> {
     Add,
     Sub,
     Mul,
@@ -118,11 +152,11 @@ enum Op {
     Pow,
     Neg,
     Pos,
-    Func(String),
+    Func(&'a str),
     Group,
 }
 
-fn precedence(op: &Op) -> u8 {
+fn precedence(op: &Op<'_>) -> u8 {
     match op {
         Op::Add | Op::Sub => 1,
         Op::Mul | Op::Div | Op::Mod => 2,
@@ -132,19 +166,19 @@ fn precedence(op: &Op) -> u8 {
     }
 }
 
-fn is_right_associative(op: &Op) -> bool {
+fn is_right_associative(op: &Op<'_>) -> bool {
     matches!(op, Op::Pow | Op::Neg | Op::Pos)
 }
 
 #[derive(Debug, Clone)]
-enum RpnItem {
+enum RpnItem<'a> {
     Value(f64),
-    Op(Op),
+    Op(Op<'a>),
 }
 
-fn to_rpn(tokens: &[Token]) -> Option<Vec<RpnItem>> {
-    let mut output: Vec<RpnItem> = Vec::new();
-    let mut ops: Vec<Op> = Vec::new();
+fn to_rpn<'a>(tokens: &[Token<'a>]) -> Option<Vec<RpnItem<'a>>> {
+    let mut output: Vec<RpnItem<'a>> = Vec::with_capacity(tokens.len());
+    let mut ops: Vec<Op<'a>> = Vec::with_capacity(tokens.len());
     let mut prev_value_ended = false;
 
     for (i, tok) in tokens.iter().enumerate() {
@@ -155,10 +189,10 @@ fn to_rpn(tokens: &[Token]) -> Option<Vec<RpnItem>> {
             }
             Token::Identifier(name) => {
                 if tokens.get(i + 1) == Some(&Token::LParen) && is_function(name) {
-                    ops.push(Op::Func(name.clone()));
+                    ops.push(Op::Func(name));
                     prev_value_ended = false;
                 } else {
-                    let value = match name.as_str() {
+                    let value = match *name {
                         "pi" => std::f64::consts::PI,
                         "e" => std::f64::consts::E,
                         _ => return None,
@@ -237,8 +271,8 @@ fn to_rpn(tokens: &[Token]) -> Option<Vec<RpnItem>> {
     Some(output)
 }
 
-fn eval_rpn(rpn: &[RpnItem]) -> Option<f64> {
-    let mut stack: Vec<f64> = Vec::new();
+fn eval_rpn(rpn: &[RpnItem<'_>]) -> Option<f64> {
+    let mut stack: Vec<f64> = Vec::with_capacity(rpn.len());
     for item in rpn {
         match item {
             RpnItem::Value(v) => stack.push(*v),
@@ -249,7 +283,7 @@ fn eval_rpn(rpn: &[RpnItem]) -> Option<f64> {
             RpnItem::Op(Op::Pos) => {}
             RpnItem::Op(Op::Func(name)) => {
                 let v = stack.pop()?;
-                let result = match name.as_str() {
+                let result = match *name {
                     "sqrt" if v >= 0.0 => v.sqrt(),
                     "abs" => v.abs(),
                     "sin" => v.sin(),
@@ -320,16 +354,21 @@ pub fn eval(input: &str) -> Option<String> {
         return None;
     }
 
+    // Every keystroke reaches this, and most of them are searches for the
+    // index, not expressions. Percentages are covered too: they start with the
+    // number the percentage is taken of.
+    if !starts_like_expression(trimmed) {
+        return None;
+    }
+
     if let Some(res) = try_eval_percentage(trimmed) {
         return Some(format_result(res));
     }
 
-    let tokens = lex_and_expand(trimmed)?;
+    let tokens = tokenize(trimmed)?;
     if tokens.is_empty() {
         return None;
     }
-
-    let tokens = insert_implicit_multiplication(tokens);
 
     let has_op_or_func = trimmed.contains('E')
         || trimmed.contains('e')
@@ -414,6 +453,19 @@ mod tests {
     }
 
     #[test]
+    fn test_queries_that_cannot_start_an_expression_are_rejected() {
+        assert_eq!(eval("visual studio code"), None);
+        assert_eq!(eval("word"), None);
+        assert_eq!(eval("* 2"), None);
+        assert_eq!(eval(") + 1"), None);
+        // Still reached: these do start like an expression.
+        assert_eq!(eval("+2 + 3"), Some("5".to_string()));
+        assert_eq!(eval(".5 + 2"), Some("2.5".to_string()));
+        assert_eq!(eval("(1 + 2)"), Some("3".to_string()));
+        assert_eq!(eval("+15% of 200"), Some("30".to_string()));
+    }
+
+    #[test]
     fn test_domain_errors_return_none_not_panic() {
         assert_eq!(eval("10/0"), None);
         assert_eq!(eval("10%0"), None);
@@ -474,6 +526,17 @@ mod tests {
     }
 
     #[test]
+    fn test_identifiers_are_case_insensitive() {
+        assert_eq!(eval("SQRT(144)"), Some("12".to_string()));
+        assert_eq!(eval("Log10(100)"), Some("2".to_string()));
+        assert_eq!(eval("2PI"), Some(format_result(2.0 * std::f64::consts::PI)));
+        assert_eq!(
+            eval("PIE"),
+            Some(format_result(std::f64::consts::PI * std::f64::consts::E))
+        );
+    }
+
+    #[test]
     fn test_bare_word_segments_into_known_identifiers_without_parens_or_digits() {
         assert_eq!(
             eval("pie"),
@@ -516,14 +579,12 @@ mod tests {
     #[test]
     fn test_deeply_nested_input_does_not_recurse_even_uncapped() {
         let power_chain: String = "2".to_string() + &"^2".repeat(500_000);
-        let tokens = lex_and_expand(&power_chain).unwrap();
-        let tokens = insert_implicit_multiplication(tokens);
+        let tokens = tokenize(&power_chain).unwrap();
         let rpn = to_rpn(&tokens).unwrap();
         assert!(eval_rpn(&rpn).unwrap().is_infinite());
 
         let deep_parens: String = "(".repeat(500_000) + "1" + &")".repeat(500_000);
-        let tokens = lex_and_expand(&deep_parens).unwrap();
-        let tokens = insert_implicit_multiplication(tokens);
+        let tokens = tokenize(&deep_parens).unwrap();
         let rpn = to_rpn(&tokens).unwrap();
         assert_eq!(eval_rpn(&rpn), Some(1.0));
     }
