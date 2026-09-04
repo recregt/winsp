@@ -1712,7 +1712,7 @@ dependencies = [
 
 [[package]]
 name = "winsp-app"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "embed-resource",
  "mimalloc",
@@ -1725,7 +1725,7 @@ dependencies = [
 
 [[package]]
 name = "winsp-core"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "codspeed-criterion-compat",
  "compact_str",
@@ -1736,7 +1736,7 @@ dependencies = [
 
 [[package]]
 name = "winsp-windows"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "lnk",
  "lru",
