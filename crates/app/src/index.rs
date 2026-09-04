@@ -1,6 +1,6 @@
 #![cfg(windows)]
 
-use winsp_core::search::Engine;
+use winsp_core::engine::Engine;
 use winsp_windows::catalog::Catalog;
 
 pub(crate) fn populate_search_index() -> Engine {

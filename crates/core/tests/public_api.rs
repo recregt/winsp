@@ -1,5 +1,5 @@
+use winsp_core::engine::Engine;
 use winsp_core::models::{AppItem, LaunchTarget, SearchResultKind};
-use winsp_core::search::Engine;
 
 #[test]
 fn test_full_flow_from_construction_to_search_result() {

@@ -4,7 +4,7 @@ use std::sync::mpsc::Sender;
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
-use winsp_core::search::Engine;
+use winsp_core::engine::Engine;
 use winsp_windows::catalog::Catalog;
 use winsp_windows::system::watcher::WatchEvent;
 
