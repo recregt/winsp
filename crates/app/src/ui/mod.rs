@@ -46,6 +46,10 @@ struct UiState {
     results: Vec<SearchResult>,
     selected_index: usize,
     capturing_hotkey: bool,
+    /// Set by an edit to the query whose search has been left to whoever needs
+    /// the results next, so that a burst of keystrokes searches once instead of
+    /// once per character.
+    stale: bool,
 }
 
 enum ExecuteOutcome {
@@ -63,12 +67,25 @@ impl UiState {
             results,
             selected_index: 0,
             capturing_hotkey: false,
+            stale: false,
         }
     }
 
     fn refresh_against(&mut self, engine: &Engine) {
         engine.search_into(&self.query, MAX_RESULTS, &mut self.results);
         self.selected_index = 0;
+        self.stale = false;
+    }
+
+    /// Searches for the current query if an edit left the results behind, and
+    /// reports whether it had to. Every read of the results goes through here,
+    /// so a deferred search is only ever deferred, never skipped.
+    fn settle(&mut self, engine: &Engine) -> bool {
+        if !self.stale {
+            return false;
+        }
+        self.refresh_against(engine);
+        true
     }
 
     fn query(&self) -> &str {
@@ -93,27 +110,28 @@ impl UiState {
 
     fn stop_capturing_hotkey(&mut self, engine: &Engine) {
         self.capturing_hotkey = false;
-        self.clear_query(engine);
+        self.clear_query();
+        self.settle(engine);
     }
 
-    fn insert_char(&mut self, engine: &Engine, c: char) {
+    fn insert_char(&mut self, c: char) {
         self.query.push(c);
-        self.refresh_against(engine);
+        self.stale = true;
     }
 
-    fn backspace(&mut self, engine: &Engine) {
+    fn backspace(&mut self) {
         if self.query.pop().is_some() {
-            self.refresh_against(engine);
+            self.stale = true;
         }
     }
 
-    fn clear_query(&mut self, engine: &Engine) {
+    fn clear_query(&mut self) {
         if self.query.is_empty() {
             self.selected_index = 0;
             return;
         }
         self.query.clear();
-        self.refresh_against(engine);
+        self.stale = true;
     }
 
     fn select_next(&mut self) {
@@ -233,15 +251,30 @@ mod tests {
         UiState::new(&Engine::new())
     }
 
+    fn sample_engine() -> Engine {
+        use winsp_core::models::AppItem;
+
+        let mut engine = Engine::new();
+        engine.set_items(vec![
+            AppItem::new("calc", "Calculator", LaunchTarget::Path("calc.exe".into())),
+            AppItem::new("cal", "Calendar", LaunchTarget::Path("cal.exe".into())),
+        ]);
+        engine
+    }
+
+    fn type_query(state: &mut UiState, engine: &Engine, query: &str) {
+        for c in query.chars() {
+            state.insert_char(c);
+        }
+        state.settle(engine);
+    }
+
     #[test]
     fn insert_char_appends_and_refreshes() {
         let engine = Engine::new();
         let mut state = sample_state();
 
-        state.insert_char(&engine, 'c');
-        state.insert_char(&engine, 'a');
-        state.insert_char(&engine, 'l');
-        state.insert_char(&engine, 'c');
+        type_query(&mut state, &engine, "calc");
 
         assert_eq!(state.query(), "calc");
         assert!(state.results().is_empty());
@@ -251,15 +284,14 @@ mod tests {
     fn backspace_and_clear_query_refresh_results() {
         let engine = Engine::new();
         let mut state = sample_state();
-        state.insert_char(&engine, 'c');
-        state.insert_char(&engine, 'a');
-        state.insert_char(&engine, 'l');
-        state.insert_char(&engine, 'c');
+        type_query(&mut state, &engine, "calc");
 
-        state.backspace(&engine);
+        state.backspace();
+        state.settle(&engine);
         assert_eq!(state.query(), "cal");
 
-        state.clear_query(&engine);
+        state.clear_query();
+        state.settle(&engine);
         assert_eq!(state.query(), "");
     }
 
@@ -268,7 +300,8 @@ mod tests {
         let engine = Engine::new();
         let mut state = sample_state();
 
-        state.backspace(&engine);
+        state.backspace();
+        state.settle(&engine);
 
         assert_eq!(state.query(), "");
         assert_eq!(state.selected_index(), 0);
@@ -276,7 +309,6 @@ mod tests {
 
     #[test]
     fn clear_query_on_an_already_empty_query_still_resets_the_selection() {
-        let engine = Engine::new();
         let mut state = sample_state();
         state.results = vec![
             SearchResult::calculation("1".into(), "1".into()),
@@ -284,19 +316,66 @@ mod tests {
         ];
         state.selected_index = 1;
 
-        state.clear_query(&engine);
+        state.clear_query();
 
         assert_eq!(state.query(), "");
         assert_eq!(state.selected_index(), 0);
     }
 
     #[test]
+    fn an_edit_left_unsettled_is_searched_the_next_time_results_are_read() {
+        let engine = sample_engine();
+        let mut state = UiState::new(&engine);
+
+        // A burst of keystrokes: every one of them edits the query, none of
+        // them searches.
+        for c in "calc".chars() {
+            state.insert_char(c);
+        }
+        assert_eq!(state.query(), "calc");
+        assert_eq!(
+            state.results().len(),
+            2,
+            "still the results of the query before"
+        );
+
+        state.settle(&engine);
+        assert_eq!(
+            state.results().first().map(|result| result.title.as_ref()),
+            Some("Calculator")
+        );
+
+        // Deleting the burst away is deferred the same way, and settles to the
+        // results the query it leaves behind would have searched for anyway.
+        for _ in 0..4 {
+            state.backspace();
+        }
+        state.settle(&engine);
+        assert_eq!(state.query(), "");
+        assert_eq!(state.results().len(), 2);
+    }
+
+    #[test]
+    fn settling_without_a_pending_edit_keeps_the_selection() {
+        let engine = sample_engine();
+        let mut state = UiState::new(&engine);
+        type_query(&mut state, &engine, "cal");
+
+        state.select_next();
+        let selected = state.selected_index();
+        assert_eq!(selected, 1);
+
+        state.settle(&engine);
+
+        assert_eq!(state.selected_index(), selected);
+    }
+
+    #[test]
     fn execute_selected_with_no_matches_returns_none() {
         let engine = Engine::new();
         let mut state = sample_state();
-        for c in "zzzznomatchzzzz".chars() {
-            state.insert_char(&engine, c);
-        }
+        type_query(&mut state, &engine, "zzzznomatchzzzz");
+
         assert!(state.results().is_empty());
         assert!(matches!(state.execute_selected(), ExecuteOutcome::None));
     }

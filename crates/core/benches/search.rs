@@ -107,6 +107,9 @@ const TYPING_INDEX_SIZE: usize = 10_000;
 /// The number of entries a real Start menu holds, where the per-keystroke
 /// fixed costs are a visible share of a search instead of rounding error.
 const INSTALLED_INDEX_SIZE: usize = 300;
+/// Keystrokes that reach the UI while it is busy with the one before them, and
+/// which it therefore searches for as a single query.
+const KEYSTROKE_BURST: usize = 3;
 
 fn bench_search_while_typing(c: &mut Criterion) {
     let index = synthetic_index(TYPING_INDEX_SIZE);
@@ -161,6 +164,21 @@ fn bench_search_while_typing(c: &mut Criterion) {
         });
     });
 
+    // What the UI actually runs when the typing outpaces the search: a
+    // keystroke whose successor is already queued never searches, so a burst
+    // leaves one search behind instead of one per character.
+    let coalesced = coalesced_queries(&prefixes, KEYSTROKE_BURST);
+
+    group.bench_function("full_session_coalesced", |b| {
+        let mut results = Vec::new();
+        b.iter(|| {
+            for query in &coalesced {
+                index.search_into(query, 6, &mut results);
+                black_box(&results);
+            }
+        });
+    });
+
     // A mistyped query: the user types it, then deletes it one keystroke at a
     // time, so the buffer has to shrink and grow again within one session.
     let edit_session = edit_session_queries(&prefixes);
@@ -206,7 +224,33 @@ fn bench_search_while_typing(c: &mut Criterion) {
         });
     });
 
+    let installed_coalesced = coalesced_queries(&edit_session, KEYSTROKE_BURST);
+
+    group.bench_function("installed_index_session_coalesced", |b| {
+        let mut results = Vec::new();
+        b.iter(|| {
+            for query in &installed_coalesced {
+                installed.search_into(query, 6, &mut results);
+                black_box(&results);
+            }
+        });
+    });
+
     group.finish();
+}
+
+/// Keystrokes a session searches for once the UI skips the searches whose
+/// results the next keystroke replaces before anyone sees them. Only every
+/// `burst`th query survives, plus the last one, which is the query the user is
+/// left looking at.
+fn coalesced_queries<'a>(queries: &[&'a str], burst: usize) -> Vec<&'a str> {
+    let last = queries.len().saturating_sub(1);
+    queries
+        .iter()
+        .enumerate()
+        .filter(|&(nth, _)| nth % burst == burst - 1 || nth == last)
+        .map(|(_, query)| *query)
+        .collect()
 }
 
 /// Types the query out one keystroke at a time, then backspaces it away. The
