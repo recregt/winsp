@@ -56,7 +56,40 @@ pub(crate) struct Settings {
     pub(crate) position: WindowPosition,
 }
 
+#[cfg(test)]
+thread_local! {
+    static TEST_CONFIG_DIR: std::cell::RefCell<Option<PathBuf>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// Lets a test point `config_path()` at a scratch directory instead of the
+/// real `LOCALAPPDATA`, so the production `Settings::save`/`load` path can be
+/// exercised without touching real user data. Thread-local: each test thread
+/// gets its own override, so no cross-test synchronization is needed.
+#[cfg(test)]
+pub(crate) struct TestConfigDirGuard;
+
+#[cfg(test)]
+impl TestConfigDirGuard {
+    pub(crate) fn set(dir: PathBuf) -> Self {
+        TEST_CONFIG_DIR.with(|cell| *cell.borrow_mut() = Some(dir));
+        Self
+    }
+}
+
+#[cfg(test)]
+impl Drop for TestConfigDirGuard {
+    fn drop(&mut self) {
+        TEST_CONFIG_DIR.with(|cell| *cell.borrow_mut() = None);
+    }
+}
+
 fn config_path() -> Option<PathBuf> {
+    #[cfg(test)]
+    if let Some(dir) = TEST_CONFIG_DIR.with(|cell| cell.borrow().clone()) {
+        return Some(dir.join("WinSP").join("settings.msgpack"));
+    }
+
     std::env::var("LOCALAPPDATA")
         .ok()
         .map(|dir| PathBuf::from(dir).join("WinSP").join("settings.msgpack"))

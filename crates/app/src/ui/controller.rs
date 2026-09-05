@@ -320,10 +320,15 @@ fn set_position(window: &Window, position: WindowPosition) {
     let Ok(mut settings) = ctx.settings.lock() else {
         return;
     };
+    let outcome = update_position(&mut settings, position, Settings::save);
+    drop(settings);
 
-    match update_position(&mut settings, position, Settings::save) {
+    apply_position_outcome(window, position, outcome);
+}
+
+fn apply_position_outcome(window: &Window, position: WindowPosition, outcome: io::Result<bool>) {
+    match outcome {
         Ok(true) => {
-            drop(settings);
             if window.is_visible() {
                 window.reposition(to_anchor(position));
             }
@@ -428,5 +433,81 @@ mod tests {
 
         assert!(result.is_err());
         assert_eq!(settings.position, WindowPosition::Top);
+    }
+
+    #[test]
+    fn a_visible_window_is_repositioned_when_the_position_changes() {
+        let window = Window::create("WinSpTest_ApplyPositionVisible", "t", 40, 40, |_, _| {})
+            .expect("window creation should succeed");
+        window.center(40, 40, Anchor::Top);
+        window.show();
+        let before = window.outer_position();
+
+        apply_position_outcome(&window, WindowPosition::Center, Ok(true));
+
+        assert_ne!(
+            window.outer_position(),
+            before,
+            "a visible window should move to the new anchor"
+        );
+
+        window.close();
+    }
+
+    #[test]
+    fn a_hidden_window_is_not_repositioned_when_the_position_changes() {
+        let window = Window::create("WinSpTest_ApplyPositionHidden", "t", 40, 40, |_, _| {})
+            .expect("window creation should succeed");
+        window.center(40, 40, Anchor::Top);
+        assert!(!window.is_visible(), "the window should start out hidden");
+        let before = window.outer_position();
+
+        apply_position_outcome(&window, WindowPosition::Center, Ok(true));
+
+        assert_eq!(
+            window.outer_position(),
+            before,
+            "a hidden window must not be moved on screen"
+        );
+
+        window.close();
+    }
+
+    #[test]
+    fn an_unchanged_outcome_leaves_a_visible_window_where_it_is() {
+        let window = Window::create("WinSpTest_ApplyPositionNoOp", "t", 40, 40, |_, _| {})
+            .expect("window creation should succeed");
+        window.center(40, 40, Anchor::Top);
+        window.show();
+        let before = window.outer_position();
+
+        apply_position_outcome(&window, WindowPosition::Center, Ok(false));
+
+        assert_eq!(window.outer_position(), before);
+
+        window.close();
+    }
+
+    #[test]
+    fn a_persist_failure_reports_the_error_without_moving_the_window() {
+        let window = Window::create("WinSpTest_ApplyPositionError", "t", 40, 40, |_, _| {})
+            .expect("window creation should succeed");
+        window.center(40, 40, Anchor::Top);
+        window.show();
+        let before = window.outer_position();
+
+        apply_position_outcome(
+            &window,
+            WindowPosition::Center,
+            Err(io::Error::other("disk full")),
+        );
+
+        assert_eq!(
+            window.outer_position(),
+            before,
+            "a save failure must not move the window, only report the error"
+        );
+
+        window.close();
     }
 }
