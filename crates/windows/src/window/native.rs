@@ -20,10 +20,10 @@ use windows::Win32::UI::WindowsAndMessaging::{
     CREATESTRUCTW, CS_HREDRAW, CS_VREDRAW, CreateWindowExW, DefWindowProcW, DestroyWindow,
     DispatchMessageW, GWLP_USERDATA, GetClientRect, GetCursorPos, GetMessageW, GetSystemMetrics,
     GetWindowLongPtrW, GetWindowRect, HCURSOR, HICON, HWND_TOPMOST, IDC_ARROW, IsWindowVisible,
-    LoadCursorW, LoadIconW, MSG, PM_REMOVE, PeekMessageW, PostMessageW, PostQuitMessage,
-    RegisterClassExW, SM_CXSCREEN, SM_CYSCREEN, SPI_GETWORKAREA, SW_HIDE, SW_SHOW, SWP_NOACTIVATE,
-    SWP_NOMOVE, SWP_NOSIZE, SetForegroundWindow, SetWindowLongPtrW, SetWindowPos, ShowWindow,
-    SystemParametersInfoW, TranslateMessage, WM_APP, WM_CHAR, WM_COMMAND, WM_DESTROY,
+    LoadCursorW, LoadIconW, MSG, PM_NOREMOVE, PM_REMOVE, PeekMessageW, PostMessageW,
+    PostQuitMessage, RegisterClassExW, SM_CXSCREEN, SM_CYSCREEN, SPI_GETWORKAREA, SW_HIDE, SW_SHOW,
+    SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SetForegroundWindow, SetWindowLongPtrW, SetWindowPos,
+    ShowWindow, SystemParametersInfoW, TranslateMessage, WM_APP, WM_CHAR, WM_COMMAND, WM_DESTROY,
     WM_ERASEBKGND, WM_HOTKEY, WM_KEYDOWN, WM_KILLFOCUS, WM_NCCREATE, WM_PAINT, WM_RBUTTONUP,
     WM_SYSKEYDOWN, WNDCLASSEXW, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP,
 };
@@ -38,6 +38,13 @@ pub(crate) const WM_SHOW_REQUEST: u32 = WM_APP + 2;
 const WM_APP_EVENT: u32 = WM_APP + 3;
 
 static MAIN_HWND: AtomicIsize = AtomicIsize::new(0);
+
+/// Whether a `WM_CHAR` carries a character the window reports, rather than one
+/// of the control characters [`dispatch`] drops. Half of a surrogate pair
+/// counts: the character it completes is on its way.
+fn types_a_character(message: &MSG) -> bool {
+    char::from_u32(u32::from(message.wParam.0 as u16)).is_none_or(|c| !c.is_control())
+}
 
 pub fn post_event(id: u32) {
     let raw = MAIN_HWND.load(Ordering::Acquire);
@@ -323,6 +330,34 @@ impl Window {
         }
 
         self.unregister_hotkey(HotkeySlot::Primary);
+    }
+
+    /// Whether another keystroke this window will report is already waiting in
+    /// its queue, which makes the state the keystroke in hand leaves behind one
+    /// nobody gets to see. Peeking never removes anything, so the waiting
+    /// keystroke is still delivered.
+    ///
+    /// Answers for the moment it is asked: a keystroke arriving right after
+    /// only costs the caller the shortcut, never a stale answer.
+    pub fn has_pending_keystroke(&self) -> bool {
+        // A key press queues up as `WM_KEYDOWN` and only turns into the
+        // `WM_CHAR` it types once it is dispatched, so typing ahead shows up
+        // here as presses. A `WM_CHAR` carrying a control character — the one
+        // backspace, tab, escape and enter each come with — is dropped instead
+        // of reported, so it is not a keystroke anybody is waiting for.
+        self.peek_message(WM_KEYDOWN).is_some()
+            || self
+                .peek_message(WM_CHAR)
+                .is_some_and(|message| types_a_character(&message))
+    }
+
+    fn peek_message(&self, msg: u32) -> Option<MSG> {
+        unsafe {
+            let mut peeked = std::mem::MaybeUninit::<MSG>::uninit();
+            PeekMessageW(peeked.as_mut_ptr(), Some(self.hwnd), msg, msg, PM_NOREMOVE)
+                .as_bool()
+                .then(|| peeked.assume_init())
+        }
     }
 
     pub fn discard_pending_char(&self) {
@@ -753,6 +788,68 @@ mod tests {
             !still_pending,
             "expected the queued WM_CHAR to have been discarded"
         );
+
+        unsafe {
+            let _ = DestroyWindow(hwnd);
+            let _ = UnregisterClassW(&class_name, Some(GetModuleHandleW(None).unwrap().into()));
+        }
+    }
+
+    #[test]
+    fn has_pending_keystroke_sees_typing_that_is_still_queued() {
+        let class_name = HSTRING::from("WinSpTest_PendingKeystrokeWindow");
+        let hwnd = create_test_window(&class_name);
+        assert!(!hwnd.is_invalid(), "test window creation should succeed");
+        let window = Window::new(hwnd);
+
+        assert!(!window.has_pending_keystroke(), "the queue starts empty");
+
+        unsafe {
+            let _ = PostMessageW(Some(hwnd), WM_KEYDOWN, WPARAM('A' as usize), LPARAM(0));
+        }
+        assert!(window.has_pending_keystroke(), "a key press is waiting");
+
+        let still_pending = unsafe {
+            let mut msg = std::mem::MaybeUninit::<MSG>::uninit();
+            PeekMessageW(
+                msg.as_mut_ptr(),
+                Some(hwnd),
+                WM_KEYDOWN,
+                WM_KEYDOWN,
+                PM_REMOVE,
+            )
+            .as_bool()
+        };
+        assert!(
+            still_pending,
+            "asking should leave the key press to be delivered"
+        );
+
+        unsafe {
+            let _ = PostMessageW(Some(hwnd), WM_CHAR, WPARAM('a' as usize), LPARAM(0));
+        }
+        assert!(window.has_pending_keystroke(), "a character is waiting");
+
+        unsafe {
+            let _ = DestroyWindow(hwnd);
+            let _ = UnregisterClassW(&class_name, Some(GetModuleHandleW(None).unwrap().into()));
+        }
+    }
+
+    #[test]
+    fn has_pending_keystroke_ignores_a_control_character() {
+        let class_name = HSTRING::from("WinSpTest_PendingControlCharWindow");
+        let hwnd = create_test_window(&class_name);
+        assert!(!hwnd.is_invalid(), "test window creation should succeed");
+        let window = Window::new(hwnd);
+
+        // The character a backspace press comes with, which the window drops
+        // instead of reporting, so nothing is waiting on it.
+        unsafe {
+            let _ = PostMessageW(Some(hwnd), WM_CHAR, WPARAM(0x08), LPARAM(0));
+        }
+
+        assert!(!window.has_pending_keystroke());
 
         unsafe {
             let _ = DestroyWindow(hwnd);

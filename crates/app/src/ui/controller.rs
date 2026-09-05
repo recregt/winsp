@@ -67,14 +67,23 @@ pub(super) fn handle_event(window: &Window, event: WindowEvent) {
             }
         }
         WindowEvent::Char(c) => {
+            // Asked before the state is locked: peeking the queue lets the
+            // window procedure run for messages other threads sent, and that
+            // takes the very locks held here.
+            let more_typing = window.has_pending_keystroke();
             if let Some(ctx) = context() {
                 let mut results_count = None;
                 if let (Ok(app_state), Ok(mut ui_state)) =
                     (ctx.app_state.lock(), ctx.ui_state.lock())
                 {
                     if !ui_state.is_capturing_hotkey() {
-                        ui_state.insert_char(app_state.engine(), c);
-                        results_count = Some(ui_state.results().len());
+                        ui_state.insert_char(c);
+                        // The keystroke already queued behind this one replaces
+                        // these results before anything can show them, so the
+                        // search for them is left to it.
+                        if !more_typing && ui_state.settle(app_state.engine()) {
+                            results_count = Some(ui_state.results().len());
+                        }
                     }
                 }
                 if let Some(count) = results_count {
@@ -100,21 +109,29 @@ pub(super) fn handle_event(window: &Window, event: WindowEvent) {
             let mut should_resize = false;
             let mut results_count = 0;
             let mut should_hide = false;
+            // See the `Char` arm: peeked before the state is locked.
+            let more_typing = window.has_pending_keystroke();
 
             if let (Ok(app_state), Ok(mut ui_state)) = (ctx.app_state.lock(), ctx.ui_state.lock()) {
+                // A search a burst of typing deferred is owed by the first key
+                // press that reads the results, acts on them, or simply ends
+                // the burst.
+                let mut settled = false;
                 match key {
                     Key::Back => {
-                        ui_state.backspace(app_state.engine());
-                        should_resize = true;
-                        results_count = ui_state.results().len();
+                        ui_state.backspace();
+                        settled = !more_typing && ui_state.settle(app_state.engine());
                     }
                     Key::Down | Key::Tab => {
+                        settled = ui_state.settle(app_state.engine());
                         ui_state.select_next();
                     }
                     Key::Up => {
+                        settled = ui_state.settle(app_state.engine());
                         ui_state.select_prev();
                     }
                     Key::Enter => {
+                        ui_state.settle(app_state.engine());
                         match ui_state.execute_selected() {
                             ExecuteOutcome::Copy(result) => {
                                 winsp_windows::system::clipboard::copy(&result);
@@ -146,7 +163,14 @@ pub(super) fn handle_event(window: &Window, event: WindowEvent) {
                     Key::Escape => {
                         should_hide = true;
                     }
-                    _ => {}
+                    _ => {
+                        settled = !more_typing && ui_state.settle(app_state.engine());
+                    }
+                }
+
+                if settled {
+                    should_resize = true;
+                    results_count = ui_state.results().len();
                 }
             }
 
@@ -159,14 +183,22 @@ pub(super) fn handle_event(window: &Window, event: WindowEvent) {
                 window.invalidate();
             }
         }
-        WindowEvent::Redraw => {
-            window.paint(
-                |canvas, rect| match context().and_then(|ctx| ctx.ui_state.lock().ok()) {
-                    Some(ui_state) => render(canvas, &ui_state, rect),
-                    None => canvas.fill_rect(rect, view::BACKGROUND_COLOR),
-                },
-            )
-        }
+        WindowEvent::Redraw => window.paint(|canvas, rect| {
+            // Painting is the last place a deferred search can still be owed,
+            // so the results are settled before they are drawn.
+            let state =
+                context().and_then(|ctx| match (ctx.app_state.lock(), ctx.ui_state.lock()) {
+                    (Ok(app_state), Ok(mut ui_state)) => {
+                        ui_state.settle(app_state.engine());
+                        Some(ui_state)
+                    }
+                    _ => None,
+                });
+            match state {
+                Some(ui_state) => render(canvas, &ui_state, rect),
+                None => canvas.fill_rect(rect, view::BACKGROUND_COLOR),
+            }
+        }),
     }
 }
 
@@ -221,7 +253,8 @@ fn show_fresh(handle: &Window) {
     );
     if let Some(ctx) = context() {
         if let (Ok(app_state), Ok(mut ui_state)) = (ctx.app_state.lock(), ctx.ui_state.lock()) {
-            ui_state.clear_query(app_state.engine());
+            ui_state.clear_query();
+            ui_state.settle(app_state.engine());
             resize_window_for_results(handle, ui_state.results().len());
         }
         if ctx.reconcile_tx.send(()).is_err() {
