@@ -468,10 +468,13 @@ impl ScanTable {
         let capacity = narrowing_capacity(self.rows.len());
         let mut hay_buf = Vec::new();
         let needle_len = needle.len() as u32;
-        let name_ceiling = name_score_ceiling(needle.len());
-        let ascii_needle = match needle {
-            Utf32Str::Ascii(needle) => Some(needle),
-            Utf32Str::Unicode(_) => None,
+        let query = Query {
+            name_ceiling: name_score_ceiling(needle.len()),
+            ascii_needle: match needle {
+                Utf32Str::Ascii(needle) => Some(needle),
+                Utf32Str::Unicode(_) => None,
+            },
+            lowercased: query_lower,
         };
 
         for (idx, row, name_mask, keyword_mask) in source {
@@ -495,27 +498,20 @@ impl ScanTable {
             // narrows its scan with, which takes deciding whether it matches at
             // all — much less work than scoring it, but not always possible
             // without the matcher, in which case it is scored after all.
-            if top.len() == limit {
-                let mut ceiling = if name_possible { name_ceiling } else { 0 };
-                if keyword_possible {
-                    ceiling = ceiling.max(KEYWORD_MATCH_SCORE);
+            if top.len() == limit
+                && let Some(is_match) = ruled_out_unscored(
+                    self,
+                    row,
+                    name_possible,
+                    keyword_possible,
+                    &query,
+                    top[limit - 1].score,
+                )
+            {
+                if is_match {
+                    record_match(&mut matched, capacity, idx);
                 }
-                let ceiling = ceiling
-                    .saturating_add(launch_score(row.launch_count, SEARCH_FRECENCY_MULTIPLIER));
-                if ceiling <= top[limit - 1].score
-                    && let Some(is_match) = self.matches_unscored(
-                        row,
-                        name_possible,
-                        keyword_possible,
-                        ascii_needle,
-                        query_lower,
-                    )
-                {
-                    if is_match {
-                        record_match(&mut matched, capacity, idx);
-                    }
-                    continue;
-                }
+                continue;
             }
 
             let name_score = if name_possible {
@@ -571,43 +567,69 @@ impl ScanTable {
 
         Scan { top, matched }
     }
+}
 
-    /// Whether an item the ceiling dropped unscored matches the query anyway,
-    /// which is all the match set of the scan still needs from it. `None` when
-    /// that cannot be decided without the matcher, leaving the item to be
-    /// scored after all.
-    fn matches_unscored(
-        &self,
-        row: &ScanRow,
-        name_possible: bool,
-        keyword_possible: bool,
-        ascii_needle: Option<&[u8]>,
-        query_lower: &str,
-    ) -> Option<bool> {
-        let by_name = match (name_possible, ascii_needle) {
-            (false, _) => false,
-            // An ASCII name holds an ASCII needle exactly when the needle is a
-            // subsequence of it, which is what the matcher's own prefilter
-            // decides before it scores anything.
-            (true, Some(needle)) if row.name_is_ascii => {
-                let name = &self.names.as_bytes()[row.name_start as usize..row.name_end as usize];
-                is_subsequence_ignore_ascii_case(name, needle)
-            }
-            // A needle that is not ASCII never matches an ASCII name, since
-            // normalizing one leaves it as it is.
-            (true, None) if row.name_is_ascii => false,
-            // Anything else has to be normalized before it can be compared,
-            // which is the matcher's job.
-            (true, _) => return None,
-        };
+/// The query as the score ceiling and the match test below need it.
+#[derive(Clone, Copy)]
+struct Query<'a> {
+    /// What [`name_score_ceiling`] bounds a name match by.
+    name_ceiling: i32,
+    /// The needle, when it is ASCII and can therefore be compared byte-wise.
+    ascii_needle: Option<&'a [u8]>,
+    /// The query as keyword matching compares it.
+    lowercased: &'a str,
+}
 
-        let by_keyword = keyword_possible && {
-            let keywords = &self.keywords[row.keywords_start as usize..row.keywords_end as usize];
-            keywords.contains(query_lower)
-        };
-
-        Some(by_name || by_keyword)
+/// Whether the score ceiling rules `row` out, and if so whether it matches the
+/// query anyway, which is all the match set of the scan still needs from it.
+/// `None` leaves the item to be scored: either the ceiling does not rule it out,
+/// or deciding the match needs the matcher after all.
+///
+/// Kept out of line, like the rest of what only some items reach: the scan loop
+/// calls this once the shortlist is full, and a scan whose shortlist never fills
+/// does not call it at all, so none of this belongs in the loop body.
+#[inline(never)]
+fn ruled_out_unscored(
+    table: &ScanTable,
+    row: &ScanRow,
+    name_possible: bool,
+    keyword_possible: bool,
+    query: &Query<'_>,
+    cutoff: i32,
+) -> Option<bool> {
+    let mut ceiling = if name_possible { query.name_ceiling } else { 0 };
+    if keyword_possible {
+        ceiling = ceiling.max(KEYWORD_MATCH_SCORE);
     }
+    let ceiling =
+        ceiling.saturating_add(launch_score(row.launch_count, SEARCH_FRECENCY_MULTIPLIER));
+    if ceiling > cutoff {
+        return None;
+    }
+
+    let by_name = match (name_possible, query.ascii_needle) {
+        (false, _) => false,
+        // An ASCII name holds an ASCII needle exactly when the needle is a
+        // subsequence of it, which is what the matcher's own prefilter decides
+        // before it scores anything.
+        (true, Some(needle)) if row.name_is_ascii => {
+            let name = &table.names.as_bytes()[row.name_start as usize..row.name_end as usize];
+            is_subsequence_ignore_ascii_case(name, needle)
+        }
+        // A needle that is not ASCII never matches an ASCII name, since
+        // normalizing one leaves it as it is.
+        (true, None) if row.name_is_ascii => false,
+        // Anything else has to be normalized before it can be compared, which
+        // is the matcher's job.
+        (true, _) => return None,
+    };
+
+    let by_keyword = keyword_possible && {
+        let keywords = &table.keywords[row.keywords_start as usize..row.keywords_end as usize];
+        keywords.contains(query.lowercased)
+    };
+
+    Some(by_name || by_keyword)
 }
 
 /// Records `idx` in the match set the next keystroke narrows its scan with, or
