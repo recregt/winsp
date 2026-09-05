@@ -5,7 +5,7 @@ mod hotkey;
 mod view;
 
 use std::sync::mpsc::Sender;
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Mutex, OnceLock};
 
 use winsp_core::engine::Engine;
 use winsp_core::models::{LaunchTarget, SearchResult, SearchResultKind};
@@ -56,16 +56,18 @@ enum ExecuteOutcome {
 
 impl UiState {
     fn new(engine: &Engine) -> Self {
+        let mut results = Vec::new();
+        engine.search_into("", MAX_RESULTS, &mut results);
         Self {
             query: String::new(),
-            results: engine.search("", MAX_RESULTS),
+            results,
             selected_index: 0,
             capturing_hotkey: false,
         }
     }
 
     fn refresh_against(&mut self, engine: &Engine) {
-        self.results = engine.search(&self.query, MAX_RESULTS);
+        engine.search_into(&self.query, MAX_RESULTS, &mut self.results);
         self.selected_index = 0;
     }
 
@@ -100,11 +102,16 @@ impl UiState {
     }
 
     fn backspace(&mut self, engine: &Engine) {
-        self.query.pop();
-        self.refresh_against(engine);
+        if self.query.pop().is_some() {
+            self.refresh_against(engine);
+        }
     }
 
     fn clear_query(&mut self, engine: &Engine) {
+        if self.query.is_empty() {
+            self.selected_index = 0;
+            return;
+        }
         self.query.clear();
         self.refresh_against(engine);
     }
@@ -145,7 +152,7 @@ impl UiState {
 }
 
 struct AppContext {
-    app_state: Arc<Mutex<AppState>>,
+    app_state: Mutex<AppState>,
     ui_state: Mutex<UiState>,
     settings: Mutex<Settings>,
     reconcile_tx: Sender<()>,
@@ -158,7 +165,7 @@ fn context() -> Option<&'static AppContext> {
     APP.get()
 }
 
-pub(crate) fn run(app_state: Arc<Mutex<AppState>>, reconcile_tx: Sender<()>) -> Result<(), String> {
+pub(crate) fn run(app_state: AppState, reconcile_tx: Sender<()>) -> Result<(), String> {
     let settings = Settings::load();
     if !crate::config::exists() {
         if let Err(err) = settings.save() {
@@ -175,13 +182,10 @@ pub(crate) fn run(app_state: Arc<Mutex<AppState>>, reconcile_tx: Sender<()>) -> 
     let hotkey = Hotkey::new(modifiers, Key::Other(settings.hotkey.vk));
     let anchor = to_anchor(settings.position);
 
-    let ui_state = {
-        let guard = app_state.lock().map_err(|_| "app state lock poisoned")?;
-        UiState::new(guard.engine())
-    };
+    let ui_state = UiState::new(app_state.engine());
 
     let _ = APP.set(AppContext {
-        app_state,
+        app_state: Mutex::new(app_state),
         ui_state: Mutex::new(ui_state),
         settings: Mutex::new(settings),
         reconcile_tx,
@@ -257,6 +261,33 @@ mod tests {
 
         state.clear_query(&engine);
         assert_eq!(state.query(), "");
+    }
+
+    #[test]
+    fn backspace_on_an_empty_query_is_a_no_op() {
+        let engine = Engine::new();
+        let mut state = sample_state();
+
+        state.backspace(&engine);
+
+        assert_eq!(state.query(), "");
+        assert_eq!(state.selected_index(), 0);
+    }
+
+    #[test]
+    fn clear_query_on_an_already_empty_query_still_resets_the_selection() {
+        let engine = Engine::new();
+        let mut state = sample_state();
+        state.results = vec![
+            SearchResult::calculation("1".into(), "1".into()),
+            SearchResult::calculation("2".into(), "2".into()),
+        ];
+        state.selected_index = 1;
+
+        state.clear_query(&engine);
+
+        assert_eq!(state.query(), "");
+        assert_eq!(state.selected_index(), 0);
     }
 
     #[test]

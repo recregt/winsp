@@ -70,9 +70,17 @@ impl Engine {
         self.items.is_empty()
     }
 
+    #[cfg(test)]
     fn top_items(&self, limit: usize) -> Vec<SearchResult> {
+        let mut out = Vec::new();
+        self.top_items_into(limit, &mut out);
+        out
+    }
+
+    fn top_items_into(&self, limit: usize, out: &mut Vec<SearchResult>) {
+        out.clear();
         if limit == 0 {
-            return Vec::new();
+            return;
         }
 
         // Bounded selection over the launch count column: scoring the whole
@@ -90,16 +98,22 @@ impl Engine {
             top.insert(pos, (idx as u32, score));
         }
 
-        top.into_iter()
-            .map(|(idx, score)| {
-                SearchResult::from_app(Arc::clone(&self.items[idx as usize]), score, Vec::new())
-            })
-            .collect()
+        out.extend(top.into_iter().map(|(idx, score)| {
+            SearchResult::from_app(Arc::clone(&self.items[idx as usize]), score, Vec::new())
+        }));
     }
 
+    #[cfg(test)]
     fn find(&self, query: &str, limit: usize) -> Vec<SearchResult> {
+        let mut out = Vec::new();
+        self.find_into(query, limit, &mut out);
+        out
+    }
+
+    fn find_into(&self, query: &str, limit: usize, out: &mut Vec<SearchResult>) {
+        out.clear();
         if limit == 0 {
-            return Vec::new();
+            return;
         }
 
         let mut matcher = self.matcher.borrow_mut();
@@ -133,39 +147,45 @@ impl Engine {
         let mut hay_buf = Vec::new();
         let mut raw_indices = Vec::new();
 
-        scan.top
-            .into_iter()
-            .map(|candidate| {
-                let item = Arc::clone(&self.items[candidate.item as usize]);
-                let indices = if candidate.matched_by_name {
-                    hay_buf.clear();
-                    raw_indices.clear();
-                    let haystack = Utf32Str::new(item.name(), &mut hay_buf);
-                    matcher.fuzzy_indices(haystack, needle, &mut raw_indices);
-                    raw_indices.iter().map(|&i| i as usize).collect()
-                } else {
-                    Vec::new()
-                };
-                SearchResult::from_app(item, candidate.score, indices)
-            })
-            .collect()
+        out.extend(scan.top.into_iter().map(|candidate| {
+            let item = Arc::clone(&self.items[candidate.item as usize]);
+            let indices = if candidate.matched_by_name {
+                hay_buf.clear();
+                raw_indices.clear();
+                let haystack = Utf32Str::new(item.name(), &mut hay_buf);
+                matcher.fuzzy_indices(haystack, needle, &mut raw_indices);
+                raw_indices.iter().map(|&i| i as usize).collect()
+            } else {
+                Vec::new()
+            };
+            SearchResult::from_app(item, candidate.score, indices)
+        }));
     }
 
     pub fn search(&self, query: &str, limit: usize) -> Vec<SearchResult> {
+        let mut out = Vec::new();
+        self.search_into(query, limit, &mut out);
+        out
+    }
+
+    /// Same as [`Engine::search`], but reuses `out`'s existing allocation
+    /// instead of returning a freshly allocated `Vec` on every call, which
+    /// matters on a UI thread re-searching once per keystroke.
+    pub fn search_into(&self, query: &str, limit: usize, out: &mut Vec<SearchResult>) {
         let trimmed = query.trim();
         if trimmed.is_empty() {
-            return self.top_items(limit);
+            self.top_items_into(limit, out);
+            return;
         }
 
         let calc_result = crate::calc::eval(trimmed)
             .map(|res| SearchResult::calculation(CompactString::new(trimmed), res));
 
-        let mut results = self.find(trimmed, limit);
+        self.find_into(trimmed, limit, out);
         if let Some(calc) = calc_result {
-            results.insert(0, calc);
-            results.truncate(limit);
+            out.insert(0, calc);
+            out.truncate(limit);
         }
-        results
     }
 }
 
@@ -1129,5 +1149,18 @@ mod tests {
         let results = index.search("", 5);
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].title.as_ref(), "Popular App");
+    }
+
+    #[test]
+    fn test_zero_limit_yields_no_results_for_top_items_and_a_search() {
+        let mut index = Engine::new();
+        index.set_items(vec![AppItem::new(
+            "a",
+            "Calculator",
+            LaunchTarget::Path("calc.exe".into()),
+        )]);
+
+        assert!(index.search("", 0).is_empty());
+        assert!(index.search("calc", 0).is_empty());
     }
 }

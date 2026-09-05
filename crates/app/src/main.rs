@@ -1,4 +1,5 @@
 #![cfg_attr(windows, windows_subsystem = "windows")]
+#![forbid(unsafe_code)]
 
 mod config;
 mod state;
@@ -6,7 +7,6 @@ mod sync;
 mod ui;
 
 use state::AppState;
-use std::sync::{Arc, Mutex};
 
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
@@ -34,7 +34,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let catalog = sync::scan_catalog();
     let index = sync::engine_from_catalog(&catalog);
 
-    let state = Arc::new(Mutex::new(AppState::new(index)));
+    let state = AppState::new(index);
 
     let (_reindex_watcher, reconcile_tx) = sync::start_watching(catalog);
 
