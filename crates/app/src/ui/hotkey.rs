@@ -61,6 +61,16 @@ pub(super) fn try_commit(
     active_slot: &mut HotkeySlot,
     candidate: HotkeyBinding,
 ) -> CommitResult {
+    try_commit_with(window, settings, active_slot, candidate, Settings::save)
+}
+
+fn try_commit_with(
+    window: &Window,
+    settings: &mut Settings,
+    active_slot: &mut HotkeySlot,
+    candidate: HotkeyBinding,
+    save: impl FnOnce(&Settings) -> io::Result<()>,
+) -> CommitResult {
     let trial_slot = other_slot(*active_slot);
 
     if !window.register_hotkey(trial_slot, to_hotkey(candidate)) {
@@ -69,7 +79,7 @@ pub(super) fn try_commit(
 
     let previous = settings.hotkey;
     settings.hotkey = candidate;
-    if let Err(err) = settings.save() {
+    if let Err(err) = save(settings) {
         settings.hotkey = previous;
         window.unregister_hotkey(trial_slot);
         return CommitResult::PersistFailed(err);
@@ -85,6 +95,7 @@ mod tests {
     use super::*;
 
     const VK_A: u16 = 0x41;
+    const VK_B: u16 = 0x42;
     const VK_CONTROL: u16 = 0x11;
     const VK_SHIFT: u16 = 0x10;
     const VK_MENU: u16 = 0x12;
@@ -189,5 +200,65 @@ mod tests {
     fn other_slot_alternates_between_primary_and_secondary() {
         assert_eq!(other_slot(HotkeySlot::Primary), HotkeySlot::Secondary);
         assert_eq!(other_slot(HotkeySlot::Secondary), HotkeySlot::Primary);
+    }
+
+    #[test]
+    fn a_committed_hotkey_replaces_the_active_slot_and_persists() {
+        let window = Window::create("WinSpTest_TryCommitCommitted", "t", 10, 10, |_, _| {})
+            .expect("window creation should succeed");
+        let mut settings = Settings::default();
+        let mut active_slot = HotkeySlot::Primary;
+        let candidate = HotkeyBinding {
+            ctrl: true,
+            shift: false,
+            alt: false,
+            win: false,
+            vk: VK_A,
+        };
+
+        let result = try_commit_with(&window, &mut settings, &mut active_slot, candidate, |_| {
+            Ok(())
+        });
+
+        assert!(matches!(result, CommitResult::Committed));
+        assert_eq!(settings.hotkey, candidate);
+        assert_eq!(active_slot, HotkeySlot::Secondary);
+
+        window.close();
+    }
+
+    #[test]
+    fn a_persist_failure_rolls_back_the_hotkey_and_the_trial_registration() {
+        let window = Window::create("WinSpTest_TryCommitPersistFailed", "t", 10, 10, |_, _| {})
+            .expect("window creation should succeed");
+        let previous = HotkeyBinding {
+            ctrl: false,
+            shift: true,
+            alt: false,
+            win: false,
+            vk: VK_A,
+        };
+        let mut settings = Settings {
+            hotkey: previous,
+            ..Default::default()
+        };
+        let mut active_slot = HotkeySlot::Primary;
+        let candidate = HotkeyBinding {
+            ctrl: true,
+            shift: false,
+            alt: false,
+            win: false,
+            vk: VK_B,
+        };
+
+        let result = try_commit_with(&window, &mut settings, &mut active_slot, candidate, |_| {
+            Err(io::Error::other("disk full"))
+        });
+
+        assert!(matches!(result, CommitResult::PersistFailed(_)));
+        assert_eq!(settings.hotkey, previous);
+        assert_eq!(active_slot, HotkeySlot::Primary);
+
+        window.close();
     }
 }

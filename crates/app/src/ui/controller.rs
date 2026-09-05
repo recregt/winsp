@@ -1,6 +1,8 @@
+use std::io;
+
 use winsp_windows::window::{Anchor, Key, MenuItem, Modifiers, Window, WindowEvent};
 
-use crate::config::WindowPosition;
+use crate::config::{Settings, WindowPosition};
 
 use super::ExecuteOutcome;
 use super::hotkey::{self, CaptureOutcome, CommitResult};
@@ -319,21 +321,35 @@ fn set_position(window: &Window, position: WindowPosition) {
         return;
     };
 
+    match update_position(&mut settings, position, Settings::save) {
+        Ok(true) => {
+            drop(settings);
+            if window.is_visible() {
+                window.reposition(to_anchor(position));
+            }
+        }
+        Ok(false) => {}
+        Err(err) => {
+            winsp_windows::system::toast::show("WinSP", &format!("Failed to save position: {err}"));
+        }
+    }
+}
+
+fn update_position(
+    settings: &mut Settings,
+    position: WindowPosition,
+    save: impl FnOnce(&Settings) -> io::Result<()>,
+) -> io::Result<bool> {
     let previous = settings.position;
     if previous == position {
-        return;
+        return Ok(false);
     }
     settings.position = position;
-    if let Err(err) = settings.save() {
+    if let Err(err) = save(settings) {
         settings.position = previous;
-        winsp_windows::system::toast::show("WinSP", &format!("Failed to save position: {err}"));
-        return;
+        return Err(err);
     }
-    drop(settings);
-
-    if window.is_visible() {
-        window.reposition(to_anchor(position));
-    }
+    Ok(true)
 }
 
 fn handle_capture_key(window: &Window, key: Key, modifiers: Modifiers) {
@@ -373,4 +389,44 @@ fn end_capture(window: &Window) {
     }
     window.discard_pending_char();
     window.hide();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn an_unchanged_position_is_a_no_op() {
+        let mut settings = Settings::default();
+        assert_eq!(settings.position, WindowPosition::Top);
+
+        let result = update_position(&mut settings, WindowPosition::Top, |_| {
+            panic!("save should not be called when the position does not change")
+        });
+
+        assert!(matches!(result, Ok(false)));
+        assert_eq!(settings.position, WindowPosition::Top);
+    }
+
+    #[test]
+    fn a_changed_position_is_saved() {
+        let mut settings = Settings::default();
+
+        let result = update_position(&mut settings, WindowPosition::Center, |_| Ok(()));
+
+        assert!(matches!(result, Ok(true)));
+        assert_eq!(settings.position, WindowPosition::Center);
+    }
+
+    #[test]
+    fn a_persist_failure_rolls_back_the_position() {
+        let mut settings = Settings::default();
+
+        let result = update_position(&mut settings, WindowPosition::Center, |_| {
+            Err(io::Error::other("disk full"))
+        });
+
+        assert!(result.is_err());
+        assert_eq!(settings.position, WindowPosition::Top);
+    }
 }

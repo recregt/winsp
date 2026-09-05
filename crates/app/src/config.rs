@@ -74,7 +74,7 @@ impl Settings {
         }
     }
 
-    fn load_from(path: &Path) -> Self {
+    pub(crate) fn load_from(path: &Path) -> Self {
         std::fs::read(path)
             .ok()
             .and_then(|bytes| rmp_serde::from_slice(&bytes).ok())
@@ -87,7 +87,7 @@ impl Settings {
         self.save_to(&path)
     }
 
-    fn save_to(&self, path: &Path) -> io::Result<()> {
+    pub(crate) fn save_to(&self, path: &Path) -> io::Result<()> {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
         }
