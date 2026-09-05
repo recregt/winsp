@@ -456,28 +456,38 @@ impl ScanTable {
 
     fn scan<'a, I: Iterator<Item = (u32, &'a ScanRow, u32, u32)>>(
         &self,
-        source: I,
+        mut source: I,
         matcher: &mut Matcher,
         needle: Utf32Str<'_>,
         query_lower: &str,
         query_mask: u32,
         limit: usize,
     ) -> Scan {
-        let mut top: Vec<Candidate> = Vec::with_capacity(limit.min(self.rows.len()));
-        let mut matched: Option<Vec<u32>> = Some(Vec::new());
-        let capacity = narrowing_capacity(self.rows.len());
-        let mut hay_buf = Vec::new();
         let needle_len = needle.len() as u32;
         let query = Query {
+            needle,
+            lowercased: query_lower,
             name_ceiling: name_score_ceiling(needle.len()),
             ascii_needle: match needle {
                 Utf32Str::Ascii(needle) => Some(needle),
                 Utf32Str::Unicode(_) => None,
             },
-            lowercased: query_lower,
+        };
+        let mut state = ScanState {
+            matcher,
+            top: Vec::with_capacity(limit.min(self.rows.len())),
+            matched: Some(Vec::new()),
+            capacity: narrowing_capacity(self.rows.len()),
+            limit,
+            hay_buf: Vec::new(),
         };
 
-        for (idx, row, name_mask, keyword_mask) in source {
+        // Nothing can be ruled out before the shortlist is full, so the scan
+        // starts in a loop that knows nothing about the ceiling. A query that
+        // never fills the shortlist — one matching fewer items than the limit,
+        // or nothing at all — is scanned by this loop alone, and pays the mask
+        // test and nothing else for an item the mask rejects.
+        for (idx, row, name_mask, keyword_mask) in source.by_ref() {
             // A name shorter than the needle cannot hold it, which the matcher
             // would have to be called to find out.
             let name_possible =
@@ -487,97 +497,154 @@ impl ScanTable {
                 continue;
             }
 
-            // Highest score this item could come out with, known before it is
-            // scored. Once the shortlist is full and that ceiling cannot beat
-            // the lowest score on it, scoring the item would only confirm what
-            // the bound already says: this is the comparison the scored path
-            // makes below, on a value that can only be larger, so the ranking
-            // stays the one an unpruned scan produces.
-            //
-            // The item still has to go into the match set the next keystroke
-            // narrows its scan with, which takes deciding whether it matches at
-            // all — much less work than scoring it, but not always possible
-            // without the matcher, in which case it is scored after all.
-            if top.len() == limit
-                && let Some(is_match) = ruled_out_unscored(
-                    self,
-                    row,
-                    name_possible,
-                    keyword_possible,
-                    &query,
-                    top[limit - 1].score,
-                )
-            {
+            self.score_row(&mut state, query, idx, row, name_possible, keyword_possible);
+            if state.top.len() == limit {
+                break;
+            }
+        }
+
+        // The shortlist is full from here on, which is what gives the ceiling
+        // something to beat: the highest score an item could come out with is
+        // known before it is scored, and once that ceiling cannot beat the
+        // lowest score on the shortlist, scoring the item would only confirm
+        // what the bound already says. This is the comparison the scored path
+        // makes below, on a value that can only be larger, so the ranking stays
+        // the one an unpruned scan produces.
+        //
+        // A dropped item still has to go into the match set the next keystroke
+        // narrows its scan with, which takes deciding whether it matches at all
+        // — much less work than scoring it, but not always possible without the
+        // matcher, in which case it is scored after all.
+        for (idx, row, name_mask, keyword_mask) in source {
+            let name_possible =
+                query_mask & !name_mask == 0 && needle_len <= row.name_end - row.name_start;
+            let keyword_possible = query_mask & !keyword_mask == 0;
+            if !name_possible && !keyword_possible {
+                continue;
+            }
+
+            if let Some(is_match) = ruled_out_unscored(
+                self,
+                row,
+                name_possible,
+                keyword_possible,
+                &query,
+                state.top[limit - 1].score,
+            ) {
                 if is_match {
-                    record_match(&mut matched, capacity, idx);
+                    record_match(&mut state.matched, state.capacity, idx);
                 }
                 continue;
             }
 
-            let name_score = if name_possible {
-                let name_range = row.name_start as usize..row.name_end as usize;
-                let score = if row.name_is_ascii {
-                    // Byte indexing skips the UTF-8 boundary checks of `str`.
-                    let haystack = Utf32Str::Ascii(&self.names.as_bytes()[name_range]);
-                    matcher.fuzzy_match(haystack, needle)
-                } else {
-                    match_unicode_name(matcher, &self.names[name_range], needle, &mut hay_buf)
-                };
-                score.map(|score| score as i32)
-            } else {
-                None
-            };
-
-            let keyword_score = if keyword_possible {
-                let keywords =
-                    &self.keywords[row.keywords_start as usize..row.keywords_end as usize];
-                keywords
-                    .contains(query_lower)
-                    .then_some(KEYWORD_MATCH_SCORE)
-            } else {
-                None
-            };
-
-            let best = match (name_score, keyword_score) {
-                (Some(name), Some(kw)) => Some((name.max(kw), true)),
-                (Some(name), None) => Some((name, true)),
-                (None, Some(kw)) => Some((kw, false)),
-                (None, None) => None,
-            };
-
-            if let Some((score, matched_by_name)) = best {
-                record_match(&mut matched, capacity, idx);
-
-                let frecency_boost = launch_score(row.launch_count, SEARCH_FRECENCY_MULTIPLIER);
-                let score = score.saturating_add(frecency_boost);
-                if top.len() == limit && score <= top[limit - 1].score {
-                    continue;
-                }
-                keep_best(
-                    &mut top,
-                    limit,
-                    Candidate {
-                        item: idx,
-                        score,
-                        matched_by_name,
-                    },
-                );
-            }
+            self.score_row(&mut state, query, idx, row, name_possible, keyword_possible);
         }
 
-        Scan { top, matched }
+        Scan {
+            top: state.top,
+            matched: state.matched,
+        }
+    }
+
+    /// Scores a row the mask prefilter let through, and folds it into the
+    /// shortlist and the match set.
+    ///
+    /// Inlined into both scan loops, which is what lets the first one compile to
+    /// the loop a scan without a ceiling compiles to: the shortlist is not full
+    /// there, so nothing of the pruning above belongs in it.
+    #[inline(always)]
+    fn score_row(
+        &self,
+        state: &mut ScanState<'_>,
+        query: Query<'_>,
+        idx: u32,
+        row: &ScanRow,
+        name_possible: bool,
+        keyword_possible: bool,
+    ) {
+        let name_score = if name_possible {
+            let name_range = row.name_start as usize..row.name_end as usize;
+            let score = if row.name_is_ascii {
+                // Byte indexing skips the UTF-8 boundary checks of `str`.
+                let haystack = Utf32Str::Ascii(&self.names.as_bytes()[name_range]);
+                state.matcher.fuzzy_match(haystack, query.needle)
+            } else {
+                match_unicode_name(
+                    state.matcher,
+                    &self.names[name_range],
+                    query.needle,
+                    &mut state.hay_buf,
+                )
+            };
+            score.map(|score| score as i32)
+        } else {
+            None
+        };
+
+        let keyword_score = if keyword_possible {
+            let keywords = &self.keywords[row.keywords_start as usize..row.keywords_end as usize];
+            keywords
+                .contains(query.lowercased)
+                .then_some(KEYWORD_MATCH_SCORE)
+        } else {
+            None
+        };
+
+        let best = match (name_score, keyword_score) {
+            (Some(name), Some(kw)) => Some((name.max(kw), true)),
+            (Some(name), None) => Some((name, true)),
+            (None, Some(kw)) => Some((kw, false)),
+            (None, None) => None,
+        };
+
+        if let Some((score, matched_by_name)) = best {
+            record_match(&mut state.matched, state.capacity, idx);
+
+            let frecency_boost = launch_score(row.launch_count, SEARCH_FRECENCY_MULTIPLIER);
+            let score = score.saturating_add(frecency_boost);
+            if state.top.len() == state.limit && score <= state.top[state.limit - 1].score {
+                return;
+            }
+            keep_best(
+                &mut state.top,
+                state.limit,
+                Candidate {
+                    item: idx,
+                    score,
+                    matched_by_name,
+                },
+            );
+        }
     }
 }
 
-/// The query as the score ceiling and the match test below need it.
+/// What a scan builds up as it walks the items it was given.
+struct ScanState<'m> {
+    matcher: &'m mut Matcher,
+    /// The best candidates seen so far, highest score first.
+    top: Vec<Candidate>,
+    /// Every item matched so far, until there are more of them than narrowing
+    /// the next scan with is worth.
+    matched: Option<Vec<u32>>,
+    /// How many items the match set is willing to hold.
+    capacity: usize,
+    /// How many candidates the shortlist keeps.
+    limit: usize,
+    /// Scratch the matcher decodes a name that is not ASCII into.
+    hay_buf: Vec<char>,
+}
+
+/// The query in the spellings a scan compares against.
 #[derive(Clone, Copy)]
 struct Query<'a> {
+    /// The needle as the matcher takes it: normalized and lowercased.
+    needle: Utf32Str<'a>,
+    /// The query as keyword matching compares it.
+    lowercased: &'a str,
     /// What [`name_score_ceiling`] bounds a name match by.
     name_ceiling: i32,
     /// The needle, when it is ASCII and can therefore be compared byte-wise.
     ascii_needle: Option<&'a [u8]>,
-    /// The query as keyword matching compares it.
-    lowercased: &'a str,
 }
 
 /// Whether the score ceiling rules `row` out, and if so whether it matches the
