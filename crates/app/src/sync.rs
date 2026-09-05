@@ -1,35 +1,29 @@
 #![cfg(windows)]
 
-use std::sync::mpsc::Sender;
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::mpsc::{RecvTimeoutError, Sender, TryRecvError};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use winsp_core::engine::Engine;
 use winsp_windows::catalog::Catalog;
-use winsp_windows::system::watcher::WatchEvent;
-
-use crate::index::engine_from_catalog;
+use winsp_windows::system::watcher::{WatchEvent, Watcher};
 
 const RECONCILE_INTERVAL: Duration = Duration::from_secs(600);
 const MIN_RECONCILE_GAP: Duration = Duration::from_secs(30);
 
-pub(crate) enum StartupMode {
-    TestWatch(std::path::PathBuf),
-    Real(Catalog),
+pub(crate) fn engine_from_catalog(catalog: &Catalog) -> Engine {
+    let mut index = Engine::new();
+    index.set_items(catalog.items());
+    index
 }
 
-pub(crate) fn startup_mode() -> StartupMode {
-    match crate::test_watch_dir() {
-        Some(dir) => StartupMode::TestWatch(dir),
-        None => {
-            let catalog = Catalog::scan();
-            notify_if_scan_incomplete(&catalog);
-            StartupMode::Real(catalog)
-        }
-    }
+pub(crate) fn scan_catalog() -> Catalog {
+    let catalog = Catalog::scan();
+    notify_if_scan_incomplete(&catalog);
+    catalog
 }
 
-pub(crate) fn notify_if_scan_incomplete(catalog: &Catalog) {
+fn notify_if_scan_incomplete(catalog: &Catalog) {
     static NOTIFIED: std::sync::Once = std::sync::Once::new();
     if !catalog.unreadable_dirs().is_empty() {
         NOTIFIED.call_once(|| {
@@ -51,35 +45,48 @@ pub(crate) fn notify_reconcile_channel_broken() {
     });
 }
 
-fn pending_index() -> &'static Mutex<Option<Engine>> {
-    static PENDING_INDEX: OnceLock<Mutex<Option<Engine>>> = OnceLock::new();
-    PENDING_INDEX.get_or_init(|| Mutex::new(None))
-}
-
-pub(crate) fn take_pending_index() -> Option<Engine> {
-    pending_index().lock().ok().and_then(|mut slot| slot.take())
-}
-
-pub(crate) fn notify_watcher_init_failed() {
+fn notify_watcher_init_failed() {
     winsp_windows::system::toast::show(
         "WinSP",
         "Couldn't watch the Start Menu for changes. New or removed shortcuts won't appear until WinSP restarts.",
     );
 }
 
-pub(crate) fn notify_watch_dirs_failed() {
+fn notify_watch_dirs_failed() {
     winsp_windows::system::toast::show(
         "WinSP",
         "Some folders couldn't be watched for changes. New apps there may not appear until WinSP restarts.",
     );
 }
 
-pub(crate) fn refresh_state(catalog: &Catalog) {
-    let index = engine_from_catalog(catalog);
-    if let Ok(mut slot) = pending_index().lock() {
-        *slot = Some(index);
+fn finish_watcher<E>(result: Result<(Watcher, Vec<std::path::PathBuf>), E>) -> Option<Watcher> {
+    match result {
+        Ok((watcher, failed_dirs)) => {
+            if !failed_dirs.is_empty() {
+                notify_watch_dirs_failed();
+            }
+            Some(watcher)
+        }
+        Err(_) => {
+            notify_watcher_init_failed();
+            None
+        }
     }
-    winsp_windows::window::post_event(crate::window::CATALOG_READY_EVENT);
+}
+
+pub(crate) fn start_watching(catalog: Catalog) -> (Option<Watcher>, Sender<()>) {
+    let catalog = Arc::new(Mutex::new(catalog));
+    let tx = spawn_reconciler(Arc::clone(&catalog));
+    let reconcile_tx = tx.clone();
+
+    let watcher = winsp_windows::system::watcher::for_start_menu(move |event| {
+        handle_watch_event(event, &catalog, &tx);
+    });
+    (finish_watcher(watcher), reconcile_tx)
+}
+
+fn refresh_state(catalog: &Catalog) {
+    crate::ui::deliver_catalog(engine_from_catalog(catalog));
 }
 
 fn next_wait(pending: bool, last_rescan: Instant) -> Duration {
@@ -90,7 +97,7 @@ fn next_wait(pending: bool, last_rescan: Instant) -> Duration {
     }
 }
 
-pub(crate) fn spawn_reconciler(catalog: Arc<Mutex<Catalog>>) -> Sender<()> {
+fn spawn_reconciler(catalog: Arc<Mutex<Catalog>>) -> Sender<()> {
     let (reconcile_tx, reconcile_rx) = std::sync::mpsc::channel::<()>();
 
     std::thread::spawn(move || {
@@ -99,11 +106,17 @@ pub(crate) fn spawn_reconciler(catalog: Arc<Mutex<Catalog>>) -> Sender<()> {
         loop {
             let wait = next_wait(pending, last_rescan);
 
-            if reconcile_rx.recv_timeout(wait).is_ok() {
-                pending = true;
+            match reconcile_rx.recv_timeout(wait) {
+                Ok(()) => pending = true,
+                Err(RecvTimeoutError::Timeout) => {}
+                Err(RecvTimeoutError::Disconnected) => return,
             }
-            while reconcile_rx.try_recv().is_ok() {
-                pending = true;
+            loop {
+                match reconcile_rx.try_recv() {
+                    Ok(()) => pending = true,
+                    Err(TryRecvError::Empty) => break,
+                    Err(TryRecvError::Disconnected) => return,
+                }
             }
 
             if pending && last_rescan.elapsed() < MIN_RECONCILE_GAP {
@@ -123,11 +136,7 @@ pub(crate) fn spawn_reconciler(catalog: Arc<Mutex<Catalog>>) -> Sender<()> {
     reconcile_tx
 }
 
-pub(crate) fn handle_watch_event(
-    event: WatchEvent,
-    catalog: &Arc<Mutex<Catalog>>,
-    reconcile_tx: &Sender<()>,
-) {
+fn handle_watch_event(event: WatchEvent, catalog: &Arc<Mutex<Catalog>>, reconcile_tx: &Sender<()>) {
     match event {
         WatchEvent::Changed(paths) => {
             if let Ok(mut cat) = catalog.lock() {

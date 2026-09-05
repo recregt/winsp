@@ -62,6 +62,10 @@ fn config_path() -> Option<PathBuf> {
         .map(|dir| PathBuf::from(dir).join("WinSP").join("settings.msgpack"))
 }
 
+pub(crate) fn exists() -> bool {
+    config_path().is_some_and(|path| path.exists())
+}
+
 impl Settings {
     pub(crate) fn load() -> Self {
         match config_path() {

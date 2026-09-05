@@ -9,4 +9,4 @@ pub mod watcher;
 
 pub(crate) mod com;
 pub(crate) mod shortcut;
-pub(crate) mod threadpool;
+pub mod threadpool;
