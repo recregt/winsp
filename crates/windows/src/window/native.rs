@@ -516,11 +516,8 @@ impl Window {
     pub fn outer_position(&self) -> (i32, i32) {
         unsafe {
             let mut rect = std::mem::MaybeUninit::<RECT>::uninit();
-            let rect = if GetWindowRect(self.hwnd, rect.as_mut_ptr()).is_ok() {
-                rect.assume_init()
-            } else {
-                RECT::default()
-            };
+            GetWindowRect(self.hwnd, rect.as_mut_ptr()).expect("GetWindowRect failed");
+            let rect = rect.assume_init();
             (rect.left, rect.top)
         }
     }
