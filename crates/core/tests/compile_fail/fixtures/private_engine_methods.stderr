@@ -1,10 +1,10 @@
-error[E0624]: method `find` is private
- --> tests/compile_fail/fixtures/private_engine_methods.rs:3:19
+error[E0624]: method `find_into` is private
+ --> tests/compile_fail/fixtures/private_engine_methods.rs:4:11
   |
-3 |     let _ = index.find("test", 5);
-  |                   ^^^^ private method
+4 |     index.find_into("test", 5, &mut out);
+  |           ^^^^^^^^^ private method
   |
  ::: src/engine.rs
   |
-  |     fn find(&self, query: &str, limit: usize) -> Vec<SearchResult> {
-  |     -------------------------------------------------------------- private method defined here
+  |     fn find_into(&self, query: &str, limit: usize, out: &mut Vec<SearchResult>) {
+  |     --------------------------------------------------------------------------- private method defined here

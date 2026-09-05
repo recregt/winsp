@@ -1,4 +1,5 @@
 fn main() {
     let index = winsp_core::engine::Engine::new();
-    let _ = index.find("test", 5);
+    let mut out = Vec::new();
+    index.find_into("test", 5, &mut out);
 }
