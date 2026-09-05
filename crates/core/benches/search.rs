@@ -104,6 +104,9 @@ fn bench_search(c: &mut Criterion) {
 
 const TYPED_QUERY: &str = "visual studio";
 const TYPING_INDEX_SIZE: usize = 10_000;
+/// The number of entries a real Start menu holds, where the per-keystroke
+/// fixed costs are a visible share of a search instead of rounding error.
+const INSTALLED_INDEX_SIZE: usize = 300;
 
 fn bench_search_while_typing(c: &mut Criterion) {
     let index = synthetic_index(TYPING_INDEX_SIZE);
@@ -145,7 +148,75 @@ fn bench_search_while_typing(c: &mut Criterion) {
         });
     });
 
+    // The UI keeps a single result buffer alive for the whole session and hands
+    // it to `search_into` on every keystroke. Paired with `full_session`, this
+    // is what makes the per-keystroke allocation visible.
+    group.bench_function("full_session_reused_buffer", |b| {
+        let mut results = Vec::new();
+        b.iter(|| {
+            for prefix in &prefixes {
+                index.search_into(prefix, 6, &mut results);
+                black_box(&results);
+            }
+        });
+    });
+
+    // A mistyped query: the user types it, then deletes it one keystroke at a
+    // time, so the buffer has to shrink and grow again within one session.
+    let edit_session = edit_session_queries(&prefixes);
+
+    group.bench_function("edit_session", |b| {
+        b.iter(|| {
+            for query in &edit_session {
+                black_box(index.search(query, 6));
+            }
+        });
+    });
+
+    group.bench_function("edit_session_reused_buffer", |b| {
+        let mut results = Vec::new();
+        b.iter(|| {
+            for query in &edit_session {
+                index.search_into(query, 6, &mut results);
+                black_box(&results);
+            }
+        });
+    });
+
+    // The same session against an index the size of an installed machine's
+    // Start menu, where the scan no longer hides what a keystroke costs
+    // besides matching.
+    let installed = synthetic_index(INSTALLED_INDEX_SIZE);
+
+    group.bench_function("installed_index_session", |b| {
+        b.iter(|| {
+            for query in &edit_session {
+                black_box(installed.search(query, 6));
+            }
+        });
+    });
+
+    group.bench_function("installed_index_session_reused_buffer", |b| {
+        let mut results = Vec::new();
+        b.iter(|| {
+            for query in &edit_session {
+                installed.search_into(query, 6, &mut results);
+                black_box(&results);
+            }
+        });
+    });
+
     group.finish();
+}
+
+/// Types the query out one keystroke at a time, then backspaces it away. The
+/// empty query at the end is the only one the UI still searches after a
+/// deletion, since further backspaces on an empty query are no-ops.
+fn edit_session_queries<'a>(prefixes: &[&'a str]) -> Vec<&'a str> {
+    let mut queries = prefixes.to_vec();
+    queries.extend(prefixes.iter().rev().skip(1).copied());
+    queries.push("");
+    queries
 }
 
 criterion_group!(benches, bench_search, bench_search_while_typing);
