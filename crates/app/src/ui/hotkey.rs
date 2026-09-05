@@ -71,6 +71,10 @@ fn try_commit_with(
     candidate: HotkeyBinding,
     save: impl FnOnce(&Settings) -> io::Result<()>,
 ) -> CommitResult {
+    if candidate == settings.hotkey {
+        return CommitResult::Committed;
+    }
+
     let trial_slot = other_slot(*active_slot);
 
     if !window.register_hotkey(trial_slot, to_hotkey(candidate)) {
@@ -99,6 +103,7 @@ mod tests {
     const VK_A: u16 = 0x41;
     const VK_B: u16 = 0x42;
     const VK_D: u16 = 0x44;
+    const VK_E: u16 = 0x45;
     const VK_CONTROL: u16 = 0x11;
     const VK_SHIFT: u16 = 0x10;
     const VK_MENU: u16 = 0x12;
@@ -324,6 +329,40 @@ mod tests {
 
         blocking_window.unregister_hotkey(HotkeySlot::Primary);
         blocking_window.close();
+        window.close();
+    }
+
+    #[test]
+    fn unchanged_hotkey_is_a_no_op() {
+        let window = Window::create("WinSpTest_TryCommitUnchanged", "t", 10, 10, |_, _| {})
+            .expect("window creation should succeed");
+        let current = HotkeyBinding {
+            ctrl: true,
+            shift: false,
+            alt: true,
+            win: false,
+            vk: VK_E,
+        };
+        assert!(
+            window.register_hotkey(HotkeySlot::Primary, to_hotkey(current)),
+            "setup: the window should be free to claim its own current hotkey"
+        );
+
+        let mut settings = Settings {
+            hotkey: current,
+            ..Default::default()
+        };
+        let mut active_slot = HotkeySlot::Primary;
+
+        let result = try_commit_with(&window, &mut settings, &mut active_slot, current, |_| {
+            panic!("re-selecting the current hotkey must not touch disk")
+        });
+
+        assert!(matches!(result, CommitResult::Committed));
+        assert_eq!(settings.hotkey, current);
+        assert_eq!(active_slot, HotkeySlot::Primary);
+
+        window.unregister_hotkey(HotkeySlot::Primary);
         window.close();
     }
 
