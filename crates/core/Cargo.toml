@@ -9,7 +9,7 @@ authors.workspace = true
 [dependencies]
 compact_str = "0.10"
 logos = "0.16"
-nucleo-matcher = "0.3"
+nucleo-matcher = "=0.3.1"
 
 [dev-dependencies]
 criterion = { version = "5.0.1", package = "codspeed-criterion-compat", features = ["html_reports"] }
