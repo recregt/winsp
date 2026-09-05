@@ -512,6 +512,16 @@ impl Window {
         }
     }
 
+    #[cfg(feature = "test-support")]
+    pub fn outer_position(&self) -> (i32, i32) {
+        unsafe {
+            let mut rect = std::mem::MaybeUninit::<RECT>::uninit();
+            GetWindowRect(self.hwnd, rect.as_mut_ptr()).expect("GetWindowRect failed");
+            let rect = rect.assume_init();
+            (rect.left, rect.top)
+        }
+    }
+
     pub fn enable_dark_mode(&self) {
         crate::system::theme::allow_dark_mode_for_window(self.hwnd);
 

@@ -61,6 +61,20 @@ pub(super) fn try_commit(
     active_slot: &mut HotkeySlot,
     candidate: HotkeyBinding,
 ) -> CommitResult {
+    try_commit_with(window, settings, active_slot, candidate, Settings::save)
+}
+
+fn try_commit_with(
+    window: &Window,
+    settings: &mut Settings,
+    active_slot: &mut HotkeySlot,
+    candidate: HotkeyBinding,
+    save: impl FnOnce(&Settings) -> io::Result<()>,
+) -> CommitResult {
+    if candidate == settings.hotkey {
+        return CommitResult::Committed;
+    }
+
     let trial_slot = other_slot(*active_slot);
 
     if !window.register_hotkey(trial_slot, to_hotkey(candidate)) {
@@ -69,7 +83,7 @@ pub(super) fn try_commit(
 
     let previous = settings.hotkey;
     settings.hotkey = candidate;
-    if let Err(err) = settings.save() {
+    if let Err(err) = save(settings) {
         settings.hotkey = previous;
         window.unregister_hotkey(trial_slot);
         return CommitResult::PersistFailed(err);
@@ -82,13 +96,20 @@ pub(super) fn try_commit(
 
 #[cfg(test)]
 mod tests {
+    use crate::config::TestConfigDirGuard;
+
     use super::*;
 
     const VK_A: u16 = 0x41;
+    const VK_B: u16 = 0x42;
+    const VK_D: u16 = 0x44;
+    const VK_E: u16 = 0x45;
     const VK_CONTROL: u16 = 0x11;
     const VK_SHIFT: u16 = 0x10;
     const VK_MENU: u16 = 0x12;
     const VK_LWIN: u16 = 0x5B;
+    const VK_F15: u16 = 0x7E;
+    const VK_F16: u16 = 0x7F;
 
     fn modifiers(ctrl: bool, shift: bool, alt: bool, win: bool) -> Modifiers {
         Modifiers {
@@ -189,5 +210,188 @@ mod tests {
     fn other_slot_alternates_between_primary_and_secondary() {
         assert_eq!(other_slot(HotkeySlot::Primary), HotkeySlot::Secondary);
         assert_eq!(other_slot(HotkeySlot::Secondary), HotkeySlot::Primary);
+    }
+
+    #[test]
+    fn a_committed_hotkey_replaces_the_active_slot_and_persists() {
+        let window = Window::create("WinSpTest_TryCommitCommitted", "t", 10, 10, |_, _| {})
+            .expect("window creation should succeed");
+        let mut settings = Settings::default();
+        let mut active_slot = HotkeySlot::Primary;
+        let candidate = HotkeyBinding {
+            ctrl: true,
+            shift: false,
+            alt: false,
+            win: false,
+            vk: VK_A,
+        };
+
+        let result = try_commit_with(&window, &mut settings, &mut active_slot, candidate, |_| {
+            Ok(())
+        });
+
+        assert!(matches!(result, CommitResult::Committed));
+        assert_eq!(settings.hotkey, candidate);
+        assert_eq!(active_slot, HotkeySlot::Secondary);
+
+        window.close();
+    }
+
+    #[test]
+    fn a_persist_failure_rolls_back_the_hotkey_and_the_trial_registration() {
+        let window = Window::create("WinSpTest_TryCommitPersistFailed", "t", 10, 10, |_, _| {})
+            .expect("window creation should succeed");
+        let previous = HotkeyBinding {
+            ctrl: false,
+            shift: true,
+            alt: false,
+            win: false,
+            vk: VK_A,
+        };
+        let mut settings = Settings {
+            hotkey: previous,
+            ..Default::default()
+        };
+        let mut active_slot = HotkeySlot::Primary;
+        let candidate = HotkeyBinding {
+            ctrl: true,
+            shift: false,
+            alt: false,
+            win: false,
+            vk: VK_B,
+        };
+
+        let result = try_commit_with(&window, &mut settings, &mut active_slot, candidate, |_| {
+            Err(io::Error::other("disk full"))
+        });
+
+        assert!(matches!(result, CommitResult::PersistFailed(_)));
+        assert_eq!(settings.hotkey, previous);
+        assert_eq!(active_slot, HotkeySlot::Primary);
+
+        window.close();
+    }
+
+    #[test]
+    fn a_hotkey_already_claimed_by_another_window_is_reported_as_a_conflict() {
+        let blocking_window = Window::create("WinSpTest_ConflictBlocker", "t", 10, 10, |_, _| {})
+            .expect("blocking window creation should succeed");
+        let claimed = Hotkey::new(
+            Modifiers {
+                ctrl: true,
+                shift: true,
+                alt: false,
+                win: false,
+            },
+            Key::Other(VK_F15),
+        );
+        assert!(
+            blocking_window.register_hotkey(HotkeySlot::Primary, claimed),
+            "setup: the blocking window should be free to claim the hotkey first"
+        );
+
+        let window = Window::create("WinSpTest_Conflict", "t", 10, 10, |_, _| {})
+            .expect("window creation should succeed");
+        let previous = HotkeyBinding {
+            ctrl: false,
+            shift: false,
+            alt: true,
+            win: false,
+            vk: VK_D,
+        };
+        let mut settings = Settings {
+            hotkey: previous,
+            ..Default::default()
+        };
+        let mut active_slot = HotkeySlot::Primary;
+        let candidate = HotkeyBinding {
+            ctrl: true,
+            shift: true,
+            alt: false,
+            win: false,
+            vk: VK_F15,
+        };
+
+        let result = try_commit_with(&window, &mut settings, &mut active_slot, candidate, |_| {
+            panic!("save must not run when the hotkey registration conflicts")
+        });
+
+        assert!(matches!(result, CommitResult::Conflict));
+        assert_eq!(
+            settings.hotkey, previous,
+            "a conflicting candidate must not overwrite the active hotkey"
+        );
+        assert_eq!(
+            active_slot,
+            HotkeySlot::Primary,
+            "the active slot must not change on conflict"
+        );
+
+        blocking_window.unregister_hotkey(HotkeySlot::Primary);
+        blocking_window.close();
+        window.close();
+    }
+
+    #[test]
+    fn unchanged_hotkey_is_a_no_op() {
+        let window = Window::create("WinSpTest_TryCommitUnchanged", "t", 10, 10, |_, _| {})
+            .expect("window creation should succeed");
+        let current = HotkeyBinding {
+            ctrl: true,
+            shift: false,
+            alt: true,
+            win: false,
+            vk: VK_E,
+        };
+        assert!(
+            window.register_hotkey(HotkeySlot::Primary, to_hotkey(current)),
+            "setup: the window should be free to claim its own current hotkey"
+        );
+
+        let mut settings = Settings {
+            hotkey: current,
+            ..Default::default()
+        };
+        let mut active_slot = HotkeySlot::Primary;
+
+        let result = try_commit_with(&window, &mut settings, &mut active_slot, current, |_| {
+            panic!("re-selecting the current hotkey must not touch disk")
+        });
+
+        assert!(matches!(result, CommitResult::Committed));
+        assert_eq!(settings.hotkey, current);
+        assert_eq!(active_slot, HotkeySlot::Primary);
+
+        window.unregister_hotkey(HotkeySlot::Primary);
+        window.close();
+    }
+
+    #[test]
+    fn try_commit_persists_through_the_real_settings_save() {
+        let dir = tempfile::tempdir().unwrap();
+        let _config_dir = TestConfigDirGuard::set(dir.path().to_path_buf());
+
+        let window = Window::create("WinSpTest_TryCommitRealSave", "t", 10, 10, |_, _| {})
+            .expect("window creation should succeed");
+        let mut settings = Settings::default();
+        let mut active_slot = HotkeySlot::Primary;
+        let candidate = HotkeyBinding {
+            ctrl: true,
+            shift: true,
+            alt: false,
+            win: false,
+            vk: VK_F16,
+        };
+
+        let result = try_commit(&window, &mut settings, &mut active_slot, candidate);
+
+        assert!(matches!(result, CommitResult::Committed));
+        assert_eq!(
+            Settings::load().hotkey,
+            candidate,
+            "try_commit's production save path must persist to the real settings file"
+        );
+
+        window.close();
     }
 }
