@@ -1,11 +1,8 @@
 use std::io;
-use std::sync::Mutex;
 
 use winsp_windows::window::{Hotkey, HotkeySlot, Key, Modifiers, Window};
 
 use crate::config::{HotkeyBinding, Settings};
-
-static ACTIVE_SLOT: Mutex<HotkeySlot> = Mutex::new(HotkeySlot::Primary);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum CaptureOutcome {
@@ -61,9 +58,9 @@ fn to_hotkey(binding: HotkeyBinding) -> Hotkey {
 pub(super) fn try_commit(
     window: &Window,
     settings: &mut Settings,
+    active_slot: &mut HotkeySlot,
     candidate: HotkeyBinding,
 ) -> CommitResult {
-    let mut active_slot = ACTIVE_SLOT.lock().unwrap();
     let trial_slot = other_slot(*active_slot);
 
     if !window.register_hotkey(trial_slot, to_hotkey(candidate)) {

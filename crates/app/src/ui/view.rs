@@ -1,15 +1,34 @@
 use std::sync::OnceLock;
 
 use winsp_core::models::{IconSource, SearchResult, SearchResultKind};
+use winsp_windows::window::Anchor;
 use winsp_windows::window::gfx::{Canvas, Color, Font, FontWeight, Rect};
 use winsp_windows::window::icon_for_path;
 
-use super::{APP_STATE, ITEM_ROW_HEIGHT, SEARCH_BAR_HEIGHT, WINDOW_WIDTH};
+use crate::config::WindowPosition;
+
+use super::UiState;
+use super::{ITEM_ROW_HEIGHT, PADDING, SEARCH_BAR_HEIGHT, WINDOW_WIDTH};
 
 const HIGHLIGHT_COLOR: Color = Color::hex(0xFFB74D);
 const ICON_SIZE: i32 = 32;
 const ICON_LEFT: i32 = 16;
 const TEXT_LEFT: i32 = ICON_LEFT + ICON_SIZE + 12;
+
+pub(super) fn to_anchor(position: WindowPosition) -> Anchor {
+    match position {
+        WindowPosition::Top => Anchor::Top,
+        WindowPosition::Center => Anchor::Center,
+    }
+}
+
+pub(super) fn result_list_height(results_count: usize) -> i32 {
+    if results_count == 0 {
+        SEARCH_BAR_HEIGHT
+    } else {
+        SEARCH_BAR_HEIGHT + (results_count as i32 * ITEM_ROW_HEIGHT) + PADDING
+    }
+}
 
 static INTER_REGULAR: &[u8] = include_bytes!("../../assets/fonts/Inter-Regular.ttf");
 static INTER_SEMIBOLD: &[u8] = include_bytes!("../../assets/fonts/Inter-SemiBold.ttf");
@@ -57,21 +76,26 @@ fn draw_result_icon(canvas: &Canvas, result: &SearchResult, rect: Rect) {
     }
 }
 
-fn highlight_segments(text: &str, matched_char_indices: &[usize]) -> Vec<(bool, String)> {
-    let char_count = text.chars().count();
-    let mut is_match = vec![false; char_count];
-    for &i in matched_char_indices {
-        if let Some(flag) = is_match.get_mut(i) {
-            *flag = true;
+fn highlight_segments<'a>(text: &'a str, matched_char_indices: &[usize]) -> Vec<(bool, &'a str)> {
+    let mut segments: Vec<(bool, &str)> = Vec::new();
+    let mut run_start = 0;
+    let mut run_highlighted = false;
+    let mut started = false;
+
+    for (char_idx, (byte_idx, _)) in text.char_indices().enumerate() {
+        let highlighted = matched_char_indices.contains(&char_idx);
+        if !started {
+            run_highlighted = highlighted;
+            run_start = byte_idx;
+            started = true;
+        } else if highlighted != run_highlighted {
+            segments.push((run_highlighted, &text[run_start..byte_idx]));
+            run_start = byte_idx;
+            run_highlighted = highlighted;
         }
     }
-
-    let mut segments: Vec<(bool, String)> = Vec::new();
-    for (ch, &highlighted) in text.chars().zip(is_match.iter()) {
-        match segments.last_mut() {
-            Some((last_highlighted, run)) if *last_highlighted == highlighted => run.push(ch),
-            _ => segments.push((highlighted, ch.to_string())),
-        }
+    if started {
+        segments.push((run_highlighted, &text[run_start..]));
     }
     segments
 }
@@ -99,21 +123,16 @@ fn draw_highlighted_title(
             right: bounds.right,
             bottom: bounds.bottom,
         };
-        seg_left += canvas.draw_text_measured(&segment, seg_rect);
+        seg_left += canvas.draw_text_measured(segment, seg_rect);
     }
 }
 
-pub(super) fn render_ui(canvas: &Canvas, client_rect: Rect) {
-    canvas.fill_rect(client_rect, Color::hex(0x1E1E1E));
+pub(super) const BACKGROUND_COLOR: Color = Color::hex(0x1E1E1E);
 
-    let Some(state_arc) = APP_STATE.get() else {
-        return;
-    };
-    let Ok(state) = state_arc.lock() else {
-        return;
-    };
+pub(super) fn render(canvas: &Canvas, state: &UiState, client_rect: Rect) {
+    canvas.fill_rect(client_rect, BACKGROUND_COLOR);
 
-    if state.capturing_hotkey {
+    if state.is_capturing_hotkey() {
         let _font = canvas.select_font(&fonts().search);
         canvas.set_text_color(Color::hex(0xFFFFFF));
         let prompt_rect = Rect {
@@ -128,12 +147,12 @@ pub(super) fn render_ui(canvas: &Canvas, client_rect: Rect) {
 
     {
         let _font = canvas.select_font(&fonts().search);
-        let display_text = if state.query.is_empty() {
+        let display_text: &str = if state.query().is_empty() {
             canvas.set_text_color(Color::hex(0x888888));
-            "Search apps, settings, math...".to_string()
+            "Search apps, settings, math..."
         } else {
             canvas.set_text_color(Color::hex(0xFFFFFF));
-            state.query.clone()
+            state.query()
         };
         let search_rect = Rect {
             left: 24,
@@ -141,12 +160,12 @@ pub(super) fn render_ui(canvas: &Canvas, client_rect: Rect) {
             right: WINDOW_WIDTH - 24,
             bottom: SEARCH_BAR_HEIGHT - 10,
         };
-        canvas.draw_text(&display_text, search_rect);
+        canvas.draw_text(display_text, search_rect);
     }
 
     let mut current_y = SEARCH_BAR_HEIGHT;
 
-    if !state.results.is_empty() {
+    if !state.results().is_empty() {
         canvas.draw_line(
             (16, current_y),
             (WINDOW_WIDTH - 16, current_y),
@@ -155,8 +174,8 @@ pub(super) fn render_ui(canvas: &Canvas, client_rect: Rect) {
         current_y += 8;
     }
 
-    for (idx, result) in state.results.iter().enumerate() {
-        let is_selected = idx == state.selected_index;
+    for (idx, result) in state.results().iter().enumerate() {
+        let is_selected = idx == state.selected_index();
 
         let row_rect = Rect {
             left: 12,
@@ -220,6 +239,30 @@ pub(super) fn render_ui(canvas: &Canvas, client_rect: Rect) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn to_anchor_maps_each_position_to_its_matching_anchor() {
+        assert_eq!(to_anchor(WindowPosition::Top), Anchor::Top);
+        assert_eq!(to_anchor(WindowPosition::Center), Anchor::Center);
+    }
+
+    #[test]
+    fn result_list_height_with_no_results_is_just_the_search_bar() {
+        assert_eq!(result_list_height(0), SEARCH_BAR_HEIGHT);
+    }
+
+    #[test]
+    fn result_list_height_grows_with_the_result_count() {
+        let one = result_list_height(1);
+        let two = result_list_height(2);
+        assert!(one > SEARCH_BAR_HEIGHT);
+        assert_eq!(two - one, ITEM_ROW_HEIGHT);
+    }
+}
+
+#[cfg(test)]
+mod render_tests {
+    use super::*;
     use winsp_core::models::{AppItem, LaunchTarget};
     use winsp_windows::window::gfx::testing::OffscreenSurface;
 
@@ -245,6 +288,22 @@ mod tests {
             std::thread::sleep(std::time::Duration::from_millis(10));
         }
         panic!("icon for {path} did not resolve in time");
+    }
+
+    #[test]
+    fn render_draws_from_the_state_it_is_given_without_touching_any_static() {
+        let surface = OffscreenSurface::new(BITMAP_WIDTH, 200);
+        let state = UiState::new(&winsp_core::engine::Engine::new());
+        let client_rect = Rect {
+            left: 0,
+            top: 0,
+            right: BITMAP_WIDTH,
+            bottom: 200,
+        };
+
+        render(&surface.canvas(), &state, client_rect);
+
+        assert!(surface.contains_pixel(BACKGROUND_COLOR));
     }
 
     #[test]
@@ -337,17 +396,14 @@ mod tests {
 
     #[test]
     fn test_no_matches_yields_single_unhighlighted_segment() {
-        assert_eq!(
-            highlight_segments("Notepad", &[]),
-            vec![(false, "Notepad".to_string())]
-        );
+        assert_eq!(highlight_segments("Notepad", &[]), vec![(false, "Notepad")]);
     }
 
     #[test]
     fn test_contiguous_prefix_match_yields_two_segments() {
         assert_eq!(
             highlight_segments("Notepad", &[0, 1, 2]),
-            vec![(true, "Not".to_string()), (false, "epad".to_string())]
+            vec![(true, "Not"), (false, "epad")]
         );
     }
 
@@ -356,27 +412,24 @@ mod tests {
         assert_eq!(
             highlight_segments("Visual Studio", &[0, 7]),
             vec![
-                (true, "V".to_string()),
-                (false, "isual ".to_string()),
-                (true, "S".to_string()),
-                (false, "tudio".to_string()),
+                (true, "V"),
+                (false, "isual "),
+                (true, "S"),
+                (false, "tudio"),
             ]
         );
     }
 
     #[test]
     fn test_full_match_yields_single_highlighted_segment() {
-        assert_eq!(
-            highlight_segments("cmd", &[0, 1, 2]),
-            vec![(true, "cmd".to_string())]
-        );
+        assert_eq!(highlight_segments("cmd", &[0, 1, 2]), vec![(true, "cmd")]);
     }
 
     #[test]
     fn test_out_of_range_indices_are_ignored_without_panicking() {
         assert_eq!(
             highlight_segments("cmd", &[0, 99]),
-            vec![(true, "c".to_string()), (false, "md".to_string())]
+            vec![(true, "c"), (false, "md")]
         );
     }
 
@@ -384,7 +437,7 @@ mod tests {
     fn test_multibyte_characters_split_on_char_boundaries_not_bytes() {
         assert_eq!(
             highlight_segments("日本語アプリ", &[3, 4, 5]),
-            vec![(false, "日本語".to_string()), (true, "アプリ".to_string()),]
+            vec![(false, "日本語"), (true, "アプリ")]
         );
     }
 
@@ -392,7 +445,7 @@ mod tests {
     fn test_match_at_end_of_title() {
         assert_eq!(
             highlight_segments("Notepad", &[4, 5, 6]),
-            vec![(false, "Note".to_string()), (true, "pad".to_string())]
+            vec![(false, "Note"), (true, "pad")]
         );
     }
 
@@ -400,24 +453,20 @@ mod tests {
     fn test_match_in_middle_of_long_title() {
         assert_eq!(
             highlight_segments("Adobe Photoshop Express", &[6, 7, 8, 9, 10]),
-            vec![
-                (false, "Adobe ".to_string()),
-                (true, "Photo".to_string()),
-                (false, "shop Express".to_string()),
-            ]
+            vec![(false, "Adobe "), (true, "Photo"), (false, "shop Express"),]
         );
     }
 
     #[test]
     fn test_empty_title_yields_no_segments() {
-        assert_eq!(highlight_segments("", &[]), Vec::<(bool, String)>::new());
+        assert_eq!(highlight_segments("", &[]), Vec::<(bool, &str)>::new());
     }
 
     #[test]
     fn test_all_indices_out_of_range_yields_unhighlighted_segment() {
         assert_eq!(
             highlight_segments("cmd", &[10, 20, 30]),
-            vec![(false, "cmd".to_string())]
+            vec![(false, "cmd")]
         );
     }
 
@@ -425,7 +474,7 @@ mod tests {
     fn test_supplementary_plane_character_stays_one_segment_and_encodes_as_surrogate_pair() {
         assert_eq!(
             highlight_segments("😀 Settings", &[0]),
-            vec![(true, "😀".to_string()), (false, " Settings".to_string())]
+            vec![(true, "😀"), (false, " Settings")]
         );
     }
 }

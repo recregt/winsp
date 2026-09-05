@@ -1,12 +1,11 @@
 use winsp_windows::window::{Anchor, Key, MenuItem, Modifiers, Window, WindowEvent};
 
 use crate::config::WindowPosition;
-use crate::state::ExecuteOutcome;
 
+use super::ExecuteOutcome;
 use super::hotkey::{self, CaptureOutcome, CommitResult};
-use super::layout::{result_list_height, to_anchor};
-use super::view::render_ui;
-use super::{APP_STATE, CATALOG_READY_EVENT, SETTINGS};
+use super::view::{self, render, result_list_height, to_anchor};
+use super::{CATALOG_READY_EVENT, context};
 
 const CMD_TOGGLE: usize = 1001;
 const CMD_AUTOSTART: usize = 1002;
@@ -40,10 +39,10 @@ pub(super) fn handle_event(window: &Window, event: WindowEvent) {
                 }
             }
             CMD_CHANGE_HOTKEY => {
-                if let Some(state_arc) = APP_STATE.get()
-                    && let Ok(mut state) = state_arc.lock()
+                if let Some(ctx) = context()
+                    && let Ok(mut ui_state) = ctx.ui_state.lock()
                 {
-                    state.capturing_hotkey = true;
+                    ui_state.start_capturing_hotkey();
                 }
                 begin_hotkey_capture(window);
             }
@@ -53,9 +52,13 @@ pub(super) fn handle_event(window: &Window, event: WindowEvent) {
             _ => {}
         },
         WindowEvent::FocusLost => {
-            let was_capturing = APP_STATE
-                .get()
-                .and_then(|state_arc| state_arc.lock().ok().map(|state| state.capturing_hotkey))
+            let was_capturing = context()
+                .and_then(|ctx| {
+                    ctx.ui_state
+                        .lock()
+                        .ok()
+                        .map(|ui_state| ui_state.is_capturing_hotkey())
+                })
                 .unwrap_or(false);
             if was_capturing {
                 end_capture(window);
@@ -64,12 +67,14 @@ pub(super) fn handle_event(window: &Window, event: WindowEvent) {
             }
         }
         WindowEvent::Char(c) => {
-            if let Some(state_arc) = APP_STATE.get() {
+            if let Some(ctx) = context() {
                 let mut results_count = None;
-                if let Ok(mut state) = state_arc.lock() {
-                    if !state.capturing_hotkey {
-                        state.insert_char(c);
-                        results_count = Some(state.results.len());
+                if let (Ok(app_state), Ok(mut ui_state)) =
+                    (ctx.app_state.lock(), ctx.ui_state.lock())
+                {
+                    if !ui_state.is_capturing_hotkey() {
+                        ui_state.insert_char(app_state.engine(), c);
+                        results_count = Some(ui_state.results().len());
                     }
                 }
                 if let Some(count) = results_count {
@@ -79,12 +84,13 @@ pub(super) fn handle_event(window: &Window, event: WindowEvent) {
             window.invalidate();
         }
         WindowEvent::KeyDown { key, modifiers } => {
-            let Some(state_arc) = APP_STATE.get() else {
+            let Some(ctx) = context() else {
                 return;
             };
-            let capturing = state_arc
+            let capturing = ctx
+                .ui_state
                 .lock()
-                .map(|state| state.capturing_hotkey)
+                .map(|ui_state| ui_state.is_capturing_hotkey())
                 .unwrap_or(false);
             if capturing {
                 handle_capture_key(window, key, modifiers);
@@ -95,21 +101,21 @@ pub(super) fn handle_event(window: &Window, event: WindowEvent) {
             let mut results_count = 0;
             let mut should_hide = false;
 
-            if let Ok(mut state) = state_arc.lock() {
+            if let (Ok(app_state), Ok(mut ui_state)) = (ctx.app_state.lock(), ctx.ui_state.lock()) {
                 match key {
                     Key::Back => {
-                        state.backspace();
+                        ui_state.backspace(app_state.engine());
                         should_resize = true;
-                        results_count = state.results.len();
+                        results_count = ui_state.results().len();
                     }
                     Key::Down | Key::Tab => {
-                        state.select_next();
+                        ui_state.select_next();
                     }
                     Key::Up => {
-                        state.select_prev();
+                        ui_state.select_prev();
                     }
                     Key::Enter => {
-                        match state.execute_selected() {
+                        match ui_state.execute_selected() {
                             ExecuteOutcome::Copy(result) => {
                                 winsp_windows::system::clipboard::copy(&result);
                                 winsp_windows::system::toast::show(
@@ -118,11 +124,20 @@ pub(super) fn handle_event(window: &Window, event: WindowEvent) {
                                 );
                             }
                             ExecuteOutcome::Launch(target) => {
-                                std::thread::spawn(move || {
-                                    if let Err(error) = winsp_windows::shell::run(&target) {
-                                        winsp_windows::system::toast::show("WinSP", &error);
-                                    }
-                                });
+                                let submitted =
+                                    winsp_windows::system::threadpool::spawn_on_threadpool(
+                                        move || {
+                                            if let Err(error) = winsp_windows::shell::run(&target) {
+                                                winsp_windows::system::toast::show("WinSP", &error);
+                                            }
+                                        },
+                                    );
+                                if !submitted {
+                                    winsp_windows::system::toast::show(
+                                        "WinSP",
+                                        "Failed to launch: the system thread pool rejected the task.",
+                                    );
+                                }
                             }
                             ExecuteOutcome::None => {}
                         }
@@ -144,14 +159,20 @@ pub(super) fn handle_event(window: &Window, event: WindowEvent) {
                 window.invalidate();
             }
         }
-        WindowEvent::Redraw => window.paint(render_ui),
+        WindowEvent::Redraw => {
+            window.paint(
+                |canvas, rect| match context().and_then(|ctx| ctx.ui_state.lock().ok()) {
+                    Some(ui_state) => render(canvas, &ui_state, rect),
+                    None => canvas.fill_rect(rect, view::BACKGROUND_COLOR),
+                },
+            )
+        }
     }
 }
 
-pub(super) fn current_anchor() -> Anchor {
-    SETTINGS
-        .get()
-        .and_then(|settings| settings.lock().ok().map(|settings| settings.position))
+fn current_anchor() -> Anchor {
+    context()
+        .and_then(|ctx| ctx.settings.lock().ok().map(|settings| settings.position))
         .map(to_anchor)
         .unwrap_or(Anchor::Top)
 }
@@ -192,28 +213,26 @@ fn build_tray_menu() -> Vec<MenuItem<'static>> {
     ]
 }
 
-pub(super) fn show_fresh(handle: &Window) {
+fn show_fresh(handle: &Window) {
     handle.center(
         super::WINDOW_WIDTH,
         super::SEARCH_BAR_HEIGHT,
         current_anchor(),
     );
-    if let Some(state_arc) = APP_STATE.get()
-        && let Ok(mut state) = state_arc.lock()
-    {
-        state.clear_query();
-        resize_window_for_results(handle, state.results.len());
-    }
-    if let Some(tx) = super::RECONCILE_TX.get() {
-        if tx.send(()).is_err() {
-            crate::catalog_sync::notify_reconcile_channel_broken();
+    if let Some(ctx) = context() {
+        if let (Ok(app_state), Ok(mut ui_state)) = (ctx.app_state.lock(), ctx.ui_state.lock()) {
+            ui_state.clear_query(app_state.engine());
+            resize_window_for_results(handle, ui_state.results().len());
+        }
+        if ctx.reconcile_tx.send(()).is_err() {
+            crate::sync::notify_reconcile_channel_broken();
         }
     }
     handle.show();
     handle.invalidate();
 }
 
-pub(super) fn toggle_visibility(handle: &Window) {
+fn toggle_visibility(handle: &Window) {
     if handle.is_visible() {
         handle.hide();
     } else {
@@ -221,11 +240,11 @@ pub(super) fn toggle_visibility(handle: &Window) {
     }
 }
 
-pub(super) fn resize_window_for_results(handle: &Window, results_count: usize) {
+fn resize_window_for_results(handle: &Window, results_count: usize) {
     handle.resize(super::WINDOW_WIDTH, result_list_height(results_count));
 }
 
-pub(super) fn begin_hotkey_capture(handle: &Window) {
+fn begin_hotkey_capture(handle: &Window) {
     handle.center(
         super::WINDOW_WIDTH,
         super::SEARCH_BAR_HEIGHT,
@@ -237,29 +256,33 @@ pub(super) fn begin_hotkey_capture(handle: &Window) {
 }
 
 fn apply_catalog_ready(window: &Window) {
-    let Some(index) = crate::catalog_sync::take_pending_index() else {
+    let Some(index) = super::take_pending_catalog() else {
         return;
     };
-    let Some(state_arc) = APP_STATE.get() else {
+    let Some(ctx) = context() else {
         return;
     };
-    let Ok(mut state) = state_arc.lock() else {
+    let Ok(mut app_state) = ctx.app_state.lock() else {
         return;
     };
-    state.index = index;
-    state.refresh_results();
-    let results_count = state.results.len();
-    drop(state);
+    app_state.update_index(index);
+    let Ok(mut ui_state) = ctx.ui_state.lock() else {
+        return;
+    };
+    ui_state.refresh_against(app_state.engine());
+    let results_count = ui_state.results().len();
+    drop(ui_state);
+    drop(app_state);
 
     resize_window_for_results(window, results_count);
     window.invalidate();
 }
 
 fn set_position(window: &Window, position: WindowPosition) {
-    let Some(settings_mutex) = SETTINGS.get() else {
+    let Some(ctx) = context() else {
         return;
     };
-    let Ok(mut settings) = settings_mutex.lock() else {
+    let Ok(mut settings) = ctx.settings.lock() else {
         return;
     };
 
@@ -285,13 +308,16 @@ fn handle_capture_key(window: &Window, key: Key, modifiers: Modifiers) {
         CaptureOutcome::Cancelled => end_capture(window),
         CaptureOutcome::Invalid => {}
         CaptureOutcome::Candidate(candidate) => {
-            let Some(settings_mutex) = SETTINGS.get() else {
+            let Some(ctx) = context() else {
                 return;
             };
-            let Ok(mut settings) = settings_mutex.lock() else {
+            let Ok(mut settings) = ctx.settings.lock() else {
                 return;
             };
-            match hotkey::try_commit(window, &mut settings, candidate) {
+            let Ok(mut active_slot) = ctx.active_hotkey_slot.lock() else {
+                return;
+            };
+            match hotkey::try_commit(window, &mut settings, &mut active_slot, candidate) {
                 CommitResult::Committed => end_capture(window),
                 CommitResult::Conflict => winsp_windows::system::toast::show(
                     "WinSP",
@@ -307,11 +333,10 @@ fn handle_capture_key(window: &Window, key: Key, modifiers: Modifiers) {
 }
 
 fn end_capture(window: &Window) {
-    if let Some(state_arc) = APP_STATE.get()
-        && let Ok(mut state) = state_arc.lock()
+    if let Some(ctx) = context()
+        && let (Ok(app_state), Ok(mut ui_state)) = (ctx.app_state.lock(), ctx.ui_state.lock())
     {
-        state.capturing_hotkey = false;
-        state.clear_query();
+        ui_state.stop_capturing_hotkey(app_state.engine());
     }
     window.discard_pending_char();
     window.hide();

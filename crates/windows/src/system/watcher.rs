@@ -8,6 +8,8 @@ pub enum WatchEvent {
     Uncertain,
 }
 
+pub type Watcher = Debouncer<RecommendedWatcher>;
+
 pub fn for_dirs<F>(
     dirs: &[PathBuf],
     on_event: F,
