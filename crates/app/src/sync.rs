@@ -5,7 +5,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use winsp_core::engine::Engine;
-use winsp_plugins::catalog::Catalog;
+use winsp_plugins::Catalog;
 use winsp_windows::system::watcher::{WatchEvent, Watcher};
 
 const RECONCILE_INTERVAL: Duration = Duration::from_secs(600);
@@ -79,12 +79,10 @@ pub(crate) fn start_watching(catalog: Catalog) -> (Option<Watcher>, Sender<()>) 
     let tx = spawn_reconciler(Arc::clone(&catalog));
     let reconcile_tx = tx.clone();
 
-    let watcher = winsp_windows::system::watcher::for_dirs(
-        &winsp_plugins::catalog::start_menu_dirs(),
-        move |event| {
+    let watcher =
+        winsp_windows::system::watcher::for_dirs(&winsp_plugins::start_menu_dirs(), move |event| {
             handle_watch_event(event, &catalog, &tx);
-        },
-    );
+        });
     (finish_watcher(watcher), reconcile_tx)
 }
 

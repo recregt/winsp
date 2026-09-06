@@ -6,7 +6,7 @@ use winsp_core::models::{AppItem, LaunchTarget};
 
 use winsp_windows::system::shortcut;
 
-use super::Catalog;
+use crate::Catalog;
 
 pub fn start_menu_dirs() -> Vec<PathBuf> {
     let mut dirs = Vec::new();
@@ -57,8 +57,8 @@ impl Catalog {
         self.dirs = dirs;
         self.shortcuts = shortcuts;
         self.unreadable_dirs = unreadable_dirs;
-        self.builtins = super::apps::built_in_tools();
-        self.settings = super::settings::list_settings();
+        self.builtins = crate::builtins::built_in_tools();
+        self.settings = crate::settings::list_settings();
     }
 
     pub fn apply_changes(&mut self, changed_paths: &[PathBuf]) {
@@ -232,61 +232,11 @@ impl Catalog {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use std::fs;
-    use std::os::windows::ffi::OsStrExt;
-    use windows::Win32::System::Com::{
-        CLSCTX_INPROC_SERVER, COINIT_APARTMENTTHREADED, CoCreateInstance, CoInitializeEx,
-        CoUninitialize, IPersistFile,
-    };
-    use windows::Win32::UI::Shell::{IShellLinkW, ShellLink};
-    use windows::core::{Interface, PCWSTR};
 
-    struct ComInit;
+    use winsp_windows::system::shortcut::testing::{ComGuard as ComInit, create_test_lnk};
 
-    impl ComInit {
-        fn new() -> Self {
-            unsafe {
-                CoInitializeEx(None, COINIT_APARTMENTTHREADED).ok().unwrap();
-            }
-            Self
-        }
-    }
-
-    impl Drop for ComInit {
-        fn drop(&mut self) {
-            unsafe {
-                CoUninitialize();
-            }
-        }
-    }
-
-    fn wide(s: &str) -> Vec<u16> {
-        std::ffi::OsStr::new(s)
-            .encode_wide()
-            .chain(Some(0))
-            .collect()
-    }
-
-    fn create_test_lnk(dir: &Path, name: &str, target: &str, args: &str) {
-        unsafe {
-            let shell_link: IShellLinkW =
-                CoCreateInstance(&ShellLink, None, CLSCTX_INPROC_SERVER).unwrap();
-
-            shell_link.SetPath(PCWSTR(wide(target).as_ptr())).unwrap();
-            if !args.is_empty() {
-                shell_link
-                    .SetArguments(PCWSTR(wide(args).as_ptr()))
-                    .unwrap();
-            }
-
-            let persist_file: IPersistFile = shell_link.cast().unwrap();
-            let lnk_path = dir.join(format!("{name}.lnk"));
-            persist_file
-                .Save(PCWSTR(wide(&lnk_path.to_string_lossy()).as_ptr()), true)
-                .unwrap();
-        }
-    }
+    use super::*;
 
     fn names(items: &[AppItem]) -> Vec<&str> {
         items.iter().map(|i| i.name()).collect()

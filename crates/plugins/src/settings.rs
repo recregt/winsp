@@ -1,7 +1,5 @@
 use winsp_core::models::{AppItem, LaunchTarget};
 
-use super::apps::resolve_system_exe;
-
 /// Returns a curated collection of standard Windows Settings shortcuts.
 pub fn list_settings() -> Vec<AppItem> {
     vec![
@@ -107,8 +105,8 @@ pub fn list_settings() -> Vec<AppItem> {
                 "Task Manager",
                 LaunchTarget::Path("taskmgr.exe".into()),
             );
-            if let Some(icon) = resolve_system_exe("taskmgr.exe") {
-                item = item.with_icon(icon);
+            if let Some(icon) = winsp_windows::system::find_exe("taskmgr.exe") {
+                item = item.with_icon(icon.to_string_lossy().into_owned());
             }
             item
         }

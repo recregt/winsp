@@ -1741,7 +1741,6 @@ version = "0.3.0"
 dependencies = [
  "tempfile",
  "walkdir",
- "windows",
  "winsp-core",
  "winsp-windows",
 ]
