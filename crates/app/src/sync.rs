@@ -5,27 +5,27 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use winsp_core::engine::Engine;
-use winsp_plugins::Catalog;
+use winsp_plugins::Plugins;
 use winsp_windows::system::watcher::{WatchEvent, Watcher};
 
 const RECONCILE_INTERVAL: Duration = Duration::from_secs(600);
 const MIN_RECONCILE_GAP: Duration = Duration::from_secs(30);
 
-pub(crate) fn engine_from_catalog(catalog: &Catalog) -> Engine {
+pub(crate) fn engine_from_plugins(plugins: &Plugins) -> Engine {
     let mut index = Engine::new();
-    index.set_items(catalog.items());
+    index.set_items(plugins.items());
     index
 }
 
-pub(crate) fn scan_catalog() -> Catalog {
-    let catalog = Catalog::scan();
-    notify_if_scan_incomplete(&catalog);
-    catalog
+pub(crate) fn scan_plugins() -> Plugins {
+    let plugins = Plugins::scan();
+    notify_if_scan_incomplete(&plugins);
+    plugins
 }
 
-fn notify_if_scan_incomplete(catalog: &Catalog) {
+fn notify_if_scan_incomplete(plugins: &Plugins) {
     static NOTIFIED: std::sync::Once = std::sync::Once::new();
-    if !catalog.unreadable_dirs().is_empty() {
+    if !plugins.unreadable_dirs().is_empty() {
         NOTIFIED.call_once(|| {
             winsp_windows::system::toast::show(
                 "WinSP",
@@ -74,20 +74,20 @@ fn finish_watcher<E>(result: Result<(Watcher, Vec<std::path::PathBuf>), E>) -> O
     }
 }
 
-pub(crate) fn start_watching(catalog: Catalog) -> (Option<Watcher>, Sender<()>) {
-    let catalog = Arc::new(Mutex::new(catalog));
-    let tx = spawn_reconciler(Arc::clone(&catalog));
+pub(crate) fn start_watching(plugins: Plugins) -> (Option<Watcher>, Sender<()>) {
+    let plugins = Arc::new(Mutex::new(plugins));
+    let tx = spawn_reconciler(Arc::clone(&plugins));
     let reconcile_tx = tx.clone();
 
     let watcher =
         winsp_windows::system::watcher::for_dirs(&winsp_plugins::start_menu_dirs(), move |event| {
-            handle_watch_event(event, &catalog, &tx);
+            handle_watch_event(event, &plugins, &tx);
         });
     (finish_watcher(watcher), reconcile_tx)
 }
 
-fn refresh_state(catalog: &Catalog) {
-    crate::ui::deliver_catalog(engine_from_catalog(catalog));
+fn refresh_state(plugins: &Plugins) {
+    crate::ui::deliver_catalog(engine_from_plugins(plugins));
 }
 
 fn next_wait(pending: bool, last_rescan: Instant) -> Duration {
@@ -98,7 +98,7 @@ fn next_wait(pending: bool, last_rescan: Instant) -> Duration {
     }
 }
 
-fn spawn_reconciler(catalog: Arc<Mutex<Catalog>>) -> Sender<()> {
+fn spawn_reconciler(plugins: Arc<Mutex<Plugins>>) -> Sender<()> {
     let (reconcile_tx, reconcile_rx) = std::sync::mpsc::channel::<()>();
 
     std::thread::spawn(move || {
@@ -124,7 +124,7 @@ fn spawn_reconciler(catalog: Arc<Mutex<Catalog>>) -> Sender<()> {
                 continue;
             }
 
-            if let Ok(mut cat) = catalog.lock() {
+            if let Ok(mut cat) = plugins.lock() {
                 cat.rescan();
                 notify_if_scan_incomplete(&cat);
                 refresh_state(&cat);
@@ -137,10 +137,10 @@ fn spawn_reconciler(catalog: Arc<Mutex<Catalog>>) -> Sender<()> {
     reconcile_tx
 }
 
-fn handle_watch_event(event: WatchEvent, catalog: &Arc<Mutex<Catalog>>, reconcile_tx: &Sender<()>) {
+fn handle_watch_event(event: WatchEvent, plugins: &Arc<Mutex<Plugins>>, reconcile_tx: &Sender<()>) {
     match event {
         WatchEvent::Changed(paths) => {
-            if let Ok(mut cat) = catalog.lock() {
+            if let Ok(mut cat) = plugins.lock() {
                 cat.apply_changes(&paths);
                 notify_if_scan_incomplete(&cat);
                 refresh_state(&cat);

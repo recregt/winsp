@@ -5,49 +5,50 @@ mod apps;
 mod builtins;
 mod settings;
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::path::PathBuf;
 
-use apps::ScannedShortcut;
 use winsp_core::models::AppItem;
 
-pub use apps::start_menu_dirs;
+pub use apps::{Apps, start_menu_dirs};
 
-pub struct Catalog {
-    dirs: Vec<PathBuf>,
-    shortcuts: HashMap<PathBuf, ScannedShortcut>,
-    unreadable_dirs: Vec<PathBuf>,
-    builtins: Vec<AppItem>,
-    settings: Vec<AppItem>,
+pub struct Plugins {
+    pub apps: Apps,
 }
 
-impl Catalog {
+impl Plugins {
     pub fn scan() -> Self {
-        let (dirs, shortcuts, unreadable_dirs) = Self::scan_shortcuts(apps::start_menu_dirs());
-        Self {
-            dirs,
-            shortcuts,
-            unreadable_dirs,
-            builtins: builtins::built_in_tools(),
-            settings: settings::list_settings(),
-        }
+        Self { apps: Apps::scan() }
     }
 
     pub fn items(&self) -> Vec<AppItem> {
         let mut seen_ids = HashSet::new();
-        let mut apps = Vec::new();
+        let mut items = Vec::new();
 
         for item in self
-            .shortcut_items()
+            .apps
+            .items()
             .into_iter()
-            .chain(self.builtins.iter().cloned())
-            .chain(self.settings.iter().cloned())
+            .chain(builtins::items())
+            .chain(settings::items())
         {
             if seen_ids.insert(item.id().to_string()) {
-                apps.push(item);
+                items.push(item);
             }
         }
 
-        apps
+        items
+    }
+
+    pub fn apply_changes(&mut self, changed_paths: &[PathBuf]) {
+        self.apps.apply_changes(changed_paths);
+    }
+
+    pub fn rescan(&mut self) {
+        self.apps.rescan();
+    }
+
+    pub fn unreadable_dirs(&self) -> &[PathBuf] {
+        self.apps.unreadable_dirs()
     }
 }

@@ -1,6 +1,6 @@
 use winsp_core::models::{AppItem, LaunchTarget};
 
-pub(super) fn built_in_tools() -> Vec<AppItem> {
+pub(super) fn items() -> Vec<AppItem> {
     vec![
         AppItem::new(
             "builtin:calc.exe",
@@ -81,7 +81,7 @@ mod tests {
 
     #[test]
     fn every_resolved_builtin_tool_carries_a_path_icon_matching_its_target() {
-        for item in built_in_tools() {
+        for item in items() {
             let LaunchTarget::Path(exe) = item.target() else {
                 continue;
             };

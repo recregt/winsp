@@ -1,7 +1,7 @@
 use winsp_core::models::{AppItem, LaunchTarget};
 
 /// Returns a curated collection of standard Windows Settings shortcuts.
-pub fn list_settings() -> Vec<AppItem> {
+pub(super) fn items() -> Vec<AppItem> {
     vec![
         AppItem::new(
             "win-settings",
@@ -127,7 +127,7 @@ mod tests {
 
     #[test]
     fn every_setting_uri_entry_carries_a_glyph_icon() {
-        for item in list_settings() {
+        for item in items() {
             if matches!(item.target(), LaunchTarget::OsUri(_)) {
                 assert!(
                     matches!(item.icon(), Some(IconSource::Glyph(_))),
