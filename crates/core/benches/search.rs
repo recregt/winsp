@@ -62,13 +62,21 @@ const UNRELATED_QUERY: &str = "zq";
 /// Measures `query` as the first keystroke of a session, scanning the whole
 /// index. The untimed setup leaves an unrelated query behind, because repeating
 /// one query in a loop would otherwise measure the narrowed rescan.
+///
+/// [`BatchSize::PerIteration`] is what makes that setup do its job under a
+/// wall-clock run: any larger batch runs the whole batch's setups first and the
+/// measured searches after them, so only the first search of a batch starts
+/// from an unrelated query and the rest measure the narrowed rescan of the
+/// query they just ran. One iteration per batch is also what the search
+/// measures under CodSpeed, which runs the setup right before the one search it
+/// measures, so both runs measure the same thing.
 fn bench_cold_query(b: &mut Bencher, index: &Engine, query: &str) {
     b.iter_batched(
         || {
             black_box(index.search(UNRELATED_QUERY, 6));
         },
         |()| index.search(query, 6),
-        BatchSize::SmallInput,
+        BatchSize::PerIteration,
     );
 }
 
@@ -137,7 +145,7 @@ fn bench_search_while_typing(c: &mut Criterion) {
                         black_box(index.search(previous, 6));
                     },
                     |()| index.search(prefix, 6),
-                    BatchSize::SmallInput,
+                    BatchSize::PerIteration,
                 );
             },
         );
