@@ -219,7 +219,7 @@ impl Ranking {
         let mut needle_buf = Vec::new();
         let needle = Utf32Str::new(needles.name(), &mut needle_buf);
         let query_lower = needles.keyword();
-        let query_mask = needle_mask(needles.name());
+        let query_masks = needle_masks(needles.name());
 
         // A keystroke only ever shrinks the previous match set, so the scan can
         // start from it instead of from the whole index.
@@ -233,7 +233,7 @@ impl Ranking {
             &mut matcher,
             needle,
             query_lower,
-            query_mask,
+            query_masks,
             limit,
             narrowed,
         );
@@ -394,6 +394,125 @@ fn haystack_mask(text: &str) -> (u32, bool) {
     (mask, true)
 }
 
+/// Everything one pass over an item's name tells the scan: which characters it
+/// holds, which of those a match could earn a bonus on, and whether it is pure
+/// ASCII.
+///
+/// The second mask is what bounds a name match tighter than the needle's length
+/// alone can — see [`NameCeilings`]. A name that is not ASCII claims every
+/// character instead of a real mask: the character classes its bonuses follow
+/// are unicode ones the columns do not model, and claiming everything is the
+/// bound the engine held every name to before there was a boundary mask.
+fn name_masks(name: &str) -> (u32, u32, bool) {
+    let mut present = 0;
+    let mut boundary = 0;
+    let mut previous = WHITESPACE;
+    for (offset, &byte) in name.as_bytes().iter().enumerate() {
+        if !byte.is_ascii() {
+            return (present | unicode_mask(&name[offset..]), ALL_CHARS, false);
+        }
+        // One lookup for both of the things this pass needs from a byte, since
+        // it runs over every character of every item the index is built from.
+        let entry = NAME_BYTES[byte as usize];
+        let bit = entry & ALL_CHARS;
+        let class = entry >> CLASS_SHIFT;
+        present |= bit;
+        if EARNS_A_BONUS[previous as usize] >> class & 1 != 0 {
+            boundary |= bit;
+        }
+        previous = class as u8;
+    }
+    (present, boundary, true)
+}
+
+/// Character classes `nucleo_matcher` sorts a haystack character into, for the
+/// ASCII characters a name column can hold. Its `Letter` class is for
+/// characters that are alphabetic without having a case, which no ASCII
+/// character is, so it is left out.
+const WHITESPACE: u8 = 0;
+const NON_WORD: u8 = 1;
+const DELIMITER: u8 = 2;
+const LOWER: u8 = 3;
+const UPPER: u8 = 4;
+const NUMBER: u8 = 5;
+const CLASS_COUNT: usize = 6;
+
+/// Characters `Config::DEFAULT` treats as delimiters.
+const DELIMITER_CHARS: &[u8] = b"/,:;|";
+
+const fn char_class(byte: u8) -> u8 {
+    match byte {
+        b'a'..=b'z' => LOWER,
+        b'A'..=b'Z' => UPPER,
+        b'0'..=b'9' => NUMBER,
+        b' ' | b'\t' | b'\n' | b'\x0c' | b'\r' => WHITESPACE,
+        _ => {
+            let mut nth = 0;
+            while nth < DELIMITER_CHARS.len() {
+                if DELIMITER_CHARS[nth] == byte {
+                    return DELIMITER;
+                }
+                nth += 1;
+            }
+            NON_WORD
+        }
+    }
+}
+
+/// Whether a character of `class` preceded by one of `previous` earns any bonus
+/// at all, which is the question [`name_masks`] asks of every position of a
+/// name. Mirrors `nucleo_matcher`'s `Config::bonus_for` under the configuration
+/// this engine builds its matcher with, reduced to whether the bonus is
+/// non-zero; `test_boundary_mask_agrees_with_the_matcher` keeps the two
+/// together.
+const fn earns_a_bonus(previous: u8, class: u8) -> bool {
+    let is_word = matches!(class, LOWER | UPPER | NUMBER);
+    if is_word && matches!(previous, WHITESPACE | DELIMITER | NON_WORD) {
+        // A word starting after whitespace, a delimiter or a non-word
+        // character.
+        return true;
+    }
+    if previous == LOWER && class == UPPER || previous != NUMBER && class == NUMBER {
+        // camelCase, or letter123.
+        return true;
+    }
+    matches!(class, WHITESPACE | NON_WORD)
+}
+
+/// Where a [`NAME_BYTES`] entry keeps the character class, above the mask bit.
+const CLASS_SHIFT: u32 = MASK_BITS;
+
+/// What one pass over a name needs to know about a byte: the mask bit it
+/// contributes and the class it belongs to, in one word, so that the pass costs
+/// a load per byte rather than two chains of comparisons.
+const NAME_BYTES: [u32; 128] = {
+    let mut table = [0; 128];
+    let mut byte = 0;
+    while byte < table.len() {
+        table[byte] = ascii_bit(byte as u8) | (char_class(byte as u8) as u32) << CLASS_SHIFT;
+        byte += 1;
+    }
+    table
+};
+
+/// Bit `class` of `EARNS_A_BONUS[previous]` is set exactly when
+/// [`earns_a_bonus`] holds for the pair.
+const EARNS_A_BONUS: [u32; CLASS_COUNT] = {
+    let mut table = [0; CLASS_COUNT];
+    let mut previous = 0;
+    while previous < CLASS_COUNT {
+        let mut class = 0;
+        while class < CLASS_COUNT {
+            if earns_a_bonus(previous as u8, class as u8) {
+                table[previous] |= 1 << class;
+            }
+            class += 1;
+        }
+        previous += 1;
+    }
+    table
+};
+
 fn unicode_mask(text: &str) -> u32 {
     let mut mask = 0;
     for ch in text.chars() {
@@ -404,17 +523,34 @@ fn unicode_mask(text: &str) -> u32 {
     mask
 }
 
-/// Mask of the characters a match requires. The needle is already normalized and
-/// lowercased, so every character maps to exactly the bit it needs.
-fn needle_mask(needle: &str) -> u32 {
-    needle.chars().map(char_bit).fold(0, |mask, bit| mask | bit)
+/// Masks of the characters a match requires. The needle is already normalized
+/// and lowercased, so every character maps to exactly the bit it needs.
+///
+/// The first character is kept apart from the rest because the matcher scores
+/// its bonus twice, so it is worth bounding on its own — see [`NameCeilings`].
+#[derive(Clone, Copy)]
+struct QueryMasks {
+    all_chars: u32,
+    first_char: u32,
+}
+
+fn needle_masks(needle: &str) -> QueryMasks {
+    let mut chars = needle.chars().map(char_bit);
+    let first_char = chars.next().unwrap_or(0);
+    QueryMasks {
+        all_chars: chars.fold(first_char, |mask, bit| mask | bit),
+        first_char,
+    }
 }
 
 /// Bits a character mask occupies: one per ASCII letter plus the catch-all.
 const MASK_BITS: u32 = 27;
 const OTHER_CHAR_BIT: u32 = 1 << (MASK_BITS - 1);
+/// Every bit a character mask can hold: the mask of a haystack that has to be
+/// assumed to contain anything.
+const ALL_CHARS: u32 = (1 << MASK_BITS) - 1;
 
-fn ascii_bit(byte: u8) -> u32 {
+const fn ascii_bit(byte: u8) -> u32 {
     match byte.to_ascii_lowercase() {
         lower @ b'a'..=b'z' => 1 << (lower - b'a'),
         _ => OTHER_CHAR_BIT,
@@ -472,6 +608,10 @@ fn name_len_floor(chars: usize) -> u64 {
     (chars as u64) << NAME_LEN_SHIFT
 }
 
+/// Bit of [`ScanRow::name_bonuses`] that marks a name as pure ASCII, above the
+/// bits the boundary mask itself occupies.
+const NAME_IS_ASCII_BIT: u32 = 1 << MASK_BITS;
+
 #[derive(Clone, Copy)]
 struct ScanRow {
     name_start: u32,
@@ -479,7 +619,23 @@ struct ScanRow {
     keywords_start: u32,
     keywords_end: u32,
     launch_count: u32,
-    name_is_ascii: bool,
+    /// The characters of the name a match could earn a bonus on, as
+    /// [`name_masks`] builds them, plus [`NAME_IS_ASCII_BIT`]. Both ride in the
+    /// padding the row had anyway, so the boundary mask needs no column of its
+    /// own and arrives with the row the pruning path already reads.
+    name_bonuses: u32,
+}
+
+impl ScanRow {
+    /// Characters of the name a match could earn a bonus on.
+    fn boundary_mask(&self) -> u32 {
+        self.name_bonuses & ALL_CHARS
+    }
+
+    /// Whether the name is pure ASCII, and can therefore be matched byte-wise.
+    fn name_is_ascii(&self) -> bool {
+        self.name_bonuses & NAME_IS_ASCII_BIT != 0
+    }
 }
 
 impl ScanTable {
@@ -511,7 +667,7 @@ impl ScanTable {
             self.keywords.push_str(keyword);
             self.keywords.push(KEYWORD_SEPARATOR);
         }
-        let (name_mask, name_is_ascii) = haystack_mask(item.name());
+        let (name_mask, boundary_mask, name_is_ascii) = name_masks(item.name());
         let (keyword_mask, _) = haystack_mask(&self.keywords[keywords_start as usize..]);
         self.prefilter
             .push(prefilter_word(name_mask, keyword_mask, item.name().len()));
@@ -522,7 +678,11 @@ impl ScanTable {
             keywords_start,
             keywords_end: self.keywords.len() as u32,
             launch_count: item.launch_count(),
-            name_is_ascii,
+            name_bonuses: if name_is_ascii {
+                boundary_mask | NAME_IS_ASCII_BIT
+            } else {
+                boundary_mask
+            },
         });
     }
 
@@ -564,14 +724,14 @@ impl ScanTable {
         matcher: &mut Matcher,
         needle: Utf32Str<'_>,
         query_lower: &str,
-        query_mask: u32,
+        masks: QueryMasks,
         limit: usize,
         narrowed: Option<&[u32]>,
     ) -> Scan {
         match narrowed {
             Some(items) => {
                 let words = items.iter().map(|&idx| (idx, self.prefilter[idx as usize]));
-                self.scan(words, matcher, needle, query_lower, query_mask, limit)
+                self.scan(words, matcher, needle, query_lower, masks, limit)
             }
             None => {
                 // The whole column is read in order, so the prefilter word of
@@ -582,7 +742,7 @@ impl ScanTable {
                     .copied()
                     .enumerate()
                     .map(|(idx, word)| (idx as u32, word));
-                self.scan(words, matcher, needle, query_lower, query_mask, limit)
+                self.scan(words, matcher, needle, query_lower, masks, limit)
             }
         }
     }
@@ -593,19 +753,21 @@ impl ScanTable {
         matcher: &mut Matcher,
         needle: Utf32Str<'_>,
         query_lower: &str,
-        query_mask: u32,
+        masks: QueryMasks,
         limit: usize,
     ) -> Scan {
+        let query_mask = masks.all_chars;
         // The prefilter reads one word per item and tests it against these
         // three: the query characters a name must hold, the same characters in
         // the keyword field, and the shortest name the needle fits in.
         let name_probe = u64::from(query_mask);
         let keyword_probe = name_probe << KEYWORD_MASK_SHIFT;
         let name_len_floor = name_len_floor(needle.len());
+        let name_ceilings = NameCeilings::new(needle.len(), masks);
         let query = Query {
             needle,
             lowercased: query_lower,
-            name_ceiling: name_score_ceiling(needle.len()),
+            name_ceilings: &name_ceilings,
             ascii_needle: match needle {
                 Utf32Str::Ascii(needle) => Some(needle),
                 Utf32Str::Unicode(_) => None,
@@ -662,10 +824,9 @@ impl ScanTable {
                 continue;
             }
 
-            let row = &self.rows[idx as usize];
             if let Some(is_match) = ruled_out_unscored(
                 self,
-                row,
+                idx,
                 name_possible,
                 keyword_possible,
                 &query,
@@ -678,6 +839,8 @@ impl ScanTable {
                 continue;
             }
 
+            // Only an item the bound could not rule out is worth its row.
+            let row = &self.rows[idx as usize];
             self.score_row(&mut state, query, idx, row, name_possible, keyword_possible);
         }
 
@@ -705,7 +868,7 @@ impl ScanTable {
     ) {
         let name_score = if name_possible {
             let name_range = row.name_start as usize..row.name_end as usize;
-            let score = if row.name_is_ascii {
+            let score = if row.name_is_ascii() {
                 // Byte indexing skips the UTF-8 boundary checks of `str`.
                 let haystack = Utf32Str::Ascii(&self.names.as_bytes()[name_range]);
                 state.matcher.fuzzy_match(haystack, query.needle)
@@ -782,8 +945,9 @@ struct Query<'a> {
     needle: Utf32Str<'a>,
     /// The query as keyword matching compares it.
     lowercased: &'a str,
-    /// What [`name_score_ceiling`] bounds a name match by.
-    name_ceiling: i32,
+    /// What a name match is bounded by. Behind a reference: only the pruning
+    /// path reads it, and the scan loop carries the rest of this by value.
+    name_ceilings: &'a NameCeilings,
     /// The needle, when it is ASCII and can therefore be compared byte-wise.
     ascii_needle: Option<&'a [u8]>,
 }
@@ -804,21 +968,40 @@ struct Query<'a> {
 #[inline(never)]
 fn ruled_out_unscored(
     table: &ScanTable,
-    row: &ScanRow,
+    idx: u32,
     name_possible: bool,
     keyword_possible: bool,
     query: &Query<'_>,
     cutoff: i32,
     collecting: bool,
 ) -> Option<bool> {
-    let mut ceiling = if name_possible { query.name_ceiling } else { 0 };
-    if keyword_possible {
-        ceiling = ceiling.max(KEYWORD_MATCH_SCORE);
-    }
-    let ceiling =
-        ceiling.saturating_add(launch_score(row.launch_count, SEARCH_FRECENCY_MULTIPLIER));
-    if ceiling > cutoff {
-        return None;
+    // The two things a name match competes with: a keyword match, which scores
+    // a flat `KEYWORD_MATCH_SCORE`, and the item's frecency, which is added to
+    // either.
+    let row = &table.rows[idx as usize];
+    let keyword_ceiling = if keyword_possible {
+        KEYWORD_MATCH_SCORE
+    } else {
+        0
+    };
+    let boost = launch_score(row.launch_count, SEARCH_FRECENCY_MULTIPLIER);
+    let ruled_out =
+        |name_ceiling: i32| name_ceiling.max(keyword_ceiling).saturating_add(boost) <= cutoff;
+
+    let by_length = if name_possible {
+        query.name_ceilings.by_length
+    } else {
+        0
+    };
+    if !ruled_out(by_length) {
+        // What the needle's length allows is not enough to drop this item. What
+        // this name in particular can score often still is, and asking costs
+        // nothing beyond the row already read here — which is why the boundary
+        // mask lives in the row rather than in the word the prefilter streams
+        // for every item of the index.
+        if !name_possible || !ruled_out(query.name_ceilings.of(row.boundary_mask())) {
+            return None;
+        }
     }
     if !collecting {
         return Some(false);
@@ -829,13 +1012,13 @@ fn ruled_out_unscored(
         // An ASCII name holds an ASCII needle exactly when the needle is a
         // subsequence of it, which is what the matcher's own prefilter decides
         // before it scores anything.
-        (true, Some(needle)) if row.name_is_ascii => {
+        (true, Some(needle)) if row.name_is_ascii() => {
             let name = &table.names.as_bytes()[row.name_start as usize..row.name_end as usize];
             is_subsequence_ignore_ascii_case(name, needle)
         }
         // A needle that is not ASCII never matches an ASCII name, since
         // normalizing one leaves it as it is.
-        (true, None) if row.name_is_ascii => false,
+        (true, None) if row.name_is_ascii() => false,
         // Anything else has to be normalized before it can be compared, which
         // is the matcher's job.
         (true, _) => return None,
@@ -938,26 +1121,100 @@ const MAX_CHAR_BONUS: i64 = 10;
 /// The first matched character counts its bonus twice.
 const FIRST_CHAR_BONUS_MULTIPLIER: i64 = 2;
 
+/// Smallest bonus a matched character can be given when the one before it in
+/// the needle matched the character right before it in the name: a run of
+/// consecutive matches is never scored below this, whatever the characters sit
+/// next to.
+const MIN_CONSECUTIVE_BONUS: i64 = 4;
+
 /// Highest score [`Matcher::fuzzy_match`] can return for a needle of `chars`
-/// characters, against any name whatsoever.
+/// characters, when its first character earns at most `first` bonus and every
+/// other one at most `rest_bonus`.
 ///
 /// The matcher scores a match as one [`SCORE_MATCH`] per needle character plus
 /// that character's bonus, the first character's bonus counting twice, and
-/// unmatched characters in between only ever subtract. Bounding those bonuses
-/// by [`MAX_CHAR_BONUS`] therefore bounds the score, which is what lets the
-/// scan drop an item that cannot reach the shortlist without matching it.
-/// `test_name_score_never_exceeds_the_ceiling` keeps the constants honest.
-fn name_score_ceiling(chars: usize) -> i32 {
+/// unmatched characters in between only ever subtract. Bounding the bonuses
+/// therefore bounds the score, which is what lets the scan drop an item that
+/// cannot reach the shortlist without matching it.
+fn name_score_ceiling(chars: usize, first_bonus: i64, rest_bonus: i64) -> i32 {
     if chars == 0 {
         // An empty needle matches everything, and scores nothing.
         return 0;
     }
     let rest = chars as i64 - 1;
     let ceiling = SCORE_MATCH
-        + MAX_CHAR_BONUS * FIRST_CHAR_BONUS_MULTIPLIER
-        + rest.saturating_mul(SCORE_MATCH + MAX_CHAR_BONUS);
+        + first_bonus * FIRST_CHAR_BONUS_MULTIPLIER
+        + rest.saturating_mul(SCORE_MATCH + rest_bonus);
     // The matcher returns a `u16`, so nothing can score past its range.
     ceiling.min(u16::MAX as i64) as i32
+}
+
+/// What a name match is bounded by, given what the item's boundary mask says
+/// about the needle's characters.
+///
+/// A character only earns a bonus where it sits next to the right neighbour: at
+/// the start of a word, on a case or digit transition, or on a character that is
+/// not a word character at all. [`name_masks`] records which of a name's
+/// characters ever do, so a needle whose characters never sit anywhere like that
+/// in this name is held to a much lower bound than the needle's length alone
+/// gives — which is what a one or two character needle needs, since there the
+/// length bound is barely above the score a real match comes out with and never
+/// rules anything out.
+///
+/// The three bounds, and why they hold for every path the matcher can take:
+///
+/// * the first needle character scores [`SCORE_MATCH`] plus twice its own
+///   bonus, so a needle whose first character earns nothing loses the whole
+///   doubled term;
+/// * every later character scores [`SCORE_MATCH`] plus a bonus that is either
+///   its own, one inherited from an earlier character of the same needle — the
+///   matcher only ever carries a bonus forward within a run — or
+///   [`MIN_CONSECUTIVE_BONUS`], so if no needle character earns a bonus in this
+///   name, no character of the match is scored above the consecutive floor;
+/// * unmatched characters in between only ever subtract.
+///
+/// `test_name_ceilings_bound_every_match` and
+/// `test_boundary_mask_agrees_with_the_matcher` keep this honest against the
+/// matcher itself.
+#[derive(Clone, Copy)]
+struct NameCeilings {
+    /// Bit of the needle's first character.
+    first_char: u32,
+    /// Bits of every character of the needle.
+    all_chars: u32,
+    /// Bound that holds against any name at all, which is also the one a name
+    /// where the first needle character can earn a bonus holds to. What the
+    /// engine bounded every match by before the boundary mask existed, and
+    /// still the first thing the scan tries, since it needs nothing from the
+    /// item.
+    by_length: i32,
+    /// Bound when only a later needle character can earn a bonus.
+    trailing_bonus: i32,
+    /// Bound when none of them can.
+    no_bonus: i32,
+}
+
+impl NameCeilings {
+    fn new(chars: usize, masks: QueryMasks) -> Self {
+        Self {
+            first_char: masks.first_char,
+            all_chars: masks.all_chars,
+            by_length: name_score_ceiling(chars, MAX_CHAR_BONUS, MAX_CHAR_BONUS),
+            trailing_bonus: name_score_ceiling(chars, 0, MAX_CHAR_BONUS),
+            no_bonus: name_score_ceiling(chars, 0, MIN_CONSECUTIVE_BONUS),
+        }
+    }
+
+    /// The bound a name whose characters earn a bonus on `boundary` holds to.
+    fn of(&self, boundary: u32) -> i32 {
+        if self.first_char & boundary != 0 {
+            self.by_length
+        } else if self.all_chars & boundary != 0 {
+            self.trailing_bonus
+        } else {
+            self.no_bonus
+        }
+    }
 }
 
 #[cfg(test)]
@@ -1508,8 +1765,9 @@ mod tests {
     /// Deterministic pseudo random strings, so the bound is checked against
     /// shapes nobody thought to write down: whitespace and delimiter
     /// boundaries, camel case, digits, non-word characters and accents.
+    const ALPHABET: [char; 12] = [' ', '/', ';', '|', '-', 'a', 'b', 'A', 'B', '1', '2', 'é'];
+
     fn random_strings(count: usize, max_len: usize, seed: u64) -> Vec<String> {
-        const ALPHABET: [char; 10] = [' ', '/', '-', 'a', 'b', 'A', 'B', '1', '2', 'é'];
         let mut state = seed;
         let mut next = move || {
             state = state
@@ -1574,22 +1832,35 @@ mod tests {
     }
 
     #[test]
-    fn test_name_score_never_exceeds_the_ceiling() {
+    fn test_name_ceilings_bound_every_match() {
         let mut config = Config::DEFAULT;
         config.ignore_case = true;
         let mut matcher = Matcher::new(config);
 
-        let names = random_strings(300, 16, 0x5eed);
-        let mut needles = random_strings(60, 5, 0xd00d);
+        let mut names = random_strings(400, 16, 0x5eed);
+        names.extend(random_strings(200, 4, 0xbeef));
+        names.push("Visual Studio Code".into());
+        let mut needles = random_strings(80, 5, 0xd00d);
+        // Every one and two character needle over the alphabet the names are
+        // drawn from, which is where the bound has to be tightest and where a
+        // single character out of place would show.
+        for first in ALPHABET {
+            needles.push(first.to_string());
+            for second in ALPHABET {
+                needles.push(format!("{first}{second}"));
+            }
+        }
         needles.push("visual studio".into());
-        needles.push("a".into());
 
         let mut hay_buf = Vec::new();
         let mut needle_buf = Vec::new();
         for needle in &needles {
             let normalized: String = needle.chars().map(normalize).map(to_lower_case).collect();
-            let ceiling = name_score_ceiling(normalized.chars().count());
+            let masks = needle_masks(&normalized);
+            let ceilings = NameCeilings::new(normalized.chars().count(), masks);
             for name in &names {
+                let (_, boundary, _) = name_masks(name);
+                let ceiling = ceilings.of(boundary);
                 hay_buf.clear();
                 needle_buf.clear();
                 let haystack = Utf32Str::new(name, &mut hay_buf);
@@ -1603,6 +1874,86 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// The boundary mask claims to hold exactly the characters of a name that
+    /// the matcher gives a bonus to. A one character needle scores
+    /// `SCORE_MATCH + 2 * bonus` at its best position, which is how the bonus
+    /// the matcher actually gave can be read back out of it.
+    #[test]
+    fn test_boundary_mask_agrees_with_the_matcher() {
+        let mut config = Config::DEFAULT;
+        config.ignore_case = true;
+        let mut matcher = Matcher::new(config);
+
+        let mut names = random_strings(400, 16, 0x0b0e);
+        names.extend(["A", " a", "aA", "a1", "1a", "a/b", "a-b", "a b", "aa"].map(String::from));
+
+        let mut hay_buf = Vec::new();
+        let mut needle_buf = Vec::new();
+        for name in &names {
+            let (present, boundary, is_ascii) = name_masks(name);
+            if !is_ascii {
+                continue;
+            }
+            for byte in 0..=127u8 {
+                let ch = byte as char;
+                let needle_string = ch.to_lowercase().to_string();
+                hay_buf.clear();
+                needle_buf.clear();
+                let haystack = Utf32Str::new(name, &mut hay_buf);
+                let needle = Utf32Str::new(&needle_string, &mut needle_buf);
+                let Some(score) = matcher.fuzzy_match(haystack, needle) else {
+                    continue;
+                };
+                let bit = ascii_bit(byte);
+                assert_ne!(present & bit, 0, "{ch:?} missing from {name:?}'s mask");
+                let bonus = (i64::from(score) - SCORE_MATCH) / FIRST_CHAR_BONUS_MULTIPLIER;
+                assert!(bonus <= MAX_CHAR_BONUS, "{bonus} beats the highest bonus");
+                if bonus > 0 {
+                    assert_ne!(
+                        boundary & bit,
+                        0,
+                        "{ch:?} earns {bonus} in {name:?} but is not a boundary character"
+                    );
+                }
+                // Letters have a bit to themselves, so for them the mask is not
+                // just sound but exact.
+                if byte.is_ascii_alphabetic() {
+                    assert_eq!(
+                        boundary & bit != 0,
+                        bonus > 0,
+                        "{ch:?} in {name:?} scored {score}"
+                    );
+                }
+            }
+        }
+    }
+
+    /// The boundary mask rides in the padding a row had anyway. If the row ever
+    /// grows past that, the scan pays for it on every item it looks at, so the
+    /// size is worth pinning.
+    #[test]
+    fn test_a_scan_row_still_fits_six_words() {
+        assert_eq!(size_of::<ScanRow>(), 6 * size_of::<u32>());
+        assert_eq!(NAME_IS_ASCII_BIT & ALL_CHARS, 0);
+    }
+
+    /// A name that is not ASCII is not held to a tightened bound, so its mask
+    /// has to claim every character.
+    #[test]
+    fn test_non_ascii_names_keep_the_untightened_bound() {
+        let (_, boundary, is_ascii) = name_masks("Ünïcöde Viewer");
+        assert!(!is_ascii);
+        assert_eq!(boundary, ALL_CHARS);
+
+        let masks = needle_masks("uv");
+        let ceilings = NameCeilings::new(2, masks);
+        assert_eq!(ceilings.of(boundary), ceilings.by_length);
+        assert_eq!(
+            ceilings.by_length,
+            name_score_ceiling(2, MAX_CHAR_BONUS, MAX_CHAR_BONUS)
+        );
     }
 
     #[test]
