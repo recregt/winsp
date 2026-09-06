@@ -1755,7 +1755,6 @@ dependencies = [
  "tempfile",
  "windows",
  "windows-registry",
- "winsp-core",
 ]
 
 [[package]]
