@@ -21,9 +21,9 @@ const INITIAL_BACKOFF: Duration = Duration::from_millis(2);
 const MAX_BACKOFF: Duration = Duration::from_millis(80);
 
 pub fn atomic_write(path: &Path, bytes: &[u8]) -> io::Result<()> {
-    let parent = path.parent().unwrap_or_else(|| Path::new("."));
+    let parent = resolve_parent(path);
     ensure_dir(parent)?;
-    let (tmp_path, handle) = create_unique_file(parent)?;
+    let (tmp_path, handle) = create_unique_file(parent, path)?;
 
     let written = write_all(handle, bytes);
     unsafe {
@@ -37,6 +37,13 @@ pub fn atomic_write(path: &Path, bytes: &[u8]) -> io::Result<()> {
     replace_with_retries(path, &tmp_path)
 }
 
+fn resolve_parent(path: &Path) -> &Path {
+    match path.parent() {
+        Some(parent) if !parent.as_os_str().is_empty() => parent,
+        _ => Path::new("."),
+    }
+}
+
 fn ensure_dir(dir: &Path) -> io::Result<()> {
     match std::fs::create_dir_all(dir) {
         Ok(()) => Ok(()),
@@ -45,9 +52,13 @@ fn ensure_dir(dir: &Path) -> io::Result<()> {
     }
 }
 
-fn create_unique_file(parent: &Path) -> io::Result<(PathBuf, HANDLE)> {
+fn create_unique_file(parent: &Path, dest: &Path) -> io::Result<(PathBuf, HANDLE)> {
     static COUNTER: AtomicU64 = AtomicU64::new(0);
     let pid = std::process::id();
+    let stem = dest
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("tmp");
 
     for _ in 0..MAX_NAME_ATTEMPTS {
         let nanos = std::time::SystemTime::now()
@@ -55,7 +66,7 @@ fn create_unique_file(parent: &Path) -> io::Result<(PathBuf, HANDLE)> {
             .map(|elapsed| elapsed.as_nanos())
             .unwrap_or_default();
         let unique = COUNTER.fetch_add(1, Ordering::Relaxed);
-        let candidate = parent.join(format!("settings.{pid:x}.{nanos:x}.{unique:x}.tmp"));
+        let candidate = parent.join(format!(".{stem}.{pid:x}.{nanos:x}.{unique:x}.tmp"));
         let name = HSTRING::from(candidate.as_os_str());
 
         let result = unsafe {
@@ -195,6 +206,40 @@ mod tests {
         assert!(
             leftover.is_empty(),
             "unexpected leftover files: {leftover:?}"
+        );
+    }
+
+    #[test]
+    fn resolve_parent_of_a_bare_filename_is_the_current_dir() {
+        assert_eq!(
+            resolve_parent(Path::new("settings.msgpack")),
+            Path::new(".")
+        );
+    }
+
+    #[test]
+    fn resolve_parent_of_a_nested_path_is_its_directory() {
+        assert_eq!(
+            resolve_parent(Path::new("some/dir/settings.msgpack")),
+            Path::new("some/dir")
+        );
+    }
+
+    #[test]
+    fn temp_file_names_are_derived_from_the_destination_filename() {
+        let dir = tempfile::tempdir().unwrap();
+        let dest = dir.path().join("history.msgpack");
+
+        let (candidate, handle) = create_unique_file(dir.path(), &dest).unwrap();
+        unsafe {
+            let _ = CloseHandle(handle);
+        }
+        let _ = std::fs::remove_file(&candidate);
+
+        let name = candidate.file_name().unwrap().to_str().unwrap();
+        assert!(
+            name.starts_with(".history.msgpack."),
+            "unexpected temp file name: {name}"
         );
     }
 
