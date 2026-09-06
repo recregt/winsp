@@ -1,5 +1,4 @@
 #![cfg(windows)]
-#![forbid(unsafe_code)]
 
 mod apps;
 mod builtins;
@@ -14,13 +13,13 @@ use winsp_core::models::AppItem;
 
 pub use apps::Apps;
 
-pub struct Plugins {
+pub struct Sources {
     pub apps: Apps,
     settings: Settings,
     builtins: Builtins,
 }
 
-impl Plugins {
+impl Sources {
     pub fn scan() -> Self {
         Self {
             apps: Apps::scan(),

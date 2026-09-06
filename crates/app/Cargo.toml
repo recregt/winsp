@@ -11,8 +11,8 @@ name = "winsp"
 path = "src/main.rs"
 
 [dependencies]
+walkdir = "2.5.0"
 winsp-core = { path = "../core" }
-winsp-plugins = { path = "../plugins" }
 winsp-windows = { path = "../windows" }
 
 [build-dependencies]
