@@ -1,4 +1,3 @@
-use crate::models::{AppItem, SearchResult};
 use nucleo_matcher::chars::{normalize, to_lower_case};
 use nucleo_matcher::{Config, Matcher, Utf32Str};
 use std::borrow::Cow;
@@ -9,28 +8,45 @@ const KEYWORD_MATCH_SCORE: i32 = 5_000;
 const SEARCH_FRECENCY_MULTIPLIER: i64 = 50;
 const TOP_ITEMS_FRECENCY_MULTIPLIER: i64 = 10;
 
-pub struct Engine {
-    items: Vec<Arc<AppItem>>,
+/// What [`Index`] needs from an item to search it: a name and keywords to
+/// match against, and a launch count to break ties in the item's favor.
+pub trait IndexableItem {
+    fn name(&self) -> &str;
+    fn keywords(&self) -> &[String];
+    fn launch_count(&self) -> u32;
+}
+
+/// One item `Index::search` returned: the item itself, its score, and which of
+/// its name's characters the query matched, for highlighting.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Match<T> {
+    pub item: Arc<T>,
+    pub score: i32,
+    pub matched_char_indices: Vec<usize>,
+}
+
+pub struct Index<T: IndexableItem> {
+    items: Vec<Arc<T>>,
     scan: ScanTable,
     matcher: RefCell<Matcher>,
     narrowing: RefCell<Option<Narrowing>>,
 }
 
-impl std::fmt::Debug for Engine {
+impl<T: IndexableItem> std::fmt::Debug for Index<T> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("Engine")
+        f.debug_struct("Index")
             .field("items", &self.items.len())
             .finish()
     }
 }
 
-impl Default for Engine {
+impl<T: IndexableItem> Default for Index<T> {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl Engine {
+impl<T: IndexableItem> Index<T> {
     pub fn new() -> Self {
         let mut config = Config::DEFAULT;
         config.ignore_case = true;
@@ -42,15 +58,15 @@ impl Engine {
         }
     }
 
-    pub fn set_items(&mut self, items: impl IntoIterator<Item = AppItem>) {
+    pub fn set_items(&mut self, items: impl IntoIterator<Item = T>) {
         self.items = items.into_iter().map(Arc::new).collect();
         self.scan = ScanTable::build(&self.items);
         self.narrowing.get_mut().take();
     }
 
-    pub fn add_item(&mut self, item: AppItem) {
+    pub fn add_item(&mut self, item: T) {
         let item = Arc::new(item);
-        self.scan.push(&item);
+        self.scan.push(item.as_ref());
         self.items.push(item);
         self.narrowing.get_mut().take();
     }
@@ -70,20 +86,20 @@ impl Engine {
     }
 
     #[cfg(test)]
-    fn top_items(&self, limit: usize) -> Vec<SearchResult> {
+    fn top_items(&self, limit: usize) -> Vec<Match<T>> {
         let mut out = Vec::new();
         self.top_items_into(limit, &mut out);
         out
     }
 
-    fn top_items_into(&self, limit: usize, out: &mut Vec<SearchResult>) {
+    fn top_items_into(&self, limit: usize, out: &mut Vec<Match<T>>) {
         out.clear();
         if limit == 0 {
             return;
         }
 
         // Bounded selection over the launch count column: scoring the whole
-        // index does not require touching a single `AppItem`.
+        // index does not require touching a single item.
         let mut top: Vec<(u32, i32)> = Vec::with_capacity(limit.min(self.items.len()));
         for (idx, &launch_count) in self.scan.launch_counts.iter().enumerate() {
             let score = launch_score(launch_count, TOP_ITEMS_FRECENCY_MULTIPLIER);
@@ -97,19 +113,21 @@ impl Engine {
             top.insert(pos, (idx as u32, score));
         }
 
-        out.extend(top.into_iter().map(|(idx, score)| {
-            SearchResult::from_app(Arc::clone(&self.items[idx as usize]), score, Vec::new())
+        out.extend(top.into_iter().map(|(idx, score)| Match {
+            item: Arc::clone(&self.items[idx as usize]),
+            score,
+            matched_char_indices: Vec::new(),
         }));
     }
 
     #[cfg(test)]
-    fn find(&self, query: &str, limit: usize) -> Vec<SearchResult> {
+    fn find(&self, query: &str, limit: usize) -> Vec<Match<T>> {
         let mut out = Vec::new();
         self.find_into(query, limit, &mut out);
         out
     }
 
-    fn find_into(&self, query: &str, limit: usize, out: &mut Vec<SearchResult>) {
+    fn find_into(&self, query: &str, limit: usize, out: &mut Vec<Match<T>>) {
         out.clear();
         if limit == 0 {
             return;
@@ -157,20 +175,24 @@ impl Engine {
             } else {
                 Vec::new()
             };
-            SearchResult::from_app(item, candidate.score, indices)
+            Match {
+                item,
+                score: candidate.score,
+                matched_char_indices: indices,
+            }
         }));
     }
 
-    pub fn search(&self, query: &str, limit: usize) -> Vec<SearchResult> {
+    pub fn search(&self, query: &str, limit: usize) -> Vec<Match<T>> {
         let mut out = Vec::new();
         self.search_into(query, limit, &mut out);
         out
     }
 
-    /// Same as [`Engine::search`], but reuses `out`'s existing allocation
+    /// Same as [`Index::search`], but reuses `out`'s existing allocation
     /// instead of returning a freshly allocated `Vec` on every call, which
     /// matters on a UI thread re-searching once per keystroke.
-    pub fn search_into(&self, query: &str, limit: usize, out: &mut Vec<SearchResult>) {
+    pub fn search_into(&self, query: &str, limit: usize, out: &mut Vec<Match<T>>) {
         let trimmed = query.trim();
         if trimmed.is_empty() {
             self.top_items_into(limit, out);
@@ -271,7 +293,7 @@ const KEYWORD_SEPARATOR: char = '\n';
 
 /// Search-only projection of the index, laid out for a linear scan: the fields
 /// the per-keystroke scan reads live in contiguous buffers instead of behind one
-/// `Arc<AppItem>` indirection (plus one `Vec<String>`) per item.
+/// `Arc<T>` indirection (plus one `Vec<String>`) per item.
 #[derive(Default)]
 struct ScanTable {
     /// Every item name, concatenated.
@@ -396,7 +418,7 @@ struct ScanRow {
 }
 
 impl ScanTable {
-    fn build(items: &[Arc<AppItem>]) -> Self {
+    fn build<T: IndexableItem>(items: &[Arc<T>]) -> Self {
         let names_len: usize = items.iter().map(|item| item.name().len()).sum();
         let keywords_len: usize = items
             .iter()
@@ -411,12 +433,12 @@ impl ScanTable {
             rows: Vec::with_capacity(items.len()),
         };
         for item in items {
-            table.push(item);
+            table.push(item.as_ref());
         }
         table
     }
 
-    fn push(&mut self, item: &AppItem) {
+    fn push<T: IndexableItem>(&mut self, item: &T) {
         let name_start = self.names.len() as u32;
         self.names.push_str(item.name());
         let keywords_start = self.keywords.len() as u32;
@@ -850,10 +872,10 @@ fn name_score_ceiling(chars: usize) -> i32 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::models::LaunchTarget;
+    use crate::models::{AppItem, LaunchTarget};
 
-    fn sample_index() -> Engine {
-        let mut index = Engine::new();
+    fn sample_index() -> Index<AppItem> {
+        let mut index = Index::new();
         index.set_items(vec![
             AppItem::new(
                 "notepad",
@@ -890,12 +912,12 @@ mod tests {
         index
     }
 
-    fn titles(results: &[SearchResult]) -> Vec<&str> {
-        results.iter().map(|r| r.title.as_ref()).collect()
+    fn titles(results: &[Match<AppItem>]) -> Vec<&str> {
+        results.iter().map(|r| r.item.name()).collect()
     }
 
-    fn named(results: &[SearchResult]) -> Vec<String> {
-        results.iter().map(|r| r.title.to_string()).collect()
+    fn named(results: &[Match<AppItem>]) -> Vec<String> {
+        results.iter().map(|r| r.item.name().to_string()).collect()
     }
 
     #[test]
@@ -904,11 +926,11 @@ mod tests {
 
         let results = index.find("calc", 5);
         assert!(!results.is_empty());
-        assert_eq!(results[0].title.as_ref(), "Calculator");
+        assert_eq!(results[0].item.name(), "Calculator");
 
         let results = index.find("not", 5);
         assert!(!results.is_empty());
-        assert_eq!(results[0].title.as_ref(), "Notepad");
+        assert_eq!(results[0].item.name(), "Notepad");
     }
 
     #[test]
@@ -917,16 +939,16 @@ mod tests {
 
         let results = index.find("vsc", 5);
         assert!(!results.is_empty());
-        assert_eq!(results[0].title.as_ref(), "Visual Studio Code");
+        assert_eq!(results[0].item.name(), "Visual Studio Code");
 
         let results = index.find("gc", 5);
         assert!(!results.is_empty());
-        assert_eq!(results[0].title.as_ref(), "Google Chrome");
+        assert_eq!(results[0].item.name(), "Google Chrome");
     }
 
     #[test]
     fn test_keyword_score_not_shadowed_by_weak_name_match() {
-        let mut index = Engine::new();
+        let mut index = Index::new();
         index.set_items(vec![
             AppItem::new(
                 "scattered",
@@ -969,7 +991,7 @@ mod tests {
 
     #[test]
     fn test_uppercase_and_accented_queries_still_match() {
-        let mut index = Engine::new();
+        let mut index = Index::new();
         index.set_items(vec![
             AppItem::new(
                 "chrome",
@@ -992,12 +1014,12 @@ mod tests {
 
         let results = index.find("browser", 5);
         assert!(!results.is_empty());
-        assert_eq!(results[0].title.as_ref(), "Google Chrome");
+        assert_eq!(results[0].item.name(), "Google Chrome");
     }
 
     #[test]
     fn test_no_match_is_excluded_even_with_partial_letters() {
-        let mut index = Engine::new();
+        let mut index = Index::new();
         index.set_items(vec![
             AppItem::new("chrome", "Chrome", LaunchTarget::Path("chrome.exe".into())),
             AppItem::new(
@@ -1026,7 +1048,7 @@ mod tests {
 
     #[test]
     fn test_prefix_outranks_acronym() {
-        let mut index = Engine::new();
+        let mut index = Index::new();
         index.set_items(vec![
             AppItem::new("vscode", "VS Code", LaunchTarget::Path("code.exe".into())),
             AppItem::new(
@@ -1042,7 +1064,7 @@ mod tests {
 
     #[test]
     fn test_acronym_outranks_substring() {
-        let mut index = Engine::new();
+        let mut index = Index::new();
         index.set_items(vec![
             AppItem::new(
                 "open-office-go",
@@ -1058,7 +1080,7 @@ mod tests {
 
     #[test]
     fn test_word_start_bonus_can_outrank_a_midword_substring() {
-        let mut index = Engine::new();
+        let mut index = Index::new();
         index.set_items(vec![
             AppItem::new(
                 "notepad",
@@ -1078,7 +1100,7 @@ mod tests {
 
     #[test]
     fn test_keyword_match_outranks_a_weak_fuzzy_name_match() {
-        let mut index = Engine::new();
+        let mut index = Index::new();
         index.set_items(vec![
             AppItem::new(
                 "rand-setup",
@@ -1102,21 +1124,16 @@ mod tests {
 
     #[test]
     fn test_frecency_breaks_ties_between_identical_names() {
-        use crate::models::SearchResultKind;
-
         let popular =
             AppItem::new("a", "Test App", LaunchTarget::Path("a.exe".into())).with_launch_count(10);
         let rare = AppItem::new("b", "Test App", LaunchTarget::Path("b.exe".into()));
 
-        let mut index = Engine::new();
+        let mut index = Index::new();
         index.set_items(vec![rare, popular]);
 
         let results = index.find("test app", 5);
         assert_eq!(results.len(), 2);
-        let SearchResultKind::App(item) = &results[0].kind else {
-            panic!("expected an App result");
-        };
-        assert_eq!(item.id(), "a");
+        assert_eq!(results[0].item.id(), "a");
     }
 
     #[test]
@@ -1127,17 +1144,17 @@ mod tests {
         let rare = AppItem::new("b", "Yak Tool", LaunchTarget::Path("b.exe".into()))
             .with_keywords(vec!["zzzmatch".into()]);
 
-        let mut index = Engine::new();
+        let mut index = Index::new();
         index.set_items(vec![rare, popular]);
 
         let results = index.find("zzzmatch", 5);
         assert_eq!(results.len(), 2);
-        assert_eq!(results[0].title.as_ref(), "Aardvark Tool");
+        assert_eq!(results[0].item.name(), "Aardvark Tool");
     }
 
     #[test]
     fn test_keyword_matching_normalizes_case_at_construction_time() {
-        let mut index = Engine::new();
+        let mut index = Index::new();
         index.set_items(vec![
             AppItem::new(
                 "chrome",
@@ -1149,12 +1166,12 @@ mod tests {
 
         let results = index.find("browser", 5);
         assert!(!results.is_empty());
-        assert_eq!(results[0].title.as_ref(), "Google Chrome");
+        assert_eq!(results[0].item.name(), "Google Chrome");
     }
 
     #[test]
     fn test_unicode_names_match_case_insensitively_with_correct_indices() {
-        let mut index = Engine::new();
+        let mut index = Index::new();
         index.set_items(vec![
             AppItem::new("cafe", "Café", LaunchTarget::Path("cafe.exe".into())),
             AppItem::new(
@@ -1166,12 +1183,12 @@ mod tests {
 
         let results = index.find("CAF", 5);
         assert_eq!(results.len(), 1);
-        assert_eq!(results[0].title.as_ref(), "Café");
+        assert_eq!(results[0].item.name(), "Café");
         assert_eq!(results[0].matched_char_indices, vec![0, 1, 2]);
 
         let results = index.find("アプリ", 5);
         assert_eq!(results.len(), 1);
-        assert_eq!(results[0].title.as_ref(), "日本語アプリ");
+        assert_eq!(results[0].item.name(), "日本語アプリ");
         assert_eq!(results[0].matched_char_indices, vec![3, 4, 5]);
     }
 
@@ -1185,7 +1202,7 @@ mod tests {
     fn test_extreme_launch_count_does_not_panic_or_go_negative() {
         let item = AppItem::new("bulk", "Bulk App", LaunchTarget::Path("bulk.exe".into()))
             .with_launch_count(u32::MAX);
-        let mut index = Engine::new();
+        let mut index = Index::new();
         index.add_item(item);
 
         let top = index.top_items(1);
@@ -1199,7 +1216,7 @@ mod tests {
 
     #[test]
     fn test_query_with_multi_char_unicode_lowercase_expansion_still_matches() {
-        let mut index = Engine::new();
+        let mut index = Index::new();
         index.set_items(vec![AppItem::new(
             "istanbul",
             "İstanbul Maps",
@@ -1208,7 +1225,7 @@ mod tests {
 
         let results = index.find("İ", 5);
         assert_eq!(results.len(), 1);
-        assert_eq!(results[0].title.as_ref(), "İstanbul Maps");
+        assert_eq!(results[0].item.name(), "İstanbul Maps");
         assert_eq!(results[0].matched_char_indices, vec![0]);
     }
 
@@ -1255,7 +1272,7 @@ mod tests {
     fn test_typing_matches_a_cold_search_past_the_narrowing_capacity() {
         // Wide enough that early keystrokes match more items than the engine
         // keeps, which forces the following keystroke back to a full scan.
-        fn large_index() -> Engine {
+        fn large_index() -> Index<AppItem> {
             let items: Vec<AppItem> = (0..500)
                 .map(|i| {
                     let name = match i % 3 {
@@ -1271,7 +1288,7 @@ mod tests {
                     .with_keywords(vec!["tool".into()])
                 })
                 .collect();
-            let mut index = Engine::new();
+            let mut index = Index::new();
             index.set_items(items);
             index
         }
@@ -1362,7 +1379,7 @@ mod tests {
             })
             .collect();
 
-        let mut index = Engine::new();
+        let mut index = Index::new();
         index.set_items(items.clone());
 
         let queries = [
@@ -1390,7 +1407,7 @@ mod tests {
             let mut got: Vec<String> = index
                 .find(query, usize::MAX)
                 .into_iter()
-                .map(|r| r.title.to_string())
+                .map(|r| r.item.name().to_string())
                 .collect();
             got.sort();
             assert_eq!(got, reference_titles(&items, query), "query: {query:?}");
@@ -1523,7 +1540,7 @@ mod tests {
             })
             .collect();
 
-        let mut typed = Engine::new();
+        let mut typed = Index::new();
         typed.set_items(items.clone());
 
         let queries = [
@@ -1533,7 +1550,7 @@ mod tests {
             let expected = reference_ranking(&items, query, 6);
             // Cold every time as well: a narrowed scan is a different code
             // path, and the ranking has to come out the same on both.
-            let mut cold = Engine::new();
+            let mut cold = Index::new();
             cold.set_items(items.clone());
             assert_eq!(named(&cold.find(query, 6)), expected, "cold: {query:?}");
             assert_eq!(named(&typed.find(query, 6)), expected, "typed: {query:?}");
@@ -1583,19 +1600,19 @@ mod tests {
 
     #[test]
     fn test_empty_query_lists_top_items() {
-        let mut index = Engine::new();
+        let mut index = Index::new();
         let popular = AppItem::new("a", "Popular App", LaunchTarget::Path("a.exe".into()))
             .with_launch_count(10);
         index.set_items(vec![popular]);
 
         let results = index.search("", 5);
         assert_eq!(results.len(), 1);
-        assert_eq!(results[0].title.as_ref(), "Popular App");
+        assert_eq!(results[0].item.name(), "Popular App");
     }
 
     #[test]
     fn test_zero_limit_yields_no_results_for_top_items_and_a_search() {
-        let mut index = Engine::new();
+        let mut index = Index::new();
         index.set_items(vec![AppItem::new(
             "a",
             "Calculator",

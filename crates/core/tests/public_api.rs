@@ -1,9 +1,16 @@
-use winsp_core::engine::Engine;
+use winsp_core::index::{Index, Match};
 use winsp_core::models::{AppItem, LaunchTarget, SearchResult, SearchResultKind};
+
+fn to_results(matches: Vec<Match<AppItem>>) -> Vec<SearchResult> {
+    matches
+        .into_iter()
+        .map(|m| SearchResult::from_app(m.item, m.score, m.matched_char_indices))
+        .collect()
+}
 
 #[test]
 fn test_full_flow_from_construction_to_search_result() {
-    let mut index = Engine::new();
+    let mut index = Index::new();
     index.set_items(vec![
         AppItem::new(
             "notepad",
@@ -29,7 +36,7 @@ fn test_full_flow_from_construction_to_search_result() {
         ),
     ]);
 
-    let results = index.search("notepad", 5);
+    let results = to_results(index.search("notepad", 5));
     assert_eq!(results.len(), 1);
     assert_eq!(results[0].title.as_ref(), "Notepad");
     assert_eq!(results[0].subtitle.as_deref(), Some("notepad.exe"));
@@ -38,16 +45,16 @@ fn test_full_flow_from_construction_to_search_result() {
     };
     assert_eq!(item.id(), "notepad");
 
-    let results = index.search("calc", 5);
+    let results = to_results(index.search("calc", 5));
     assert_eq!(results[0].subtitle.as_deref(), None);
 
-    let results = index.search("display", 5);
+    let results = to_results(index.search("display", 5));
     assert_eq!(
         results[0].subtitle.as_deref(),
         Some("Change your display resolution")
     );
 
-    let results = index.search("shutdown", 5);
+    let results = to_results(index.search("shutdown", 5));
     assert_eq!(results[0].subtitle.as_deref(), None);
 }
 

@@ -3,14 +3,14 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use crate::sources::Sources;
-use winsp_core::engine::Engine;
+use crate::state::Catalog;
 use winsp_windows::system::watcher::{WatchEvent, Watcher};
 
 const RECONCILE_INTERVAL: Duration = Duration::from_secs(600);
 const MIN_RECONCILE_GAP: Duration = Duration::from_secs(30);
 
-pub(crate) fn engine_from_sources(sources: &Sources) -> Engine {
-    let mut index = Engine::new();
+pub(crate) fn engine_from_sources(sources: &Sources) -> Catalog {
+    let mut index = Catalog::new();
     index.set_items(sources.items());
     index
 }

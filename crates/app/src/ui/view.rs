@@ -293,7 +293,7 @@ mod render_tests {
     #[test]
     fn render_draws_from_the_state_it_is_given_without_touching_any_static() {
         let surface = OffscreenSurface::new(BITMAP_WIDTH, 200);
-        let state = UiState::new(&winsp_core::engine::Engine::new());
+        let state = UiState::new(&crate::state::Catalog::new());
         let client_rect = Rect {
             left: 0,
             top: 0,

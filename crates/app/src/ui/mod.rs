@@ -5,12 +5,12 @@ mod view;
 use std::sync::mpsc::Sender;
 use std::sync::{Mutex, OnceLock};
 
-use winsp_core::engine::Engine;
-use winsp_core::models::{LaunchTarget, SearchResult, SearchResultKind};
+use winsp_core::index::Match;
+use winsp_core::models::{AppItem, LaunchTarget, SearchResult, SearchResultKind};
 use winsp_windows::window::{Hotkey, HotkeySlot, Key, Modifiers, Window};
 
 use crate::config::Settings;
-use crate::state::AppState;
+use crate::state::{AppState, Catalog};
 use controller::handle_event;
 use view::to_anchor;
 
@@ -22,16 +22,16 @@ pub(crate) const WINDOW_CLASS_NAME: &str = "WinSP_Spotlight_Window";
 const CATALOG_READY_EVENT: u32 = 1;
 const MAX_RESULTS: usize = 6;
 
-static PENDING_CATALOG: OnceLock<Mutex<Option<Engine>>> = OnceLock::new();
+static PENDING_CATALOG: OnceLock<Mutex<Option<Catalog>>> = OnceLock::new();
 
-pub(crate) fn deliver_catalog(index: Engine) {
+pub(crate) fn deliver_catalog(index: Catalog) {
     if let Ok(mut slot) = PENDING_CATALOG.get_or_init(|| Mutex::new(None)).lock() {
         *slot = Some(index);
     }
     winsp_windows::window::post_event(CATALOG_READY_EVENT);
 }
 
-fn take_pending_catalog() -> Option<Engine> {
+fn take_pending_catalog() -> Option<Catalog> {
     PENDING_CATALOG
         .get()
         .and_then(|slot| slot.lock().ok())
@@ -41,6 +41,9 @@ fn take_pending_catalog() -> Option<Engine> {
 #[derive(Debug)]
 struct UiState {
     query: String,
+    /// Scratch space `search::query` reuses for the index's own matches, kept
+    /// alongside `results` so a keystroke never allocates a fresh buffer for it.
+    matches: Vec<Match<AppItem>>,
     results: Vec<SearchResult>,
     selected_index: usize,
     capturing_hotkey: bool,
@@ -57,11 +60,13 @@ enum ExecuteOutcome {
 }
 
 impl UiState {
-    fn new(engine: &Engine) -> Self {
+    fn new(engine: &Catalog) -> Self {
+        let mut matches = Vec::new();
         let mut results = Vec::new();
-        crate::search::query(engine, "", MAX_RESULTS, &mut results);
+        crate::search::query(engine, "", MAX_RESULTS, &mut matches, &mut results);
         Self {
             query: String::new(),
+            matches,
             results,
             selected_index: 0,
             capturing_hotkey: false,
@@ -69,8 +74,14 @@ impl UiState {
         }
     }
 
-    fn refresh_against(&mut self, engine: &Engine) {
-        crate::search::query(engine, &self.query, MAX_RESULTS, &mut self.results);
+    fn refresh_against(&mut self, engine: &Catalog) {
+        crate::search::query(
+            engine,
+            &self.query,
+            MAX_RESULTS,
+            &mut self.matches,
+            &mut self.results,
+        );
         self.selected_index = 0;
         self.stale = false;
     }
@@ -78,7 +89,7 @@ impl UiState {
     /// Searches for the current query if an edit left the results behind, and
     /// reports whether it had to. Every read of the results goes through here,
     /// so a deferred search is only ever deferred, never skipped.
-    fn settle(&mut self, engine: &Engine) -> bool {
+    fn settle(&mut self, engine: &Catalog) -> bool {
         if !self.stale {
             return false;
         }
@@ -106,7 +117,7 @@ impl UiState {
         self.capturing_hotkey = true;
     }
 
-    fn stop_capturing_hotkey(&mut self, engine: &Engine) {
+    fn stop_capturing_hotkey(&mut self, engine: &Catalog) {
         self.capturing_hotkey = false;
         self.clear_query();
         self.settle(engine);
@@ -246,13 +257,13 @@ mod tests {
     use super::*;
 
     fn sample_state() -> UiState {
-        UiState::new(&Engine::new())
+        UiState::new(&Catalog::new())
     }
 
-    fn sample_engine() -> Engine {
+    fn sample_engine() -> Catalog {
         use winsp_core::models::AppItem;
 
-        let mut engine = Engine::new();
+        let mut engine = Catalog::new();
         engine.set_items(vec![
             AppItem::new("calc", "Calculator", LaunchTarget::Path("calc.exe".into())),
             AppItem::new("cal", "Calendar", LaunchTarget::Path("cal.exe".into())),
@@ -260,7 +271,7 @@ mod tests {
         engine
     }
 
-    fn type_query(state: &mut UiState, engine: &Engine, query: &str) {
+    fn type_query(state: &mut UiState, engine: &Catalog, query: &str) {
         for c in query.chars() {
             state.insert_char(c);
         }
@@ -269,7 +280,7 @@ mod tests {
 
     #[test]
     fn insert_char_appends_and_refreshes() {
-        let engine = Engine::new();
+        let engine = Catalog::new();
         let mut state = sample_state();
 
         type_query(&mut state, &engine, "calc");
@@ -280,7 +291,7 @@ mod tests {
 
     #[test]
     fn backspace_and_clear_query_refresh_results() {
-        let engine = Engine::new();
+        let engine = Catalog::new();
         let mut state = sample_state();
         type_query(&mut state, &engine, "calc");
 
@@ -295,7 +306,7 @@ mod tests {
 
     #[test]
     fn backspace_on_an_empty_query_is_a_no_op() {
-        let engine = Engine::new();
+        let engine = Catalog::new();
         let mut state = sample_state();
 
         state.backspace();
@@ -370,7 +381,7 @@ mod tests {
 
     #[test]
     fn execute_selected_with_no_matches_returns_none() {
-        let engine = Engine::new();
+        let engine = Catalog::new();
         let mut state = sample_state();
         type_query(&mut state, &engine, "zzzznomatchzzzz");
 

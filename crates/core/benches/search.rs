@@ -1,6 +1,6 @@
 use criterion::{BatchSize, Bencher, BenchmarkId, Criterion, criterion_group, criterion_main};
 use std::hint::black_box;
-use winsp_core::engine::Engine;
+use winsp_core::index::Index;
 use winsp_core::models::{AppItem, LaunchTarget};
 
 const WORDS: &[&str] = &[
@@ -36,8 +36,8 @@ const WORDS: &[&str] = &[
     "Inspector",
 ];
 
-fn synthetic_index(size: usize) -> Engine {
-    let mut index = Engine::new();
+fn synthetic_index(size: usize) -> Index<AppItem> {
+    let mut index = Index::new();
     let items: Vec<AppItem> = (0..size)
         .map(|i| {
             let name = format!(
@@ -70,7 +70,7 @@ const UNRELATED_QUERY: &str = "zq";
 /// query they just ran. One iteration per batch is also what the search
 /// measures under CodSpeed, which runs the setup right before the one search it
 /// measures, so both runs measure the same thing.
-fn bench_cold_query(b: &mut Bencher, index: &Engine, query: &str) {
+fn bench_cold_query(b: &mut Bencher, index: &Index<AppItem>, query: &str) {
     b.iter_batched(
         || {
             black_box(index.search(UNRELATED_QUERY, 6));
