@@ -12,6 +12,7 @@ path = "src/main.rs"
 
 [dependencies]
 winsp-core = { path = "../core" }
+winsp-plugins = { path = "../plugins" }
 winsp-windows = { path = "../windows" }
 
 [build-dependencies]

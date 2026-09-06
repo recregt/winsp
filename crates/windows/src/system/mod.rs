@@ -8,5 +8,5 @@ pub mod toast;
 pub mod watcher;
 
 pub(crate) mod com;
-pub(crate) mod shortcut;
+pub mod shortcut;
 pub mod threadpool;

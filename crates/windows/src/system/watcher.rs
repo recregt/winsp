@@ -39,15 +39,6 @@ where
     Ok((debouncer, failed_dirs))
 }
 
-pub fn for_start_menu<F>(
-    on_event: F,
-) -> notify::Result<(Debouncer<RecommendedWatcher>, Vec<PathBuf>)>
-where
-    F: Fn(WatchEvent) + Send + 'static,
-{
-    for_dirs(&crate::catalog::start_menu_dirs(), on_event)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

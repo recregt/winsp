@@ -4,10 +4,11 @@ use std::path::{Path, PathBuf};
 use walkdir::WalkDir;
 use winsp_core::models::{AppItem, LaunchTarget};
 
-use super::Catalog;
-use crate::system::shortcut;
+use winsp_windows::system::shortcut;
 
-pub(crate) fn start_menu_dirs() -> Vec<PathBuf> {
+use super::Catalog;
+
+pub fn start_menu_dirs() -> Vec<PathBuf> {
     let mut dirs = Vec::new();
 
     if let Ok(app_data) = std::env::var("APPDATA") {

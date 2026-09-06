@@ -1,6 +1,6 @@
 use lnk::encoding::WINDOWS_1252;
 
-pub(crate) fn resolve_target(path: &std::path::Path, ext_lower: &str) -> Option<String> {
+pub fn resolve_target(path: &std::path::Path, ext_lower: &str) -> Option<String> {
     match ext_lower {
         "lnk" => resolve_lnk_target(path),
         "url" => resolve_url_target(path),

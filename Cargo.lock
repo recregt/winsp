@@ -1720,6 +1720,7 @@ dependencies = [
  "serde",
  "tempfile",
  "winsp-core",
+ "winsp-plugins",
  "winsp-windows",
 ]
 
@@ -1735,6 +1736,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "winsp-plugins"
+version = "0.3.0"
+dependencies = [
+ "tempfile",
+ "walkdir",
+ "windows",
+ "winsp-core",
+ "winsp-windows",
+]
+
+[[package]]
 name = "winsp-windows"
 version = "0.3.0"
 dependencies = [
@@ -1742,7 +1754,6 @@ dependencies = [
  "lru",
  "notify-debouncer-mini",
  "tempfile",
- "walkdir",
  "windows",
  "windows-registry",
  "winsp-core",

@@ -48,4 +48,4 @@ impl Catalog {
     }
 }
 
-pub(crate) use start_menu::start_menu_dirs;
+pub use start_menu::start_menu_dirs;
