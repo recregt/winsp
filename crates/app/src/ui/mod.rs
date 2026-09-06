@@ -1,5 +1,3 @@
-#![cfg(windows)]
-
 mod controller;
 mod hotkey;
 mod view;
@@ -61,7 +59,7 @@ enum ExecuteOutcome {
 impl UiState {
     fn new(engine: &Engine) -> Self {
         let mut results = Vec::new();
-        engine.search_into("", MAX_RESULTS, &mut results);
+        crate::search::query(engine, "", MAX_RESULTS, &mut results);
         Self {
             query: String::new(),
             results,
@@ -72,7 +70,7 @@ impl UiState {
     }
 
     fn refresh_against(&mut self, engine: &Engine) {
-        engine.search_into(&self.query, MAX_RESULTS, &mut self.results);
+        crate::search::query(engine, &self.query, MAX_RESULTS, &mut self.results);
         self.selected_index = 0;
         self.stale = false;
     }

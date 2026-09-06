@@ -1,5 +1,4 @@
 use crate::models::{AppItem, SearchResult};
-use compact_str::CompactString;
 use nucleo_matcher::chars::{normalize, to_lower_case};
 use nucleo_matcher::{Config, Matcher, Utf32Str};
 use std::borrow::Cow;
@@ -175,16 +174,8 @@ impl Engine {
         let trimmed = query.trim();
         if trimmed.is_empty() {
             self.top_items_into(limit, out);
-            return;
-        }
-
-        let calc_result = crate::calc::eval(trimmed)
-            .map(|res| SearchResult::calculation(CompactString::new(trimmed), res));
-
-        self.find_into(trimmed, limit, out);
-        if let Some(calc) = calc_result {
-            out.insert(0, calc);
-            out.truncate(limit);
+        } else {
+            self.find_into(trimmed, limit, out);
         }
     }
 }
@@ -1480,29 +1471,7 @@ mod tests {
     }
 
     #[test]
-    fn test_math_expression_is_merged_into_results() {
-        let index = Engine::new();
-
-        let results = index.search("25 * 4", 5);
-        assert!(!results.is_empty());
-        assert_eq!(results[0].title.as_ref(), "100");
-    }
-
-    #[test]
-    fn test_math_result_ranks_above_app_matches() {
-        let mut index = Engine::new();
-        index.set_items(vec![AppItem::new(
-            "calc",
-            "2 Calculators",
-            LaunchTarget::OsUri("shell:AppsFolder\\Microsoft.WindowsCalculator".into()),
-        )]);
-
-        let results = index.search("2 + 2", 5);
-        assert_eq!(results[0].title.as_ref(), "4");
-    }
-
-    #[test]
-    fn test_empty_query_lists_top_items_without_touching_math() {
+    fn test_empty_query_lists_top_items() {
         let mut index = Engine::new();
         let popular = AppItem::new("a", "Popular App", LaunchTarget::Path("a.exe".into()))
             .with_launch_count(10);

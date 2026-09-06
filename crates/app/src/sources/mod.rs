@@ -1,5 +1,3 @@
-#![cfg(windows)]
-
 mod apps;
 mod builtins;
 mod settings;

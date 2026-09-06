@@ -1,5 +1,3 @@
-#![cfg(windows)]
-
 use winsp_core::engine::Engine;
 
 #[derive(Debug)]

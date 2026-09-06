@@ -2,6 +2,7 @@
 #![forbid(unsafe_code)]
 
 mod config;
+mod search;
 mod sources;
 mod state;
 mod sync;

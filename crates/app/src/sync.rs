@@ -1,5 +1,3 @@
-#![cfg(windows)]
-
 use std::sync::mpsc::{RecvTimeoutError, Sender, TryRecvError};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
