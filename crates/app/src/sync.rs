@@ -75,14 +75,14 @@ fn finish_watcher<E>(result: Result<(Watcher, Vec<std::path::PathBuf>), E>) -> O
 }
 
 pub(crate) fn start_watching(plugins: Plugins) -> (Option<Watcher>, Sender<()>) {
+    let dirs = plugins.watch_dirs().to_vec();
     let plugins = Arc::new(Mutex::new(plugins));
     let tx = spawn_reconciler(Arc::clone(&plugins));
     let reconcile_tx = tx.clone();
 
-    let watcher =
-        winsp_windows::system::watcher::for_dirs(&winsp_plugins::start_menu_dirs(), move |event| {
-            handle_watch_event(event, &plugins, &tx);
-        });
+    let watcher = winsp_windows::system::watcher::for_dirs(&dirs, move |event| {
+        handle_watch_event(event, &plugins, &tx);
+    });
     (finish_watcher(watcher), reconcile_tx)
 }
 

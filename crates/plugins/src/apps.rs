@@ -6,7 +6,7 @@ use winsp_core::models::{AppItem, LaunchTarget};
 
 use winsp_windows::system::shortcut;
 
-pub fn start_menu_dirs() -> Vec<PathBuf> {
+fn start_menu_dirs() -> Vec<PathBuf> {
     let mut dirs = Vec::new();
 
     if let Ok(app_data) = std::env::var("APPDATA") {
@@ -122,6 +122,10 @@ impl Apps {
 
     pub fn unreadable_dirs(&self) -> &[PathBuf] {
         &self.unreadable_dirs
+    }
+
+    pub fn watch_dirs(&self) -> &[PathBuf] {
+        &self.dirs
     }
 }
 

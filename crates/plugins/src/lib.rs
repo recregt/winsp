@@ -8,17 +8,25 @@ mod settings;
 use std::collections::HashSet;
 use std::path::PathBuf;
 
+use builtins::Builtins;
+use settings::Settings;
 use winsp_core::models::AppItem;
 
-pub use apps::{Apps, start_menu_dirs};
+pub use apps::Apps;
 
 pub struct Plugins {
     pub apps: Apps,
+    settings: Settings,
+    builtins: Builtins,
 }
 
 impl Plugins {
     pub fn scan() -> Self {
-        Self { apps: Apps::scan() }
+        Self {
+            apps: Apps::scan(),
+            settings: Settings,
+            builtins: Builtins,
+        }
     }
 
     pub fn items(&self) -> Vec<AppItem> {
@@ -29,8 +37,8 @@ impl Plugins {
             .apps
             .items()
             .into_iter()
-            .chain(builtins::items())
-            .chain(settings::items())
+            .chain(self.builtins.items())
+            .chain(self.settings.items())
         {
             if seen_ids.insert(item.id().to_string()) {
                 items.push(item);
@@ -38,6 +46,10 @@ impl Plugins {
         }
 
         items
+    }
+
+    pub fn watch_dirs(&self) -> &[PathBuf] {
+        self.apps.watch_dirs()
     }
 
     pub fn apply_changes(&mut self, changed_paths: &[PathBuf]) {
