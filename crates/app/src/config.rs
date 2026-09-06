@@ -1,6 +1,6 @@
 #![cfg(windows)]
 
-use std::io::{self, Write};
+use std::io;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
@@ -117,39 +117,9 @@ impl Settings {
     }
 
     pub(crate) fn save_to(&self, path: &Path) -> io::Result<()> {
-        let parent = match path.parent() {
-            Some(parent) => {
-                std::fs::create_dir_all(parent)?;
-                parent
-            }
-            None => Path::new("."),
-        };
         let bytes = rmp_serde::to_vec_named(self)
             .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))?;
-        let mut tmp = tempfile::Builder::new()
-            .prefix("settings.")
-            .suffix(".tmp")
-            .tempfile_in(parent)?;
-        tmp.write_all(&bytes)?;
-        persist_with_retries(tmp, path)
-    }
-}
-
-const PERSIST_RETRIES: u32 = 5;
-const PERSIST_RETRY_DELAY: std::time::Duration = std::time::Duration::from_millis(5);
-
-fn persist_with_retries(mut tmp: tempfile::NamedTempFile, path: &Path) -> io::Result<()> {
-    let mut retries_left = PERSIST_RETRIES;
-    loop {
-        match tmp.persist(path) {
-            Ok(_) => return Ok(()),
-            Err(err) if retries_left > 0 && err.error.kind() == io::ErrorKind::PermissionDenied => {
-                tmp = err.file;
-                retries_left -= 1;
-                std::thread::sleep(PERSIST_RETRY_DELAY);
-            }
-            Err(err) => return Err(err.error),
-        }
+        winsp_windows::fs::atomic_write(path, &bytes)
     }
 }
 
