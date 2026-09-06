@@ -278,11 +278,11 @@ struct ScanTable {
     names: String,
     /// Every item's keywords, lowercased and separated by [`KEYWORD_SEPARATOR`].
     keywords: String,
-    /// Character bitmask of every name, in item order. Kept in its own buffer so
-    /// the prefilter walks 4 bytes per item instead of a whole row.
-    name_masks: Vec<u32>,
-    /// Character bitmask of every keyword blob slice, in item order.
-    keyword_masks: Vec<u32>,
+    /// Everything the prefilter reads, one [`prefilter_word`] per item: the two
+    /// character bitmasks and the name length. Packed into a single column so
+    /// the item a query rules out costs one 8 byte load, instead of three
+    /// buffers walked in step.
+    prefilter: Vec<u64>,
     /// Launch count of every item, in item order. Duplicated from
     /// [`ScanRow::launch_count`] so the no-query path scans 4 bytes per item.
     launch_counts: Vec<u32>,
@@ -323,7 +323,9 @@ fn needle_mask(needle: &str) -> u32 {
     needle.chars().map(char_bit).fold(0, |mask, bit| mask | bit)
 }
 
-const OTHER_CHAR_BIT: u32 = 1 << 26;
+/// Bits a character mask occupies: one per ASCII letter plus the catch-all.
+const MASK_BITS: u32 = 27;
+const OTHER_CHAR_BIT: u32 = 1 << (MASK_BITS - 1);
 
 fn ascii_bit(byte: u8) -> u32 {
     match byte.to_ascii_lowercase() {
@@ -342,6 +344,45 @@ fn char_bit(ch: char) -> u32 {
     } else {
         OTHER_CHAR_BIT
     }
+}
+
+/// Where the keyword mask sits in a [`prefilter_word`].
+const KEYWORD_MASK_SHIFT: u32 = MASK_BITS;
+/// Where the name length sits in a [`prefilter_word`]: the high bits, so that
+/// comparing whole words compares name lengths first.
+const NAME_LEN_SHIFT: u32 = 2 * MASK_BITS;
+/// Longest name a [`prefilter_word`] can hold the length of. A longer name
+/// saturates, which only makes the length test let more items through.
+const MAX_PACKED_NAME_LEN: u64 = (1 << (u64::BITS - NAME_LEN_SHIFT)) - 1;
+
+/// Everything one item contributes to the prefilter, in one word: its name mask
+/// in the low bits, its keyword mask above that, and its name length in the
+/// high bits.
+fn prefilter_word(name_mask: u32, keyword_mask: u32, name_len: usize) -> u64 {
+    let name_len = (name_len as u64).min(MAX_PACKED_NAME_LEN);
+    u64::from(name_mask)
+        | (u64::from(keyword_mask) << KEYWORD_MASK_SHIFT)
+        | (name_len << NAME_LEN_SHIFT)
+}
+
+/// Smallest prefilter word whose name is long enough to hold a needle of
+/// `chars` characters, which is what a name has to be for the matcher to have
+/// anything to look at. The name length occupies the high bits of a word, so a
+/// word compares greater than this exactly when its name is long enough — the
+/// same comparison the name length would make on its own, as one instruction
+/// on the word the masks were loaded with.
+///
+/// The lengths are byte lengths, as they were when they were compared field by
+/// field: a name that is not ASCII holds more bytes than characters, so the
+/// test stays on the conservative side of the character count.
+///
+/// A needle longer than a packed name length can be is not compared at all,
+/// since the saturated lengths no longer order against it.
+fn name_len_floor(chars: usize) -> u64 {
+    if chars as u64 > MAX_PACKED_NAME_LEN {
+        return 0;
+    }
+    (chars as u64) << NAME_LEN_SHIFT
 }
 
 #[derive(Clone, Copy)]
@@ -365,8 +406,7 @@ impl ScanTable {
         let mut table = Self {
             names: String::with_capacity(names_len),
             keywords: String::with_capacity(keywords_len),
-            name_masks: Vec::with_capacity(items.len()),
-            keyword_masks: Vec::with_capacity(items.len()),
+            prefilter: Vec::with_capacity(items.len()),
             launch_counts: Vec::with_capacity(items.len()),
             rows: Vec::with_capacity(items.len()),
         };
@@ -386,8 +426,8 @@ impl ScanTable {
         }
         let (name_mask, name_is_ascii) = haystack_mask(item.name());
         let (keyword_mask, _) = haystack_mask(&self.keywords[keywords_start as usize..]);
-        self.name_masks.push(name_mask);
-        self.keyword_masks.push(keyword_mask);
+        self.prefilter
+            .push(prefilter_word(name_mask, keyword_mask, item.name().len()));
         self.launch_counts.push(item.launch_count());
         self.rows.push(ScanRow {
             name_start,
@@ -417,35 +457,24 @@ impl ScanTable {
     ) -> Scan {
         match narrowed {
             Some(items) => {
-                let rows = items.iter().map(|&idx| {
-                    let index = idx as usize;
-                    (
-                        idx,
-                        &self.rows[index],
-                        self.name_masks[index],
-                        self.keyword_masks[index],
-                    )
-                });
-                self.scan(rows, matcher, needle, query_lower, query_mask, limit)
+                let words = items.iter().map(|&idx| (idx, self.prefilter[idx as usize]));
+                self.scan(words, matcher, needle, query_lower, query_mask, limit)
             }
             None => {
-                // Walked as parallel iterators: the whole index is read in
-                // order, so none of the columns needs a bounds check.
-                let rows = self
-                    .rows
+                // The whole column is read in order, so the prefilter word of
+                // an item needs no bounds check.
+                let words = self
+                    .prefilter
                     .iter()
-                    .zip(self.name_masks.iter().copied())
-                    .zip(self.keyword_masks.iter().copied())
+                    .copied()
                     .enumerate()
-                    .map(|(idx, ((row, name_mask), keyword_mask))| {
-                        (idx as u32, row, name_mask, keyword_mask)
-                    });
-                self.scan(rows, matcher, needle, query_lower, query_mask, limit)
+                    .map(|(idx, word)| (idx as u32, word));
+                self.scan(words, matcher, needle, query_lower, query_mask, limit)
             }
         }
     }
 
-    fn scan<'a, I: Iterator<Item = (u32, &'a ScanRow, u32, u32)>>(
+    fn scan<I: Iterator<Item = (u32, u64)>>(
         &self,
         mut source: I,
         matcher: &mut Matcher,
@@ -454,7 +483,12 @@ impl ScanTable {
         query_mask: u32,
         limit: usize,
     ) -> Scan {
-        let needle_len = needle.len() as u32;
+        // The prefilter reads one word per item and tests it against these
+        // three: the query characters a name must hold, the same characters in
+        // the keyword field, and the shortest name the needle fits in.
+        let name_probe = u64::from(query_mask);
+        let keyword_probe = name_probe << KEYWORD_MASK_SHIFT;
+        let name_len_floor = name_len_floor(needle.len());
         let query = Query {
             needle,
             lowercased: query_lower,
@@ -478,16 +512,17 @@ impl ScanTable {
         // never fills the shortlist — one matching fewer items than the limit,
         // or nothing at all — is scanned by this loop alone, and pays the mask
         // test and nothing else for an item the mask rejects.
-        for (idx, row, name_mask, keyword_mask) in source.by_ref() {
+        for (idx, word) in source.by_ref() {
             // A name shorter than the needle cannot hold it, which the matcher
             // would have to be called to find out.
-            let name_possible =
-                query_mask & !name_mask == 0 && needle_len <= row.name_end - row.name_start;
-            let keyword_possible = query_mask & !keyword_mask == 0;
+            let missing = !word;
+            let name_possible = name_probe & missing == 0 && word >= name_len_floor;
+            let keyword_possible = keyword_probe & missing == 0;
             if !name_possible && !keyword_possible {
                 continue;
             }
 
+            let row = &self.rows[idx as usize];
             self.score_row(&mut state, query, idx, row, name_possible, keyword_possible);
             if state.top.len() == limit {
                 break;
@@ -506,14 +541,15 @@ impl ScanTable {
         // narrows its scan with, which takes deciding whether it matches at all
         // — much less work than scoring it, but not always possible without the
         // matcher, in which case it is scored after all.
-        for (idx, row, name_mask, keyword_mask) in source {
-            let name_possible =
-                query_mask & !name_mask == 0 && needle_len <= row.name_end - row.name_start;
-            let keyword_possible = query_mask & !keyword_mask == 0;
+        for (idx, word) in source {
+            let missing = !word;
+            let name_possible = name_probe & missing == 0 && word >= name_len_floor;
+            let keyword_possible = keyword_probe & missing == 0;
             if !name_possible && !keyword_possible {
                 continue;
             }
 
+            let row = &self.rows[idx as usize];
             if let Some(is_match) = ruled_out_unscored(
                 self,
                 row,
@@ -521,6 +557,7 @@ impl ScanTable {
                 keyword_possible,
                 &query,
                 state.top[limit - 1].score,
+                state.matched.is_some(),
             ) {
                 if is_match {
                     record_match(&mut state.matched, state.capacity, idx);
@@ -638,10 +675,15 @@ struct Query<'a> {
     ascii_needle: Option<&'a [u8]>,
 }
 
-/// Whether the score ceiling rules `row` out, and if so whether it matches the
-/// query anyway, which is all the match set of the scan still needs from it.
+/// Whether the score ceiling rules `row` out, and if so whether the match set
+/// still being built wants it, which is all a ruled out item is still asked for.
 /// `None` leaves the item to be scored: either the ceiling does not rule it out,
 /// or deciding the match needs the matcher after all.
+///
+/// `collecting` says whether the match set is still alive. Once it has been
+/// given up, a ruled out item is not going anywhere, so whether it matches is
+/// nothing anyone reads and deciding it is work the scan can skip — which is
+/// what the rest of a scan over an index that matches the query widely does.
 ///
 /// Kept out of line, like the rest of what only some items reach: the scan loop
 /// calls this once the shortlist is full, and a scan whose shortlist never fills
@@ -654,6 +696,7 @@ fn ruled_out_unscored(
     keyword_possible: bool,
     query: &Query<'_>,
     cutoff: i32,
+    collecting: bool,
 ) -> Option<bool> {
     let mut ceiling = if name_possible { query.name_ceiling } else { 0 };
     if keyword_possible {
@@ -663,6 +706,9 @@ fn ruled_out_unscored(
         ceiling.saturating_add(launch_score(row.launch_count, SEARCH_FRECENCY_MULTIPLIER));
     if ceiling > cutoff {
         return None;
+    }
+    if !collecting {
+        return Some(false);
     }
 
     let by_name = match (name_possible, query.ascii_needle) {
@@ -702,17 +748,36 @@ fn record_match(matched: &mut Option<Vec<u32>>, capacity: usize, idx: u32) {
     }
 }
 
+/// Bit that tells an ASCII letter's two cases apart.
+const ASCII_CASE_BIT: u8 = 0b10_0000;
+
+/// The bit a haystack byte is folded with before it is compared to `wanted`:
+/// the case bit when `wanted` is a letter, since only that letter's two cases
+/// fold onto it, and nothing otherwise, since then only the byte itself equals
+/// it. Cheaper than lowercasing every haystack byte, and the same comparison.
+fn case_fold_bit(wanted: u8) -> u8 {
+    if wanted.is_ascii_lowercase() {
+        ASCII_CASE_BIT
+    } else {
+        0
+    }
+}
+
 /// Whether `needle`, which is ASCII and already lowercase, appears in
 /// `haystack` as a subsequence, ignoring case.
 fn is_subsequence_ignore_ascii_case(haystack: &[u8], needle: &[u8]) -> bool {
-    let mut needle = needle.iter();
+    let mut needle = needle.iter().copied();
     let Some(mut wanted) = needle.next() else {
         return true;
     };
-    for byte in haystack {
-        if byte.to_ascii_lowercase() == *wanted {
+    let mut fold = case_fold_bit(wanted);
+    for &byte in haystack {
+        if byte | fold == wanted {
             match needle.next() {
-                Some(next) => wanted = next,
+                Some(next) => {
+                    wanted = next;
+                    fold = case_fold_bit(next);
+                }
                 None => return true,
             }
         }
@@ -1352,6 +1417,52 @@ mod tests {
                     .collect()
             })
             .collect()
+    }
+
+    /// The three fields a prefilter word packs have to stay out of each
+    /// other's way: either mask tests on its own, and the name length decides
+    /// the ordering against [`name_len_floor`] whatever the masks hold.
+    #[test]
+    fn test_prefilter_word_fields_do_not_bleed_into_each_other() {
+        let full = u32::MAX >> (u32::BITS - MASK_BITS);
+        let word = prefilter_word(full, 0, 4);
+        assert_eq!(u64::from(full) & !word, 0, "the name mask is not readable");
+        assert_ne!(
+            u64::from(full) << KEYWORD_MASK_SHIFT & !word,
+            0,
+            "the name mask leaked into the keyword field"
+        );
+
+        let word = prefilter_word(full, full, 4);
+        assert!(word >= name_len_floor(4));
+        assert!(word < name_len_floor(5), "the masks outweighed the length");
+
+        // A name too long to pack saturates, and a needle that long stops
+        // comparing rather than ruling the name out.
+        let word = prefilter_word(0, 0, MAX_PACKED_NAME_LEN as usize + 1);
+        assert!(word >= name_len_floor(MAX_PACKED_NAME_LEN as usize));
+        assert_eq!(name_len_floor(MAX_PACKED_NAME_LEN as usize + 1), 0);
+    }
+
+    /// The subsequence test compares a haystack byte by folding it with the
+    /// case bit the needle byte asks for, instead of lowercasing it. Over every
+    /// byte pair, that has to be the same comparison.
+    #[test]
+    fn test_case_folded_comparison_matches_lowercasing() {
+        for wanted in 0..=u8::MAX {
+            if !wanted.is_ascii() || wanted != wanted.to_ascii_lowercase() {
+                // Needles reaching the test are ASCII and already lowercase.
+                continue;
+            }
+            let fold = case_fold_bit(wanted);
+            for byte in 0..=u8::MAX {
+                assert_eq!(
+                    byte | fold == wanted,
+                    byte.to_ascii_lowercase() == wanted,
+                    "byte {byte:#04x} against needle byte {wanted:#04x}"
+                );
+            }
+        }
     }
 
     #[test]
