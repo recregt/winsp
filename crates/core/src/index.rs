@@ -1,7 +1,7 @@
 use nucleo_matcher::chars::{normalize, to_lower_case};
 use nucleo_matcher::{Config, Matcher, Utf32Str};
 use std::borrow::Cow;
-use std::cell::RefCell;
+use std::cell::{RefCell, RefMut};
 use std::sync::Arc;
 
 const KEYWORD_MATCH_SCORE: i32 = 5_000;
@@ -27,9 +27,7 @@ pub struct Match<T> {
 
 pub struct Index<T: IndexableItem> {
     items: Vec<Arc<T>>,
-    scan: ScanTable,
-    matcher: RefCell<Matcher>,
-    narrowing: RefCell<Option<Narrowing>>,
+    ranking: Ranking,
 }
 
 impl<T: IndexableItem> std::fmt::Debug for Index<T> {
@@ -48,33 +46,26 @@ impl<T: IndexableItem> Default for Index<T> {
 
 impl<T: IndexableItem> Index<T> {
     pub fn new() -> Self {
-        let mut config = Config::DEFAULT;
-        config.ignore_case = true;
         Self {
             items: Vec::new(),
-            scan: ScanTable::default(),
-            matcher: RefCell::new(Matcher::new(config)),
-            narrowing: RefCell::new(None),
+            ranking: Ranking::new(),
         }
     }
 
     pub fn set_items(&mut self, items: impl IntoIterator<Item = T>) {
         self.items = items.into_iter().map(Arc::new).collect();
-        self.scan = ScanTable::build(&self.items);
-        self.narrowing.get_mut().take();
+        self.ranking.rebuild(&self.items);
     }
 
     pub fn add_item(&mut self, item: T) {
         let item = Arc::new(item);
-        self.scan.push(item.as_ref());
+        self.ranking.push(item.as_ref());
         self.items.push(item);
-        self.narrowing.get_mut().take();
     }
 
     pub fn clear(&mut self) {
         self.items.clear();
-        self.scan = ScanTable::default();
-        self.narrowing.get_mut().take();
+        self.ranking.clear();
     }
 
     pub fn len(&self) -> usize {
@@ -93,31 +84,7 @@ impl<T: IndexableItem> Index<T> {
     }
 
     fn top_items_into(&self, limit: usize, out: &mut Vec<Match<T>>) {
-        out.clear();
-        if limit == 0 {
-            return;
-        }
-
-        // Bounded selection over the launch count column: scoring the whole
-        // index does not require touching a single item.
-        let mut top: Vec<(u32, i32)> = Vec::with_capacity(limit.min(self.items.len()));
-        for (idx, &launch_count) in self.scan.launch_counts.iter().enumerate() {
-            let score = launch_score(launch_count, TOP_ITEMS_FRECENCY_MULTIPLIER);
-            if top.len() == limit {
-                if score <= top[limit - 1].1 {
-                    continue;
-                }
-                top.pop();
-            }
-            let pos = top.partition_point(|&(_, kept)| kept >= score);
-            top.insert(pos, (idx as u32, score));
-        }
-
-        out.extend(top.into_iter().map(|(idx, score)| Match {
-            item: Arc::clone(&self.items[idx as usize]),
-            score,
-            matched_char_indices: Vec::new(),
-        }));
+        self.collect(self.ranking.top(limit), out);
     }
 
     #[cfg(test)]
@@ -128,9 +95,123 @@ impl<T: IndexableItem> Index<T> {
     }
 
     fn find_into(&self, query: &str, limit: usize, out: &mut Vec<Match<T>>) {
+        self.collect(self.ranking.find(query, limit), out);
+    }
+
+    /// Turns the item indices a ranking picked into the items themselves. The
+    /// only step of a search that knows what an item is, and the only one that
+    /// touches item memory: everything before it reads the columns of
+    /// [`ScanTable`], which hold no `T`.
+    fn collect(&self, mut ranked: RefMut<'_, Vec<Ranked>>, out: &mut Vec<Match<T>>) {
         out.clear();
+        out.extend(ranked.drain(..).map(|ranked| Match {
+            item: Arc::clone(&self.items[ranked.item as usize]),
+            score: ranked.score,
+            matched_char_indices: ranked.matched_char_indices,
+        }));
+    }
+
+    pub fn search(&self, query: &str, limit: usize) -> Vec<Match<T>> {
+        let mut out = Vec::new();
+        self.search_into(query, limit, &mut out);
+        out
+    }
+
+    /// Same as [`Index::search`], but reuses `out`'s existing allocation
+    /// instead of returning a freshly allocated `Vec` on every call, which
+    /// matters on a UI thread re-searching once per keystroke.
+    pub fn search_into(&self, query: &str, limit: usize, out: &mut Vec<Match<T>>) {
+        let trimmed = query.trim();
+        if trimmed.is_empty() {
+            self.top_items_into(limit, out);
+        } else {
+            self.find_into(trimmed, limit, out);
+        }
+    }
+}
+
+/// One item a query picked, as an index into the item list. What a search
+/// produces before it is given an item type.
+struct Ranked {
+    item: u32,
+    score: i32,
+    matched_char_indices: Vec<usize>,
+}
+
+/// Everything a search reads that is not an item: the columnar projection of
+/// the index, the matcher, and the match set kept for the next keystroke.
+///
+/// Deliberately not generic, and the reason [`Index`]'s own body is as thin as
+/// it is. A generic body is compiled again in every crate that names an item
+/// type, under that crate's code generation rather than this one's, which is
+/// enough to change how a loop over an index-sized column comes out. Nothing a
+/// search reads is a `T` — names, keywords and launch counts all live in
+/// columns — so the whole of it is ranked here, once, and handed back as item
+/// indices for [`Index::collect`] to look up.
+struct Ranking {
+    scan: ScanTable,
+    matcher: RefCell<Matcher>,
+    narrowing: RefCell<Option<Narrowing>>,
+    /// Where a ranking puts its results, kept between queries so that a
+    /// keystroke reuses the allocation instead of making one.
+    ranked: RefCell<Vec<Ranked>>,
+}
+
+impl Ranking {
+    fn new() -> Self {
+        let mut config = Config::DEFAULT;
+        config.ignore_case = true;
+        Self {
+            scan: ScanTable::default(),
+            matcher: RefCell::new(Matcher::new(config)),
+            narrowing: RefCell::new(None),
+            ranked: RefCell::new(Vec::new()),
+        }
+    }
+
+    fn rebuild<T: IndexableItem>(&mut self, items: &[Arc<T>]) {
+        self.scan = ScanTable::build(items);
+        self.narrowing.get_mut().take();
+    }
+
+    fn push<T: IndexableItem>(&mut self, item: &T) {
+        self.scan.push(item);
+        self.narrowing.get_mut().take();
+    }
+
+    fn clear(&mut self) {
+        self.scan = ScanTable::default();
+        self.narrowing.get_mut().take();
+    }
+
+    /// The items an empty query answers with: the most launched ones.
+    fn top(&self, limit: usize) -> RefMut<'_, Vec<Ranked>> {
+        let mut ranked = self.ranked.borrow_mut();
+        ranked.clear();
         if limit == 0 {
-            return;
+            return ranked;
+        }
+
+        ranked.extend(
+            self.scan
+                .best_by_launch_count(limit)
+                .into_iter()
+                .map(|(item, score)| Ranked {
+                    item,
+                    score,
+                    matched_char_indices: Vec::new(),
+                }),
+        );
+        ranked
+    }
+
+    /// The best `limit` items for `query`, with the characters of their names
+    /// the query matched, for highlighting.
+    fn find(&self, query: &str, limit: usize) -> RefMut<'_, Vec<Ranked>> {
+        let mut ranked = self.ranked.borrow_mut();
+        ranked.clear();
+        if limit == 0 {
+            return ranked;
         }
 
         let mut matcher = self.matcher.borrow_mut();
@@ -164,41 +245,25 @@ impl<T: IndexableItem> Index<T> {
         let mut hay_buf = Vec::new();
         let mut raw_indices = Vec::new();
 
-        out.extend(scan.top.into_iter().map(|candidate| {
-            let item = Arc::clone(&self.items[candidate.item as usize]);
+        ranked.extend(scan.top.into_iter().map(|candidate| {
             let indices = if candidate.matched_by_name {
                 hay_buf.clear();
                 raw_indices.clear();
-                let haystack = Utf32Str::new(item.name(), &mut hay_buf);
+                // The name the scan matched, out of the column it matched it
+                // in, which is the item's name as it was indexed.
+                let haystack = Utf32Str::new(self.scan.name(candidate.item), &mut hay_buf);
                 matcher.fuzzy_indices(haystack, needle, &mut raw_indices);
                 raw_indices.iter().map(|&i| i as usize).collect()
             } else {
                 Vec::new()
             };
-            Match {
-                item,
+            Ranked {
+                item: candidate.item,
                 score: candidate.score,
                 matched_char_indices: indices,
             }
         }));
-    }
-
-    pub fn search(&self, query: &str, limit: usize) -> Vec<Match<T>> {
-        let mut out = Vec::new();
-        self.search_into(query, limit, &mut out);
-        out
-    }
-
-    /// Same as [`Index::search`], but reuses `out`'s existing allocation
-    /// instead of returning a freshly allocated `Vec` on every call, which
-    /// matters on a UI thread re-searching once per keystroke.
-    pub fn search_into(&self, query: &str, limit: usize, out: &mut Vec<Match<T>>) {
-        let trimmed = query.trim();
-        if trimmed.is_empty() {
-            self.top_items_into(limit, out);
-        } else {
-            self.find_into(trimmed, limit, out);
-        }
+        ranked
     }
 }
 
@@ -459,6 +524,32 @@ impl ScanTable {
             launch_count: item.launch_count(),
             name_is_ascii,
         });
+    }
+
+    /// Name of an item, as it was indexed.
+    fn name(&self, idx: u32) -> &str {
+        let row = &self.rows[idx as usize];
+        &self.names[row.name_start as usize..row.name_end as usize]
+    }
+
+    /// Best `limit` items of the index by launch count alone, highest score
+    /// first, ties going to the lower item index: what an empty query answers
+    /// with. Bounded selection over the launch count column, so ranking the
+    /// whole index does not require touching a single item.
+    fn best_by_launch_count(&self, limit: usize) -> Vec<(u32, i32)> {
+        let mut top: Vec<(u32, i32)> = Vec::with_capacity(limit.min(self.launch_counts.len()));
+        for (idx, &launch_count) in self.launch_counts.iter().enumerate() {
+            let score = launch_score(launch_count, TOP_ITEMS_FRECENCY_MULTIPLIER);
+            if top.len() == limit {
+                if score <= top[limit - 1].1 {
+                    continue;
+                }
+                top.pop();
+            }
+            let pos = top.partition_point(|&(_, kept)| kept >= score);
+            top.insert(pos, (idx as u32, score));
+        }
+        top
     }
 
     /// Scores every item that survives the mask prefilter and keeps the best
