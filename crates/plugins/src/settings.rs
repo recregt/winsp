@@ -1,9 +1,15 @@
 use winsp_core::models::{AppItem, LaunchTarget};
 
-use super::apps::resolve_system_exe;
+pub(super) struct Settings;
 
-/// Returns a curated collection of standard Windows Settings shortcuts.
-pub fn list_settings() -> Vec<AppItem> {
+impl Settings {
+    /// Returns a curated collection of standard Windows Settings shortcuts.
+    pub(super) fn items(&self) -> Vec<AppItem> {
+        settings_shortcuts()
+    }
+}
+
+fn settings_shortcuts() -> Vec<AppItem> {
     vec![
         AppItem::new(
             "win-settings",
@@ -107,8 +113,8 @@ pub fn list_settings() -> Vec<AppItem> {
                 "Task Manager",
                 LaunchTarget::Path("taskmgr.exe".into()),
             );
-            if let Some(icon) = resolve_system_exe("taskmgr.exe") {
-                item = item.with_icon(icon);
+            if let Some(icon) = winsp_windows::system::find_exe("taskmgr.exe") {
+                item = item.with_icon(icon.to_string_lossy().into_owned());
             }
             item
         }
@@ -129,7 +135,7 @@ mod tests {
 
     #[test]
     fn every_setting_uri_entry_carries_a_glyph_icon() {
-        for item in list_settings() {
+        for item in Settings.items() {
             if matches!(item.target(), LaunchTarget::OsUri(_)) {
                 assert!(
                     matches!(item.icon(), Some(IconSource::Glyph(_))),

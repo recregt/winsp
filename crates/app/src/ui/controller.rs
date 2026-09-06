@@ -1,5 +1,6 @@
 use std::io;
 
+use winsp_core::models::LaunchTarget;
 use winsp_windows::window::{Anchor, Key, MenuItem, Modifiers, Window, WindowEvent};
 
 use crate::config::{Settings, WindowPosition};
@@ -146,7 +147,23 @@ pub(super) fn handle_event(window: &Window, event: WindowEvent) {
                                 let submitted =
                                     winsp_windows::system::threadpool::spawn_on_threadpool(
                                         move || {
-                                            if let Err(error) = winsp_windows::shell::run(&target) {
+                                            let result = match target {
+                                                LaunchTarget::Path(path) => {
+                                                    winsp_windows::shell::open_path(&path)
+                                                }
+                                                LaunchTarget::WebUrl(uri)
+                                                | LaunchTarget::OsUri(uri) => {
+                                                    winsp_windows::shell::open_uri(&uri)
+                                                }
+                                                LaunchTarget::Command(cmd) => {
+                                                    std::process::Command::new("cmd")
+                                                        .args(["/C", &cmd])
+                                                        .spawn()
+                                                        .map(|_| ())
+                                                        .map_err(|err| err.to_string())
+                                                }
+                                            };
+                                            if let Err(error) = result {
                                                 winsp_windows::system::toast::show("WinSP", &error);
                                             }
                                         },

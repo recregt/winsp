@@ -31,12 +31,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         AcquireResult::Failed => return Ok(()),
     };
 
-    let catalog = sync::scan_catalog();
-    let index = sync::engine_from_catalog(&catalog);
+    let plugins = sync::scan_plugins();
+    let index = sync::engine_from_plugins(&plugins);
 
     let state = AppState::new(index);
 
-    let (_reindex_watcher, reconcile_tx) = sync::start_watching(catalog);
+    let (_reindex_watcher, reconcile_tx) = sync::start_watching(plugins);
 
     ui::run(state, reconcile_tx).map_err(|e| e.into())
 }

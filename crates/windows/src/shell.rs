@@ -1,15 +1,4 @@
-use winsp_core::models::LaunchTarget;
-
-pub fn run(target: &LaunchTarget) -> Result<(), String> {
-    match target {
-        LaunchTarget::Path(path) => launch_path(path),
-        LaunchTarget::WebUrl(url) => launch_uri(url),
-        LaunchTarget::OsUri(uri) => launch_uri(uri),
-        LaunchTarget::Command(cmd) => launch_command(cmd),
-    }
-}
-
-fn launch_path(path: &str) -> Result<(), String> {
+pub fn open_path(path: &str) -> Result<(), String> {
     use windows::Win32::UI::Shell::ShellExecuteW;
     use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
     use windows::core::{HSTRING, w};
@@ -73,20 +62,12 @@ fn launch_via_explorer(param: &str) -> bool {
     instance.0 as usize > 32
 }
 
-fn launch_uri(uri: &str) -> Result<(), String> {
+pub fn open_uri(uri: &str) -> Result<(), String> {
     if launch_via_explorer(uri) {
         Ok(())
     } else {
         Err(format!("Failed to open: {uri}"))
     }
-}
-
-fn launch_command(cmd: &str) -> Result<(), String> {
-    std::process::Command::new("cmd")
-        .args(["/C", cmd])
-        .spawn()
-        .map(|_| ())
-        .map_err(|e| e.to_string())
 }
 
 #[cfg(test)]

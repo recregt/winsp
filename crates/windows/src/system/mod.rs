@@ -1,3 +1,4 @@
+mod find_exe;
 mod registry;
 
 pub mod autostart;
@@ -8,5 +9,7 @@ pub mod toast;
 pub mod watcher;
 
 pub(crate) mod com;
-pub(crate) mod shortcut;
+pub mod shortcut;
 pub mod threadpool;
+
+pub use find_exe::find_exe;
