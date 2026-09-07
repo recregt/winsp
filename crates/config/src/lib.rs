@@ -1,12 +1,16 @@
+#![cfg(windows)]
+#![forbid(unsafe_code)]
+
 use std::io;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
+use winsp_windows::window::{Anchor, Key, Modifiers};
 
 const DEFAULT_VK: u16 = 0x20;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) struct HotkeyBinding {
+pub struct HotkeyBinding {
     #[serde(default)]
     pub(crate) ctrl: bool,
     #[serde(default)]
@@ -40,18 +44,18 @@ impl Default for HotkeyBinding {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
-pub(crate) enum WindowPosition {
+pub enum WindowPosition {
     #[default]
     Top,
     Center,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
-pub(crate) struct Settings {
+pub struct Settings {
     #[serde(default)]
-    pub(crate) hotkey: HotkeyBinding,
+    pub hotkey: HotkeyBinding,
     #[serde(default)]
-    pub(crate) position: WindowPosition,
+    pub position: WindowPosition,
 }
 
 #[cfg(test)]
@@ -89,12 +93,12 @@ fn config_path() -> Option<PathBuf> {
         .map(|dir| PathBuf::from(dir).join("WinSP").join("settings.msgpack"))
 }
 
-pub(crate) fn exists() -> bool {
+pub fn exists() -> bool {
     config_path().is_some_and(|path| path.exists())
 }
 
 impl Settings {
-    pub(crate) fn load() -> Self {
+    pub fn load() -> Self {
         match config_path() {
             Some(path) => Self::load_from(&path),
             None => Self::default(),
@@ -108,7 +112,7 @@ impl Settings {
             .unwrap_or_default()
     }
 
-    pub(crate) fn save(&self) -> io::Result<()> {
+    pub fn save(&self) -> io::Result<()> {
         let path = config_path()
             .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "LOCALAPPDATA is not set"))?;
         self.save_to(&path)
@@ -119,6 +123,54 @@ impl Settings {
             .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))?;
         winsp_windows::fs::atomic_write(path, &bytes)
     }
+}
+
+pub fn to_anchor(position: WindowPosition) -> Anchor {
+    match position {
+        WindowPosition::Top => Anchor::Top,
+        WindowPosition::Center => Anchor::Center,
+    }
+}
+
+fn from_anchor(anchor: Anchor) -> WindowPosition {
+    match anchor {
+        Anchor::Top => WindowPosition::Top,
+        Anchor::Center => WindowPosition::Center,
+    }
+}
+
+pub fn to_hotkey_combo(binding: HotkeyBinding) -> (Modifiers, Key) {
+    (
+        Modifiers {
+            ctrl: binding.ctrl,
+            shift: binding.shift,
+            alt: binding.alt,
+            win: binding.win,
+        },
+        Key::Other(binding.vk),
+    )
+}
+
+fn from_hotkey_combo(modifiers: Modifiers, key: Key) -> HotkeyBinding {
+    HotkeyBinding {
+        ctrl: modifiers.ctrl,
+        shift: modifiers.shift,
+        alt: modifiers.alt,
+        win: modifiers.win,
+        vk: key.vk(),
+    }
+}
+
+pub fn on_hotkey_changed(modifiers: Modifiers, key: Key) -> Result<(), String> {
+    let mut settings = Settings::load();
+    settings.hotkey = from_hotkey_combo(modifiers, key);
+    settings.save().map_err(|err| err.to_string())
+}
+
+pub fn on_position_changed(anchor: Anchor) -> Result<(), String> {
+    let mut settings = Settings::load();
+    settings.position = from_anchor(anchor);
+    settings.save().map_err(|err| err.to_string())
 }
 
 #[cfg(test)]
@@ -329,5 +381,62 @@ mod tests {
         std::fs::write(&path, bytes).unwrap();
 
         assert_eq!(Settings::load_from(&path).position, WindowPosition::Top);
+    }
+
+    #[test]
+    fn to_anchor_maps_each_position_to_its_matching_anchor() {
+        assert_eq!(to_anchor(WindowPosition::Top), Anchor::Top);
+        assert_eq!(to_anchor(WindowPosition::Center), Anchor::Center);
+    }
+
+    #[test]
+    fn hotkey_combo_round_trips_through_a_binding() {
+        let binding = HotkeyBinding {
+            ctrl: true,
+            shift: false,
+            alt: true,
+            win: false,
+            vk: 0x41,
+        };
+
+        let (modifiers, key) = to_hotkey_combo(binding);
+
+        assert_eq!(from_hotkey_combo(modifiers, key), binding);
+    }
+
+    #[test]
+    fn on_hotkey_changed_persists_the_new_binding() {
+        let dir = tempfile::tempdir().unwrap();
+        let _config_dir = TestConfigDirGuard::set(dir.path().to_path_buf());
+
+        let modifiers = Modifiers {
+            ctrl: true,
+            shift: true,
+            alt: false,
+            win: false,
+        };
+
+        on_hotkey_changed(modifiers, Key::Other(0x7F)).unwrap();
+
+        assert_eq!(
+            Settings::load().hotkey,
+            HotkeyBinding {
+                ctrl: true,
+                shift: true,
+                alt: false,
+                win: false,
+                vk: 0x7F,
+            }
+        );
+    }
+
+    #[test]
+    fn on_position_changed_persists_the_new_position() {
+        let dir = tempfile::tempdir().unwrap();
+        let _config_dir = TestConfigDirGuard::set(dir.path().to_path_buf());
+
+        on_position_changed(Anchor::Center).unwrap();
+
+        assert_eq!(Settings::load().position, WindowPosition::Center);
     }
 }

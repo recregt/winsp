@@ -1,11 +1,8 @@
 use std::sync::OnceLock;
 
-use winsp_core::models::{IconSource, SearchResult, SearchResultKind};
-use winsp_windows::window::Anchor;
+use winsp_service::{ResultRow, RowIcon};
 use winsp_windows::window::gfx::{Canvas, Color, Font, FontWeight, Rect};
 use winsp_windows::window::icon_for_path;
-
-use crate::config::WindowPosition;
 
 use super::UiState;
 use super::{ITEM_ROW_HEIGHT, PADDING, SEARCH_BAR_HEIGHT, WINDOW_WIDTH};
@@ -15,13 +12,6 @@ const ICON_SIZE: i32 = 32;
 const ICON_LEFT: i32 = 16;
 const TEXT_LEFT: i32 = ICON_LEFT + ICON_SIZE + 12;
 
-pub(super) fn to_anchor(position: WindowPosition) -> Anchor {
-    match position {
-        WindowPosition::Top => Anchor::Top,
-        WindowPosition::Center => Anchor::Center,
-    }
-}
-
 pub(super) fn result_list_height(results_count: usize) -> i32 {
     if results_count == 0 {
         SEARCH_BAR_HEIGHT
@@ -30,9 +20,9 @@ pub(super) fn result_list_height(results_count: usize) -> i32 {
     }
 }
 
-static INTER_REGULAR: &[u8] = include_bytes!("../../assets/fonts/Inter-Regular.ttf");
-static INTER_SEMIBOLD: &[u8] = include_bytes!("../../assets/fonts/Inter-SemiBold.ttf");
-static INTER_DISPLAY_REGULAR: &[u8] = include_bytes!("../../assets/fonts/InterDisplay-Regular.ttf");
+static INTER_REGULAR: &[u8] = include_bytes!("../assets/fonts/Inter-Regular.ttf");
+static INTER_SEMIBOLD: &[u8] = include_bytes!("../assets/fonts/Inter-SemiBold.ttf");
+static INTER_DISPLAY_REGULAR: &[u8] = include_bytes!("../assets/fonts/InterDisplay-Regular.ttf");
 
 struct Fonts {
     search: Font,
@@ -57,17 +47,14 @@ fn fonts() -> &'static Fonts {
     })
 }
 
-fn draw_result_icon(canvas: &Canvas, result: &SearchResult, rect: Rect) {
-    let SearchResultKind::App(item) = &result.kind else {
-        return;
-    };
-    match item.icon() {
-        Some(IconSource::Path(path)) => {
+fn draw_result_icon(canvas: &Canvas, result: &ResultRow, rect: Rect) {
+    match &result.icon {
+        Some(RowIcon::Path(path)) => {
             if let Some(icon) = icon_for_path(path) {
                 canvas.draw_cached_icon(&icon, rect);
             }
         }
-        Some(IconSource::Glyph(glyph)) => {
+        Some(RowIcon::Glyph(glyph)) => {
             let _font = canvas.select_font(&fonts().icon_glyph);
             canvas.set_text_color(Color::hex(0xCCCCCC));
             canvas.draw_icon_glyph(*glyph, rect);
@@ -241,12 +228,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn to_anchor_maps_each_position_to_its_matching_anchor() {
-        assert_eq!(to_anchor(WindowPosition::Top), Anchor::Top);
-        assert_eq!(to_anchor(WindowPosition::Center), Anchor::Center);
-    }
-
-    #[test]
     fn result_list_height_with_no_results_is_just_the_search_bar() {
         assert_eq!(result_list_height(0), SEARCH_BAR_HEIGHT);
     }
@@ -263,7 +244,6 @@ mod tests {
 #[cfg(test)]
 mod render_tests {
     use super::*;
-    use winsp_core::models::{AppItem, LaunchTarget};
     use winsp_windows::window::gfx::testing::OffscreenSurface;
 
     const BITMAP_WIDTH: i32 = 300;
@@ -276,8 +256,13 @@ mod render_tests {
         bottom: 36,
     };
 
-    fn app_result(item: AppItem) -> SearchResult {
-        SearchResult::from_app(std::sync::Arc::new(item), 0, Vec::new())
+    fn row(icon: Option<RowIcon>) -> ResultRow {
+        ResultRow {
+            title: "Name".into(),
+            subtitle: None,
+            matched_char_indices: Vec::new(),
+            icon,
+        }
     }
 
     fn wait_for_icon(path: &str) {
@@ -293,7 +278,7 @@ mod render_tests {
     #[test]
     fn render_draws_from_the_state_it_is_given_without_touching_any_static() {
         let surface = OffscreenSurface::new(BITMAP_WIDTH, 200);
-        let state = UiState::new(&crate::state::Catalog::new());
+        let state = UiState::new(&winsp_service::testing::empty_service());
         let client_rect = Rect {
             left: 0,
             top: 0,
@@ -309,10 +294,12 @@ mod render_tests {
     #[test]
     fn draw_result_icon_paints_the_glyph_color_for_a_glyph_icon() {
         let surface = OffscreenSurface::new(40, 40);
-        let item = AppItem::new("id", "Name", LaunchTarget::OsUri("ms-settings:".into()))
-            .with_icon_glyph('A');
 
-        draw_result_icon(&surface.canvas(), &app_result(item), ICON_BOUNDS);
+        draw_result_icon(
+            &surface.canvas(),
+            &row(Some(RowIcon::Glyph('A'))),
+            ICON_BOUNDS,
+        );
 
         assert!(surface.contains_pixel(Color::hex(0xCCCCCC)));
     }
@@ -322,11 +309,13 @@ mod render_tests {
         let surface = OffscreenSurface::new(40, 40);
         let exe = std::env::current_exe().unwrap();
         let exe_path = exe.to_string_lossy().into_owned();
-        let item = AppItem::new("id", "Name", LaunchTarget::Path(exe_path.clone()))
-            .with_icon(exe_path.clone());
 
         wait_for_icon(&exe_path);
-        draw_result_icon(&surface.canvas(), &app_result(item), ICON_BOUNDS);
+        draw_result_icon(
+            &surface.canvas(),
+            &row(Some(RowIcon::Path(exe_path))),
+            ICON_BOUNDS,
+        );
 
         assert!(surface.contains_pixel_other_than(Color::hex(0x000000)));
     }
@@ -334,10 +323,14 @@ mod render_tests {
     #[test]
     fn draw_result_icon_paints_nothing_for_a_missing_path_icon() {
         let surface = OffscreenSurface::new(40, 40);
-        let item = AppItem::new("id", "Name", LaunchTarget::Path("missing.exe".into()))
-            .with_icon(r"C:\definitely\not\a\real\path.exe");
 
-        draw_result_icon(&surface.canvas(), &app_result(item), ICON_BOUNDS);
+        draw_result_icon(
+            &surface.canvas(),
+            &row(Some(RowIcon::Path(
+                r"C:\definitely\not\a\real\path.exe".into(),
+            ))),
+            ICON_BOUNDS,
+        );
 
         assert!(!surface.contains_pixel_other_than(Color::hex(0x000000)));
     }
@@ -345,9 +338,8 @@ mod render_tests {
     #[test]
     fn draw_result_icon_paints_nothing_for_a_non_app_result() {
         let surface = OffscreenSurface::new(40, 40);
-        let result = SearchResult::calculation("1+1".into(), "2".into());
 
-        draw_result_icon(&surface.canvas(), &result, ICON_BOUNDS);
+        draw_result_icon(&surface.canvas(), &row(None), ICON_BOUNDS);
 
         assert!(!surface.contains_pixel_other_than(Color::hex(0x000000)));
     }

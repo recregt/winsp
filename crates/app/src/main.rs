@@ -1,13 +1,8 @@
+#![cfg(windows)]
 #![cfg_attr(windows, windows_subsystem = "windows")]
 #![forbid(unsafe_code)]
 
-mod config;
-mod sources;
-mod state;
-mod sync;
-mod ui;
-
-use state::AppState;
+use winsp_service::Service;
 
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
@@ -17,7 +12,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let _instance_mutex = match winsp_windows::system::single_instance::acquire(
         "WinSP_SingleInstance_Mutex",
-        ui::WINDOW_CLASS_NAME,
+        winsp_ui::WINDOW_CLASS_NAME,
     ) {
         AcquireResult::Acquired(guard) => guard,
         AcquireResult::AlreadyRunning { brought_to_front } => {
@@ -32,12 +27,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         AcquireResult::Failed => return Ok(()),
     };
 
-    let sources = sync::scan_sources();
-    let index = sync::engine_from_sources(&sources);
+    let service = Service::start(winsp_ui::notify_index_changed);
 
-    let state = AppState::new(index);
-
-    let (_reindex_watcher, reconcile_tx) = sync::start_watching(sources);
-
-    ui::run(state, reconcile_tx).map_err(|e| e.into())
+    winsp_ui::run(service).map_err(|e| e.into())
 }

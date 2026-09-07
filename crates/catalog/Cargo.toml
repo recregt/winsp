@@ -1,0 +1,17 @@
+[package]
+name = "winsp-catalog"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+lnk = "0.6"
+walkdir = "2.5.0"
+winsp-core = { path = "../core" }
+winsp-windows = { path = "../windows" }
+
+[dev-dependencies]
+winsp-windows = { path = "../windows", features = ["test-support"] }
+tempfile = "3.27.0"

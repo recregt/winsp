@@ -1,0 +1,17 @@
+[package]
+name = "winsp-service"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[features]
+test-support = []
+
+[dependencies]
+winsp-catalog = { path = "../catalog" }
+winsp-config = { path = "../config" }
+winsp-core = { path = "../core" }
+winsp-search = { path = "../search" }
+winsp-windows = { path = "../windows" }

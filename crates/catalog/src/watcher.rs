@@ -2,20 +2,25 @@ use std::sync::mpsc::{RecvTimeoutError, Sender, TryRecvError};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use crate::sources::Sources;
-use crate::state::Catalog;
+use winsp_core::index::Index;
+use winsp_core::models::AppItem;
 use winsp_windows::system::watcher::{WatchEvent, Watcher};
+
+use crate::Sources;
+
+type Catalog = Index<AppItem>;
+pub type CatalogCallback = Arc<dyn Fn(Catalog) + Send + Sync>;
 
 const RECONCILE_INTERVAL: Duration = Duration::from_secs(600);
 const MIN_RECONCILE_GAP: Duration = Duration::from_secs(30);
 
-pub(crate) fn engine_from_sources(sources: &Sources) -> Catalog {
+fn engine_from_sources(sources: &Sources) -> Catalog {
     let mut index = Catalog::new();
     index.set_items(sources.items());
     index
 }
 
-pub(crate) fn scan_sources() -> Sources {
+fn scan_sources() -> Sources {
     let sources = Sources::scan();
     notify_if_scan_incomplete(&sources);
     sources
@@ -33,7 +38,7 @@ fn notify_if_scan_incomplete(sources: &Sources) {
     }
 }
 
-pub(crate) fn notify_reconcile_channel_broken() {
+pub fn notify_reconcile_channel_broken() {
     static NOTIFIED: std::sync::Once = std::sync::Once::new();
     NOTIFIED.call_once(|| {
         winsp_windows::system::toast::show(
@@ -72,20 +77,23 @@ fn finish_watcher<E>(result: Result<(Watcher, Vec<std::path::PathBuf>), E>) -> O
     }
 }
 
-pub(crate) fn start_watching(sources: Sources) -> (Option<Watcher>, Sender<()>) {
+pub fn start_watching(on_catalog_updated: CatalogCallback) -> (Option<Watcher>, Sender<()>) {
+    let sources = scan_sources();
+    on_catalog_updated(engine_from_sources(&sources));
+
     let dirs = sources.watch_dirs().to_vec();
     let sources = Arc::new(Mutex::new(sources));
-    let tx = spawn_reconciler(Arc::clone(&sources));
+    let tx = spawn_reconciler(Arc::clone(&sources), Arc::clone(&on_catalog_updated));
     let reconcile_tx = tx.clone();
 
     let watcher = winsp_windows::system::watcher::for_dirs(&dirs, move |event| {
-        handle_watch_event(event, &sources, &tx);
+        handle_watch_event(event, &sources, &tx, &on_catalog_updated);
     });
     (finish_watcher(watcher), reconcile_tx)
 }
 
-fn refresh_state(sources: &Sources) {
-    crate::ui::deliver_catalog(engine_from_sources(sources));
+fn refresh_state(sources: &Sources, on_catalog_updated: &CatalogCallback) {
+    on_catalog_updated(engine_from_sources(sources));
 }
 
 fn next_wait(pending: bool, last_rescan: Instant) -> Duration {
@@ -96,7 +104,10 @@ fn next_wait(pending: bool, last_rescan: Instant) -> Duration {
     }
 }
 
-fn spawn_reconciler(sources: Arc<Mutex<Sources>>) -> Sender<()> {
+fn spawn_reconciler(
+    sources: Arc<Mutex<Sources>>,
+    on_catalog_updated: CatalogCallback,
+) -> Sender<()> {
     let (reconcile_tx, reconcile_rx) = std::sync::mpsc::channel::<()>();
 
     std::thread::spawn(move || {
@@ -125,7 +136,7 @@ fn spawn_reconciler(sources: Arc<Mutex<Sources>>) -> Sender<()> {
             if let Ok(mut cat) = sources.lock() {
                 cat.rescan();
                 notify_if_scan_incomplete(&cat);
-                refresh_state(&cat);
+                refresh_state(&cat, &on_catalog_updated);
             }
             last_rescan = Instant::now();
             pending = false;
@@ -135,13 +146,18 @@ fn spawn_reconciler(sources: Arc<Mutex<Sources>>) -> Sender<()> {
     reconcile_tx
 }
 
-fn handle_watch_event(event: WatchEvent, sources: &Arc<Mutex<Sources>>, reconcile_tx: &Sender<()>) {
+fn handle_watch_event(
+    event: WatchEvent,
+    sources: &Arc<Mutex<Sources>>,
+    reconcile_tx: &Sender<()>,
+    on_catalog_updated: &CatalogCallback,
+) {
     match event {
         WatchEvent::Changed(paths) => {
             if let Ok(mut cat) = sources.lock() {
                 cat.apply_changes(&paths);
                 notify_if_scan_incomplete(&cat);
-                refresh_state(&cat);
+                refresh_state(&cat, on_catalog_updated);
             }
         }
         WatchEvent::Uncertain => {

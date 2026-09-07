@@ -1,3 +1,5 @@
+#![forbid(unsafe_code)]
+
 use compact_str::CompactString;
 use winsp_core::calc;
 use winsp_core::index::{Index, Match};
