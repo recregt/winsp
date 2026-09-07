@@ -49,7 +49,7 @@ pub fn query(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use winsp_core::models::SearchResultKind;
+    use winsp_core::models::{LaunchTarget, SearchResultKind};
 
     #[test]
     fn a_calculation_takes_the_top_result() {
@@ -81,6 +81,38 @@ mod tests {
                 .iter()
                 .any(|r| matches!(r.kind, SearchResultKind::Calculation { .. }))
         );
+    }
+
+    /// The window shows `limit` rows, so a calculation costs the index its last
+    /// one: the results before it are the ones the index ranked highest, in the
+    /// order it ranked them.
+    #[test]
+    fn a_calculation_fills_the_window_ahead_of_the_index() {
+        let mut index = Index::new();
+        index.set_items((0..10).map(|i| {
+            AppItem::new(
+                format!("id-{i}"),
+                format!("12 * 12 Manager {i}"),
+                LaunchTarget::Path(format!("app{i}.exe")),
+            )
+        }));
+
+        let mut matches = Vec::new();
+        let mut results = Vec::new();
+        query(&index, "12 * 12", 3, &mut matches, &mut results);
+
+        assert_eq!(results.len(), 3);
+        assert!(matches!(
+            results[0].kind,
+            SearchResultKind::Calculation { .. }
+        ));
+
+        let ranked = index.search("12 * 12", 3);
+        assert!(ranked.len() >= 2);
+        for (result, expected) in results[1..].iter().zip(&ranked) {
+            assert_eq!(result.title, expected.item.name_arc());
+            assert_eq!(result.score, expected.score);
+        }
     }
 
     #[test]
