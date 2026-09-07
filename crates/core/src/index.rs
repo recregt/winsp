@@ -982,6 +982,20 @@ impl ScanTable {
         // collects nothing at all: once the shortlist is full a match is more
         // likely to be dropped than shown, and asking the matcher for the
         // characters of a row nobody sees is the work this is meant to avoid.
+        //
+        // Collecting is not worth gating on how much there is to scan, which is
+        // the one condition available before the loop starts. Skipping it for a
+        // large index was measured on a single build, gate and all, so only the
+        // policy differed: a cold scan over 50k items then reads 3% slower, and
+        // nothing else moves. The `limit` matches this loop makes cost less
+        // than matching the window's rows a second time, at every size. What a
+        // wide scan does pay for the collection is about an instruction per
+        // item in the loop below, which collects nothing — the two loops share
+        // one register budget, and this one asking the matcher for characters
+        // is enough to cost the other one a register. Splitting the state so
+        // that loop carries its decode buffer alone does remove it, and reads
+        // 12% fewer instructions over 50k items for it, but a scan that matches
+        // nothing then runs 15% slower on real hardware.
         for (idx, word) in source.by_ref() {
             // A name shorter than the needle cannot hold it, which the matcher
             // would have to be called to find out.
