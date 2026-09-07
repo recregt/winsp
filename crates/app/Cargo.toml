@@ -11,9 +11,9 @@ name = "winsp"
 path = "src/main.rs"
 
 [dependencies]
-compact_str = "0.10"
 walkdir = "2.5.0"
 winsp-core = { path = "../core" }
+winsp-search = { path = "../search" }
 winsp-windows = { path = "../windows" }
 
 [build-dependencies]

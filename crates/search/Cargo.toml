@@ -1,0 +1,18 @@
+[package]
+name = "winsp-search"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+compact_str = "0.10"
+winsp-core = { path = "../core" }
+
+[dev-dependencies]
+criterion = { version = "5.0.1", package = "codspeed-criterion-compat", features = ["html_reports"] }
+
+[[bench]]
+name = "query"
+harness = false

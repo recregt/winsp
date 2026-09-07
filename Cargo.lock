@@ -1714,7 +1714,6 @@ dependencies = [
 name = "winsp-app"
 version = "0.3.0"
 dependencies = [
- "compact_str",
  "embed-resource",
  "mimalloc",
  "rmp-serde",
@@ -1722,6 +1721,7 @@ dependencies = [
  "tempfile",
  "walkdir",
  "winsp-core",
+ "winsp-search",
  "winsp-windows",
 ]
 
@@ -1734,6 +1734,15 @@ dependencies = [
  "logos",
  "nucleo-matcher",
  "trybuild",
+]
+
+[[package]]
+name = "winsp-search"
+version = "0.3.0"
+dependencies = [
+ "codspeed-criterion-compat",
+ "compact_str",
+ "winsp-core",
 ]
 
 [[package]]

@@ -41,7 +41,7 @@ fn take_pending_catalog() -> Option<Catalog> {
 #[derive(Debug)]
 struct UiState {
     query: String,
-    /// Scratch space `search::query` reuses for the index's own matches, kept
+    /// Scratch space `winsp_search::query` reuses for the index's own matches, kept
     /// alongside `results` so a keystroke never allocates a fresh buffer for it.
     matches: Vec<Match<AppItem>>,
     results: Vec<SearchResult>,
@@ -63,7 +63,7 @@ impl UiState {
     fn new(engine: &Catalog) -> Self {
         let mut matches = Vec::new();
         let mut results = Vec::new();
-        crate::search::query(engine, "", MAX_RESULTS, &mut matches, &mut results);
+        winsp_search::query(engine, "", MAX_RESULTS, &mut matches, &mut results);
         Self {
             query: String::new(),
             matches,
@@ -75,7 +75,7 @@ impl UiState {
     }
 
     fn refresh_against(&mut self, engine: &Catalog) {
-        crate::search::query(
+        winsp_search::query(
             engine,
             &self.query,
             MAX_RESULTS,

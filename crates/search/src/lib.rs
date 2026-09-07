@@ -1,19 +1,25 @@
-mod live;
-
-use winsp_core::index::Match;
+use compact_str::CompactString;
+use winsp_core::calc;
+use winsp_core::index::{Index, Match};
 use winsp_core::models::{AppItem, SearchResult};
 
-use crate::state::Catalog;
-use live::{CalcSource, LiveSource};
+trait LiveSource {
+    fn query(&self, input: &str) -> Option<SearchResult>;
+}
+
+struct CalcSource;
+
+impl LiveSource for CalcSource {
+    fn query(&self, input: &str) -> Option<SearchResult> {
+        let result = calc::eval(input)?;
+        Some(SearchResult::calculation(CompactString::new(input), result))
+    }
+}
 
 const LIVE_SOURCES: &[&dyn LiveSource] = &[&CalcSource];
 
-/// `matches` is scratch space reused across calls, the same way `out` is: the
-/// index's own results land there first and are converted into `out`, so a
-/// keystroke costs no allocation beyond what the index and the live sources
-/// themselves need.
 pub fn query(
-    index: &Catalog,
+    index: &Index<AppItem>,
     input: &str,
     limit: usize,
     matches: &mut Vec<Match<AppItem>>,
@@ -47,7 +53,7 @@ mod tests {
 
     #[test]
     fn a_calculation_takes_the_top_result() {
-        let index = Catalog::new();
+        let index = Index::new();
         let mut matches = Vec::new();
         let mut results = Vec::new();
 
@@ -64,7 +70,7 @@ mod tests {
 
     #[test]
     fn a_non_calculation_query_yields_no_calculation_result() {
-        let index = Catalog::new();
+        let index = Index::new();
         let mut matches = Vec::new();
         let mut results = Vec::new();
 
@@ -79,7 +85,7 @@ mod tests {
 
     #[test]
     fn an_empty_query_yields_no_calculation_result() {
-        let index = Catalog::new();
+        let index = Index::new();
         let mut matches = Vec::new();
         let mut results = Vec::new();
 
