@@ -1012,14 +1012,26 @@ impl ScanTable {
         // — much less work than scoring it, but not always possible without the
         // matcher, in which case it is scored after all.
         //
-        // The mask test is a loop of its own here, unlike above: everything the
-        // scored path holds — the shortlist, the match set, the matcher — is
-        // live across it, and with all of it live the three values it compares
-        // lose their registers and are read back from the stack for every item
-        // the scan rejects.
-        while let Some((idx, name_possible, keyword_possible)) =
-            next_possible(&mut source, name_probe, keyword_probe, name_len_floor)
-        {
+        // The mask test stays inline here, flat, even though everything the
+        // scored path holds is live across it and the three values it compares
+        // therefore lose their registers: the scan reads them back from the
+        // stack for every item it rejects. Walking to the next surviving item in
+        // a loop of its own does remove those reads — a quarter of the
+        // instructions and half the data reads of a scan over 50k items — but
+        // they are L1 hits the loads of two ports absorb, and the inner loop
+        // costs a second taken branch per rejected item, which the front end
+        // issues one of per cycle. Measured natively over five code layouts and
+        // two compilers, that trade is worth 25% of `prefix_match[50000]` and
+        // 13% of a keystroke, in the wrong direction. Count branches here, not
+        // reads.
+        for (idx, word) in source {
+            let missing = !word;
+            let name_possible = name_probe & missing == 0 && word >= name_len_floor;
+            let keyword_possible = keyword_probe & missing == 0;
+            if !name_possible && !keyword_possible {
+                continue;
+            }
+
             if let Some(is_match) = ruled_out_unscored(
                 self,
                 idx,
@@ -1181,34 +1193,6 @@ struct Query<'a> {
     name_ceilings: &'a NameCeilings,
     /// The needle, when it is ASCII and can therefore be compared byte-wise.
     ascii_needle: Option<&'a [u8]>,
-}
-
-/// Walks `source` to the next item the mask prefilter cannot rule out, and says
-/// which of the two fields of its word could still hold the query.
-///
-/// The whole of the test, in a loop holding nothing but the values it compares:
-/// the query characters a name must have, the same characters in the keyword
-/// field, and the shortest name the needle fits in. That is what a scan reading
-/// one word per item needs live, and the only way to keep it that way once the
-/// loop body around it has a shortlist to prune against.
-#[inline(always)]
-fn next_possible<I: Iterator<Item = (u32, u64)>>(
-    source: &mut I,
-    name_probe: u64,
-    keyword_probe: u64,
-    name_len_floor: u64,
-) -> Option<(u32, bool, bool)> {
-    for (idx, word) in source {
-        // A name shorter than the needle cannot hold it, which the matcher
-        // would have to be called to find out.
-        let missing = !word;
-        let name_possible = name_probe & missing == 0 && word >= name_len_floor;
-        let keyword_possible = keyword_probe & missing == 0;
-        if name_possible || keyword_possible {
-            return Some((idx, name_possible, keyword_possible));
-        }
-    }
-    None
 }
 
 /// Whether the score ceiling rules `row` out, and if so whether the match set
