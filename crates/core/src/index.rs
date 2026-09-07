@@ -155,6 +155,25 @@ struct Ranking {
     /// Where a ranking puts its results, kept between queries so that a
     /// keystroke reuses the allocation instead of making one.
     ranked: RefCell<Vec<Ranked>>,
+    /// The buffers a single search fills and empties again, kept for the same
+    /// reason.
+    scratch: RefCell<Scratch>,
+}
+
+/// What one search needs room for beyond its results: the buffers the matcher
+/// decodes into, and the character indices it reports for the items the window
+/// shows.
+///
+/// Kept between queries because a launcher searches once per keystroke, and
+/// every one of these was a fresh allocation on every one of them.
+#[derive(Default)]
+struct Scratch {
+    /// Where a query that is not ASCII is decoded to.
+    needle_buf: Vec<char>,
+    /// Where a name that is not ASCII is decoded to, for highlighting.
+    hay_buf: Vec<char>,
+    /// Where the matcher reports the characters of a name it matched.
+    raw_indices: Vec<u32>,
 }
 
 impl Ranking {
@@ -166,6 +185,7 @@ impl Ranking {
             matcher: RefCell::new(Matcher::new(config)),
             narrowing: RefCell::new(None),
             ranked: RefCell::new(Vec::new()),
+            scratch: RefCell::new(Scratch::default()),
         }
     }
 
@@ -215,9 +235,17 @@ impl Ranking {
         }
 
         let mut matcher = self.matcher.borrow_mut();
+        let mut scratch = self.scratch.borrow_mut();
+        // Field by field, since the needle borrows one of them for as long as
+        // the matcher is given it while the rest are still written to.
+        let Scratch {
+            needle_buf,
+            hay_buf,
+            raw_indices,
+        } = &mut *scratch;
+
         let needles = Needles::new(query);
-        let mut needle_buf = Vec::new();
-        let needle = Utf32Str::new(needles.name(), &mut needle_buf);
+        let needle = Utf32Str::new(needles.name(), needle_buf);
         let query_lower = needles.keyword();
         let query_masks = needle_masks(needles.name());
 
@@ -237,22 +265,32 @@ impl Ranking {
             limit,
             narrowed,
         );
-        *self.narrowing.borrow_mut() = scan.matched.map(|items| Narrowing {
-            query: query.to_owned(),
-            items,
-        });
 
-        let mut hay_buf = Vec::new();
-        let mut raw_indices = Vec::new();
+        // The previous match set is superseded, so both what it held and the
+        // string its query was kept in go back to be filled again.
+        let mut query_buf = match previous {
+            Some(previous) => {
+                self.scan.recycle(previous.items);
+                previous.query
+            }
+            None => String::new(),
+        };
+        *self.narrowing.borrow_mut() = scan.matched.map(|items| {
+            query_buf.clear();
+            query_buf.push_str(query);
+            Narrowing {
+                query: query_buf,
+                items,
+            }
+        });
 
         ranked.extend(scan.top.into_iter().map(|candidate| {
             let indices = if candidate.matched_by_name {
-                hay_buf.clear();
                 raw_indices.clear();
                 // The name the scan matched, out of the column it matched it
                 // in, which is the item's name as it was indexed.
-                let haystack = Utf32Str::new(self.scan.name(candidate.item), &mut hay_buf);
-                matcher.fuzzy_indices(haystack, needle, &mut raw_indices);
+                let haystack = Utf32Str::new(self.scan.name(candidate.item), hay_buf);
+                matcher.fuzzy_indices(haystack, needle, raw_indices);
                 raw_indices.iter().map(|&i| i as usize).collect()
             } else {
                 Vec::new()
@@ -374,6 +412,11 @@ struct ScanTable {
     /// [`ScanRow::launch_count`] so the no-query path scans 4 bytes per item.
     launch_counts: Vec<u32>,
     rows: Vec<ScanRow>,
+    /// The match set of an earlier search, emptied, for the next one to fill
+    /// again. A scan records every item it matched so the next keystroke can
+    /// rescan those alone, and growing that set from nothing was a chain of
+    /// reallocations on every keystroke.
+    spare_matched: RefCell<Vec<u32>>,
 }
 
 /// Bit set over the characters a haystack contains, as [`MASK_BITS`] groups
@@ -671,6 +714,7 @@ impl ScanTable {
             prefilter: Vec::with_capacity(items.len()),
             launch_counts: Vec::with_capacity(items.len()),
             rows: Vec::with_capacity(items.len()),
+            spare_matched: RefCell::new(Vec::new()),
         };
         for item in items {
             table.push(item.as_ref());
@@ -711,6 +755,27 @@ impl ScanTable {
                 boundary_mask
             },
         });
+    }
+
+    /// The buffer a scan records its matches in: whatever an earlier search
+    /// left behind, emptied, and room for as many items as a match set is
+    /// allowed to hold when there is nothing to reuse.
+    fn take_spare(&self) -> Vec<u32> {
+        let mut spare = std::mem::take(&mut *self.spare_matched.borrow_mut());
+        spare.clear();
+        if spare.capacity() == 0 {
+            spare = Vec::with_capacity(narrowing_capacity(self.rows.len()));
+        }
+        spare
+    }
+
+    /// Takes a match set nobody reads any more, so the next scan can record
+    /// itself in it rather than in a fresh allocation.
+    fn recycle(&self, items: Vec<u32>) {
+        let mut spare = self.spare_matched.borrow_mut();
+        if spare.capacity() < items.capacity() {
+            *spare = items;
+        }
     }
 
     /// Name of an item, as it was indexed.
@@ -803,7 +868,7 @@ impl ScanTable {
         let mut state = ScanState {
             matcher,
             top: Vec::with_capacity(limit.min(self.rows.len())),
-            matched: Some(Vec::new()),
+            matched: Some(self.take_spare()),
             capacity: narrowing_capacity(self.rows.len()),
             limit,
             hay_buf: Vec::new(),
@@ -1676,6 +1741,23 @@ mod tests {
             assert_eq!(
                 titles(&typed.find(query, 6)),
                 titles(&cold.find(query, 6)),
+                "query: {query:?}"
+            );
+        }
+    }
+
+    /// Queries that share no prefix cannot narrow one another, so each one
+    /// rescans the index while reusing what the last one left behind: the
+    /// matcher's buffers and the set it recorded its matches in.
+    #[test]
+    fn test_unrelated_queries_in_one_session_match_cold_searches() {
+        let session = ["visual", "café", "browser", "qqq", "", "windows t", "c"];
+        let reused = sample_index();
+        for query in session {
+            let cold = sample_index();
+            assert_eq!(
+                titles(&reused.search(query, 5)),
+                titles(&cold.search(query, 5)),
                 "query: {query:?}"
             );
         }
