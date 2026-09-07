@@ -37,10 +37,10 @@ jobs:
         run: cargo install cargo-codspeed --locked
 
       - name: Build the benchmark targets
-        run: cargo codspeed build -p winsp-core --locked -m simulation
+        run: cargo codspeed build -p winsp-core -p winsp-search --locked -m simulation
 
       - name: Run the benchmarks
         uses: CodSpeedHQ/action@373d6868929f444bc08d901fd0eb0ad52a8875ea # v5
         with:
           mode: simulation
-          run: cargo codspeed run -p winsp-core
+          run: cargo codspeed run -p winsp-core -p winsp-search
