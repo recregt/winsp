@@ -376,22 +376,21 @@ struct ScanTable {
     rows: Vec<ScanRow>,
 }
 
-/// Bit set over the characters a haystack contains: one bit per ASCII letter
-/// plus one catch-all bit for everything else. A fuzzy name match needs every
+/// Bit set over the characters a haystack contains, as [`MASK_BITS`] groups
+/// them: one bit per ASCII letter, one for the digits, one for whitespace and
+/// one for everything else. A fuzzy name match needs every
 /// needle character to appear in the name, and a keyword match needs every query
 /// character to appear in a keyword, so a needle whose mask is not a subset of
 /// the haystack mask cannot match. Conservative: never rejects a real match.
-///
-/// Returns the mask together with whether the text is pure ASCII, in one pass.
-fn haystack_mask(text: &str) -> (u32, bool) {
+fn haystack_mask(text: &str) -> u32 {
     let mut mask = 0;
     for (offset, &byte) in text.as_bytes().iter().enumerate() {
         if !byte.is_ascii() {
-            return (mask | unicode_mask(&text[offset..]), false);
+            return mask | unicode_mask(&text[offset..]);
         }
         mask |= ascii_bit(byte);
     }
-    (mask, true)
+    mask
 }
 
 /// Everything one pass over an item's name tells the scan: which characters it
@@ -543,8 +542,23 @@ fn needle_masks(needle: &str) -> QueryMasks {
     }
 }
 
-/// Bits a character mask occupies: one per ASCII letter plus the catch-all.
-const MASK_BITS: u32 = 27;
+/// Bits a character mask occupies: one per ASCII letter, one for the digits,
+/// one for whitespace, and the catch-all for everything else.
+///
+/// Digits and whitespace are kept out of the catch-all because a name holds
+/// both and an expression holds neither on its own: with one bit for every
+/// character that is not a letter, `12 * 12` claimed the same bit as the space
+/// in `Visual Studio 2022`, so the mask ruled nothing out and every item of the
+/// index was handed to the matcher. Told apart, the `*` is a character no
+/// ordinary name contains and the item is ruled out by the word the prefilter
+/// already reads.
+const MASK_BITS: u32 = 29;
+/// Any ASCII digit. One bit for all ten: a needle digit only asks whether the
+/// haystack holds a digit at all, which is what keeps the mask conservative.
+const DIGIT_CHAR_BIT: u32 = 1 << 26;
+/// Any ASCII whitespace, which is what separates the words of a name.
+const SPACE_CHAR_BIT: u32 = 1 << 27;
+/// Everything else: ASCII punctuation, and every character that is not ASCII.
 const OTHER_CHAR_BIT: u32 = 1 << (MASK_BITS - 1);
 /// Every bit a character mask can hold: the mask of a haystack that has to be
 /// assumed to contain anything.
@@ -553,6 +567,10 @@ const ALL_CHARS: u32 = (1 << MASK_BITS) - 1;
 const fn ascii_bit(byte: u8) -> u32 {
     match byte.to_ascii_lowercase() {
         lower @ b'a'..=b'z' => 1 << (lower - b'a'),
+        b'0'..=b'9' => DIGIT_CHAR_BIT,
+        // Every spelling of whitespace claims the one bit, so a needle written
+        // with a tab still matches the name that spells it with a space.
+        b' ' | b'\t' | b'\n' | b'\x0c' | b'\r' => SPACE_CHAR_BIT,
         _ => OTHER_CHAR_BIT,
     }
 }
@@ -574,8 +592,9 @@ const KEYWORD_MASK_SHIFT: u32 = MASK_BITS;
 /// Where the name length sits in a [`prefilter_word`]: the high bits, so that
 /// comparing whole words compares name lengths first.
 const NAME_LEN_SHIFT: u32 = 2 * MASK_BITS;
-/// Longest name a [`prefilter_word`] can hold the length of. A longer name
-/// saturates, which only makes the length test let more items through.
+/// Longest name a [`prefilter_word`] can hold the length of: what the two masks
+/// leave of the word. A longer name saturates, which only makes the length test
+/// let more items through.
 const MAX_PACKED_NAME_LEN: u64 = (1 << (u64::BITS - NAME_LEN_SHIFT)) - 1;
 
 /// Everything one item contributes to the prefilter, in one word: its name mask
@@ -663,12 +682,20 @@ impl ScanTable {
         let name_start = self.names.len() as u32;
         self.names.push_str(item.name());
         let keywords_start = self.keywords.len() as u32;
+        // Masked one keyword at a time rather than over the blob they are
+        // written to: a match stays inside one keyword, so the separators
+        // between them are characters no match can consume. Folding them in
+        // would set the catch-all bit on every item that has a keyword at all,
+        // and let every query holding a digit, a space or any punctuation past
+        // the keyword test — most of them, since a query with two words holds a
+        // space.
+        let mut keyword_mask = 0;
         for keyword in item.keywords() {
+            keyword_mask |= haystack_mask(keyword);
             self.keywords.push_str(keyword);
             self.keywords.push(KEYWORD_SEPARATOR);
         }
         let (name_mask, boundary_mask, name_is_ascii) = name_masks(item.name());
-        let (keyword_mask, _) = haystack_mask(&self.keywords[keywords_start as usize..]);
         self.prefilter
             .push(prefilter_word(name_mask, keyword_mask, item.name().len()));
         self.launch_counts.push(item.launch_count());
@@ -1762,6 +1789,45 @@ mod tests {
         }
     }
 
+    /// The masks tell letters, digits, whitespace and everything else apart, so
+    /// a needle character of one group no longer claims the bit of another. The
+    /// groups are what the test above checks by hand; this one checks them
+    /// against the matcher over shapes nobody wrote down, since a mask that
+    /// rules out a real match is a result the engine loses.
+    #[test]
+    fn test_masks_never_drop_a_match_over_random_input() {
+        let names = random_strings(64, 12, 0x5eed);
+        let keywords = random_strings(64, 6, 0xc0ffee);
+        let items: Vec<AppItem> = names
+            .iter()
+            .enumerate()
+            .map(|(i, name)| {
+                AppItem::new(
+                    format!("id-{i}"),
+                    name.as_str(),
+                    LaunchTarget::Path(format!("{i}.exe")),
+                )
+                .with_keywords(vec![
+                    keywords[i].clone(),
+                    keywords[(i + 1) % keywords.len()].clone(),
+                ])
+            })
+            .collect();
+
+        let mut index = Index::new();
+        index.set_items(items.clone());
+
+        for query in random_strings(256, 4, 0xbeef) {
+            let mut got: Vec<String> = index
+                .find(&query, usize::MAX)
+                .into_iter()
+                .map(|r| r.item.name().to_string())
+                .collect();
+            got.sort();
+            assert_eq!(got, reference_titles(&items, &query), "query: {query:?}");
+        }
+    }
+
     /// Deterministic pseudo random strings, so the bound is checked against
     /// shapes nobody thought to write down: whitespace and delimiter
     /// boundaries, camel case, digits, non-word characters and accents.
@@ -1808,6 +1874,61 @@ mod tests {
         let word = prefilter_word(0, 0, MAX_PACKED_NAME_LEN as usize + 1);
         assert!(word >= name_len_floor(MAX_PACKED_NAME_LEN as usize));
         assert_eq!(name_len_floor(MAX_PACKED_NAME_LEN as usize + 1), 0);
+    }
+
+    /// The separator the keywords are written between is not part of any of
+    /// them, so it must not reach their mask: it would set the catch-all bit
+    /// and let every query holding a digit, a space or any punctuation past the
+    /// keyword test.
+    #[test]
+    fn test_keyword_mask_holds_only_what_a_keyword_can_match() {
+        let mut table = ScanTable::default();
+        table.push(
+            &AppItem::new("id", "Name", LaunchTarget::Path("n.exe".into()))
+                .with_keywords(vec!["tool".into(), "utility".into()]),
+        );
+
+        let keyword_mask = (table.prefilter[0] >> KEYWORD_MASK_SHIFT) as u32 & ALL_CHARS;
+        assert_eq!(
+            keyword_mask & OTHER_CHAR_BIT,
+            0,
+            "the separator reached the keyword mask"
+        );
+        assert_eq!(keyword_mask & SPACE_CHAR_BIT, 0);
+        assert_ne!(keyword_mask & ascii_bit(b't'), 0);
+        assert_eq!(keyword_mask & ascii_bit(b'z'), 0);
+    }
+
+    /// A character mask groups what a name holds, and the groups have to stay
+    /// out of each other's way: an expression is ruled out of a name that has
+    /// no punctuation precisely because its `*` claims neither the bit of the
+    /// digits it sits between nor the one of the spaces around it.
+    #[test]
+    fn test_character_groups_claim_distinct_bits() {
+        let groups = [
+            ascii_bit(b'a'),
+            ascii_bit(b'z'),
+            DIGIT_CHAR_BIT,
+            SPACE_CHAR_BIT,
+            OTHER_CHAR_BIT,
+        ];
+        for (nth, bit) in groups.iter().enumerate() {
+            assert_eq!(bit.count_ones(), 1);
+            assert_eq!(bit & ALL_CHARS, *bit, "the bit is outside a mask");
+            for other in &groups[nth + 1..] {
+                assert_eq!(bit & other, 0, "two groups share a bit");
+            }
+        }
+
+        assert_eq!(ascii_bit(b'A'), ascii_bit(b'a'));
+        assert_eq!(ascii_bit(b'7'), DIGIT_CHAR_BIT);
+        assert_eq!(ascii_bit(b'\t'), SPACE_CHAR_BIT);
+        assert_eq!(ascii_bit(b'*'), OTHER_CHAR_BIT);
+        assert_eq!(char_bit('é'), OTHER_CHAR_BIT);
+
+        // What the masks leave of a prefilter word still has to hold the length
+        // of the names a Start menu holds.
+        const { assert!(MAX_PACKED_NAME_LEN >= 63) };
     }
 
     /// The subsequence test compares a haystack byte by folding it with the
