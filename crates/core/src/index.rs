@@ -962,8 +962,23 @@ impl ScanTable {
             let name_range = row.name_start as usize..row.name_end as usize;
             let score = if row.name_is_ascii() {
                 // Byte indexing skips the UTF-8 boundary checks of `str`.
-                let haystack = Utf32Str::Ascii(&self.names.as_bytes()[name_range]);
-                state.matcher.fuzzy_match(haystack, query.needle)
+                let name = &self.names.as_bytes()[name_range];
+                match query.ascii_needle {
+                    // The mask says the name holds every needle character, not
+                    // that it holds them in the needle's order — which is what
+                    // the matcher decides first, with one `memchr2` per needle
+                    // character, whose vector setup costs more than a launcher's
+                    // name is long. Half of the items a mask lets through fail
+                    // that order test, and deciding it here in one pass over the
+                    // name is what they cost instead. An item that passes pays
+                    // the pass on top of a match it was going to be scored for
+                    // anyway, which is the cheaper half of the trade.
+                    Some(needle) if !is_subsequence_ignore_ascii_case(name, needle) => None,
+                    _ => {
+                        let haystack = Utf32Str::Ascii(name);
+                        state.matcher.fuzzy_match(haystack, query.needle)
+                    }
+                }
             } else {
                 match_unicode_name(
                     state.matcher,
@@ -1484,6 +1499,26 @@ mod tests {
         assert!(titles(&results).contains(&"Chrome"));
         assert!(titles(&results).contains(&"Google Chrome"));
         assert!(titles(&results).contains(&"Chrome DevTools"));
+    }
+
+    /// A name holding every character of the query, in the wrong order, is the
+    /// item the character mask cannot rule out and the order test in front of
+    /// the matcher decides. It is not a match, and neither the results nor the
+    /// keyword field it is also carried in may say otherwise.
+    #[test]
+    fn test_a_name_holding_the_query_out_of_order_is_no_match() {
+        let mut index = Index::new();
+        index.set_items(vec![
+            AppItem::new("dcoe", "Dcoe", LaunchTarget::Path("dcoe.exe".into())),
+            AppItem::new("code", "Code", LaunchTarget::Path("code.exe".into())),
+            AppItem::new("oecd", "Oecd", LaunchTarget::Path("oecd.exe".into()))
+                .with_keywords(vec!["code".into()]),
+        ]);
+
+        // Highest first, so the keyword match leads and the name that holds the
+        // query out of order is left out entirely.
+        let results = index.find("code", 10);
+        assert_eq!(titles(&results), vec!["Oecd", "Code"]);
     }
 
     #[test]
