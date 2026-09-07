@@ -1,65 +1,71 @@
-use crate::models::{AppItem, SearchResult};
-use compact_str::CompactString;
 use nucleo_matcher::chars::{normalize, to_lower_case};
 use nucleo_matcher::{Config, Matcher, Utf32Str};
 use std::borrow::Cow;
-use std::cell::RefCell;
+use std::cell::{RefCell, RefMut};
 use std::sync::Arc;
 
 const KEYWORD_MATCH_SCORE: i32 = 5_000;
 const SEARCH_FRECENCY_MULTIPLIER: i64 = 50;
 const TOP_ITEMS_FRECENCY_MULTIPLIER: i64 = 10;
 
-pub struct Engine {
-    items: Vec<Arc<AppItem>>,
-    scan: ScanTable,
-    matcher: RefCell<Matcher>,
-    narrowing: RefCell<Option<Narrowing>>,
+/// What [`Index`] needs from an item to search it: a name and keywords to
+/// match against, and a launch count to break ties in the item's favor.
+pub trait IndexableItem {
+    fn name(&self) -> &str;
+    fn keywords(&self) -> &[String];
+    fn launch_count(&self) -> u32;
 }
 
-impl std::fmt::Debug for Engine {
+/// One item `Index::search` returned: the item itself, its score, and which of
+/// its name's characters the query matched, for highlighting.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Match<T> {
+    pub item: Arc<T>,
+    pub score: i32,
+    pub matched_char_indices: Vec<usize>,
+}
+
+pub struct Index<T: IndexableItem> {
+    items: Vec<Arc<T>>,
+    ranking: Ranking,
+}
+
+impl<T: IndexableItem> std::fmt::Debug for Index<T> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("Engine")
+        f.debug_struct("Index")
             .field("items", &self.items.len())
             .finish()
     }
 }
 
-impl Default for Engine {
+impl<T: IndexableItem> Default for Index<T> {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl Engine {
+impl<T: IndexableItem> Index<T> {
     pub fn new() -> Self {
-        let mut config = Config::DEFAULT;
-        config.ignore_case = true;
         Self {
             items: Vec::new(),
-            scan: ScanTable::default(),
-            matcher: RefCell::new(Matcher::new(config)),
-            narrowing: RefCell::new(None),
+            ranking: Ranking::new(),
         }
     }
 
-    pub fn set_items(&mut self, items: impl IntoIterator<Item = AppItem>) {
+    pub fn set_items(&mut self, items: impl IntoIterator<Item = T>) {
         self.items = items.into_iter().map(Arc::new).collect();
-        self.scan = ScanTable::build(&self.items);
-        self.narrowing.get_mut().take();
+        self.ranking.rebuild(&self.items);
     }
 
-    pub fn add_item(&mut self, item: AppItem) {
+    pub fn add_item(&mut self, item: T) {
         let item = Arc::new(item);
-        self.scan.push(&item);
+        self.ranking.push(item.as_ref());
         self.items.push(item);
-        self.narrowing.get_mut().take();
     }
 
     pub fn clear(&mut self) {
         self.items.clear();
-        self.scan = ScanTable::default();
-        self.narrowing.get_mut().take();
+        self.ranking.clear();
     }
 
     pub fn len(&self) -> usize {
@@ -71,49 +77,141 @@ impl Engine {
     }
 
     #[cfg(test)]
-    fn top_items(&self, limit: usize) -> Vec<SearchResult> {
+    fn top_items(&self, limit: usize) -> Vec<Match<T>> {
         let mut out = Vec::new();
         self.top_items_into(limit, &mut out);
         out
     }
 
-    fn top_items_into(&self, limit: usize, out: &mut Vec<SearchResult>) {
-        out.clear();
-        if limit == 0 {
-            return;
-        }
-
-        // Bounded selection over the launch count column: scoring the whole
-        // index does not require touching a single `AppItem`.
-        let mut top: Vec<(u32, i32)> = Vec::with_capacity(limit.min(self.items.len()));
-        for (idx, &launch_count) in self.scan.launch_counts.iter().enumerate() {
-            let score = launch_score(launch_count, TOP_ITEMS_FRECENCY_MULTIPLIER);
-            if top.len() == limit {
-                if score <= top[limit - 1].1 {
-                    continue;
-                }
-                top.pop();
-            }
-            let pos = top.partition_point(|&(_, kept)| kept >= score);
-            top.insert(pos, (idx as u32, score));
-        }
-
-        out.extend(top.into_iter().map(|(idx, score)| {
-            SearchResult::from_app(Arc::clone(&self.items[idx as usize]), score, Vec::new())
-        }));
+    fn top_items_into(&self, limit: usize, out: &mut Vec<Match<T>>) {
+        self.collect(self.ranking.top(limit), out);
     }
 
     #[cfg(test)]
-    fn find(&self, query: &str, limit: usize) -> Vec<SearchResult> {
+    fn find(&self, query: &str, limit: usize) -> Vec<Match<T>> {
         let mut out = Vec::new();
         self.find_into(query, limit, &mut out);
         out
     }
 
-    fn find_into(&self, query: &str, limit: usize, out: &mut Vec<SearchResult>) {
+    fn find_into(&self, query: &str, limit: usize, out: &mut Vec<Match<T>>) {
+        self.collect(self.ranking.find(query, limit), out);
+    }
+
+    /// Turns the item indices a ranking picked into the items themselves. The
+    /// only step of a search that knows what an item is, and the only one that
+    /// touches item memory: everything before it reads the columns of
+    /// [`ScanTable`], which hold no `T`.
+    fn collect(&self, mut ranked: RefMut<'_, Vec<Ranked>>, out: &mut Vec<Match<T>>) {
         out.clear();
+        out.extend(ranked.drain(..).map(|ranked| Match {
+            item: Arc::clone(&self.items[ranked.item as usize]),
+            score: ranked.score,
+            matched_char_indices: ranked.matched_char_indices,
+        }));
+    }
+
+    pub fn search(&self, query: &str, limit: usize) -> Vec<Match<T>> {
+        let mut out = Vec::new();
+        self.search_into(query, limit, &mut out);
+        out
+    }
+
+    /// Same as [`Index::search`], but reuses `out`'s existing allocation
+    /// instead of returning a freshly allocated `Vec` on every call, which
+    /// matters on a UI thread re-searching once per keystroke.
+    pub fn search_into(&self, query: &str, limit: usize, out: &mut Vec<Match<T>>) {
+        let trimmed = query.trim();
+        if trimmed.is_empty() {
+            self.top_items_into(limit, out);
+        } else {
+            self.find_into(trimmed, limit, out);
+        }
+    }
+}
+
+/// One item a query picked, as an index into the item list. What a search
+/// produces before it is given an item type.
+struct Ranked {
+    item: u32,
+    score: i32,
+    matched_char_indices: Vec<usize>,
+}
+
+/// Everything a search reads that is not an item: the columnar projection of
+/// the index, the matcher, and the match set kept for the next keystroke.
+///
+/// Deliberately not generic, and the reason [`Index`]'s own body is as thin as
+/// it is. A generic body is compiled again in every crate that names an item
+/// type, under that crate's code generation rather than this one's, which is
+/// enough to change how a loop over an index-sized column comes out. Nothing a
+/// search reads is a `T` — names, keywords and launch counts all live in
+/// columns — so the whole of it is ranked here, once, and handed back as item
+/// indices for [`Index::collect`] to look up.
+struct Ranking {
+    scan: ScanTable,
+    matcher: RefCell<Matcher>,
+    narrowing: RefCell<Option<Narrowing>>,
+    /// Where a ranking puts its results, kept between queries so that a
+    /// keystroke reuses the allocation instead of making one.
+    ranked: RefCell<Vec<Ranked>>,
+}
+
+impl Ranking {
+    fn new() -> Self {
+        let mut config = Config::DEFAULT;
+        config.ignore_case = true;
+        Self {
+            scan: ScanTable::default(),
+            matcher: RefCell::new(Matcher::new(config)),
+            narrowing: RefCell::new(None),
+            ranked: RefCell::new(Vec::new()),
+        }
+    }
+
+    fn rebuild<T: IndexableItem>(&mut self, items: &[Arc<T>]) {
+        self.scan = ScanTable::build(items);
+        self.narrowing.get_mut().take();
+    }
+
+    fn push<T: IndexableItem>(&mut self, item: &T) {
+        self.scan.push(item);
+        self.narrowing.get_mut().take();
+    }
+
+    fn clear(&mut self) {
+        self.scan = ScanTable::default();
+        self.narrowing.get_mut().take();
+    }
+
+    /// The items an empty query answers with: the most launched ones.
+    fn top(&self, limit: usize) -> RefMut<'_, Vec<Ranked>> {
+        let mut ranked = self.ranked.borrow_mut();
+        ranked.clear();
         if limit == 0 {
-            return;
+            return ranked;
+        }
+
+        ranked.extend(
+            self.scan
+                .best_by_launch_count(limit)
+                .into_iter()
+                .map(|(item, score)| Ranked {
+                    item,
+                    score,
+                    matched_char_indices: Vec::new(),
+                }),
+        );
+        ranked
+    }
+
+    /// The best `limit` items for `query`, with the characters of their names
+    /// the query matched, for highlighting.
+    fn find(&self, query: &str, limit: usize) -> RefMut<'_, Vec<Ranked>> {
+        let mut ranked = self.ranked.borrow_mut();
+        ranked.clear();
+        if limit == 0 {
+            return ranked;
         }
 
         let mut matcher = self.matcher.borrow_mut();
@@ -121,7 +219,7 @@ impl Engine {
         let mut needle_buf = Vec::new();
         let needle = Utf32Str::new(needles.name(), &mut needle_buf);
         let query_lower = needles.keyword();
-        let query_mask = needle_mask(needles.name());
+        let query_masks = needle_masks(needles.name());
 
         // A keystroke only ever shrinks the previous match set, so the scan can
         // start from it instead of from the whole index.
@@ -135,7 +233,7 @@ impl Engine {
             &mut matcher,
             needle,
             query_lower,
-            query_mask,
+            query_masks,
             limit,
             narrowed,
         );
@@ -147,45 +245,25 @@ impl Engine {
         let mut hay_buf = Vec::new();
         let mut raw_indices = Vec::new();
 
-        out.extend(scan.top.into_iter().map(|candidate| {
-            let item = Arc::clone(&self.items[candidate.item as usize]);
+        ranked.extend(scan.top.into_iter().map(|candidate| {
             let indices = if candidate.matched_by_name {
                 hay_buf.clear();
                 raw_indices.clear();
-                let haystack = Utf32Str::new(item.name(), &mut hay_buf);
+                // The name the scan matched, out of the column it matched it
+                // in, which is the item's name as it was indexed.
+                let haystack = Utf32Str::new(self.scan.name(candidate.item), &mut hay_buf);
                 matcher.fuzzy_indices(haystack, needle, &mut raw_indices);
                 raw_indices.iter().map(|&i| i as usize).collect()
             } else {
                 Vec::new()
             };
-            SearchResult::from_app(item, candidate.score, indices)
+            Ranked {
+                item: candidate.item,
+                score: candidate.score,
+                matched_char_indices: indices,
+            }
         }));
-    }
-
-    pub fn search(&self, query: &str, limit: usize) -> Vec<SearchResult> {
-        let mut out = Vec::new();
-        self.search_into(query, limit, &mut out);
-        out
-    }
-
-    /// Same as [`Engine::search`], but reuses `out`'s existing allocation
-    /// instead of returning a freshly allocated `Vec` on every call, which
-    /// matters on a UI thread re-searching once per keystroke.
-    pub fn search_into(&self, query: &str, limit: usize, out: &mut Vec<SearchResult>) {
-        let trimmed = query.trim();
-        if trimmed.is_empty() {
-            self.top_items_into(limit, out);
-            return;
-        }
-
-        let calc_result = crate::calc::eval(trimmed)
-            .map(|res| SearchResult::calculation(CompactString::new(trimmed), res));
-
-        self.find_into(trimmed, limit, out);
-        if let Some(calc) = calc_result {
-            out.insert(0, calc);
-            out.truncate(limit);
-        }
+        ranked
     }
 }
 
@@ -280,18 +358,18 @@ const KEYWORD_SEPARATOR: char = '\n';
 
 /// Search-only projection of the index, laid out for a linear scan: the fields
 /// the per-keystroke scan reads live in contiguous buffers instead of behind one
-/// `Arc<AppItem>` indirection (plus one `Vec<String>`) per item.
+/// `Arc<T>` indirection (plus one `Vec<String>`) per item.
 #[derive(Default)]
 struct ScanTable {
     /// Every item name, concatenated.
     names: String,
     /// Every item's keywords, lowercased and separated by [`KEYWORD_SEPARATOR`].
     keywords: String,
-    /// Character bitmask of every name, in item order. Kept in its own buffer so
-    /// the prefilter walks 4 bytes per item instead of a whole row.
-    name_masks: Vec<u32>,
-    /// Character bitmask of every keyword blob slice, in item order.
-    keyword_masks: Vec<u32>,
+    /// Everything the prefilter reads, one [`prefilter_word`] per item: the two
+    /// character bitmasks and the name length. Packed into a single column so
+    /// the item a query rules out costs one 8 byte load, instead of three
+    /// buffers walked in step.
+    prefilter: Vec<u64>,
     /// Launch count of every item, in item order. Duplicated from
     /// [`ScanRow::launch_count`] so the no-query path scans 4 bytes per item.
     launch_counts: Vec<u32>,
@@ -316,6 +394,125 @@ fn haystack_mask(text: &str) -> (u32, bool) {
     (mask, true)
 }
 
+/// Everything one pass over an item's name tells the scan: which characters it
+/// holds, which of those a match could earn a bonus on, and whether it is pure
+/// ASCII.
+///
+/// The second mask is what bounds a name match tighter than the needle's length
+/// alone can — see [`NameCeilings`]. A name that is not ASCII claims every
+/// character instead of a real mask: the character classes its bonuses follow
+/// are unicode ones the columns do not model, and claiming everything is the
+/// bound the engine held every name to before there was a boundary mask.
+fn name_masks(name: &str) -> (u32, u32, bool) {
+    let mut present = 0;
+    let mut boundary = 0;
+    let mut previous = WHITESPACE;
+    for (offset, &byte) in name.as_bytes().iter().enumerate() {
+        if !byte.is_ascii() {
+            return (present | unicode_mask(&name[offset..]), ALL_CHARS, false);
+        }
+        // One lookup for both of the things this pass needs from a byte, since
+        // it runs over every character of every item the index is built from.
+        let entry = NAME_BYTES[byte as usize];
+        let bit = entry & ALL_CHARS;
+        let class = entry >> CLASS_SHIFT;
+        present |= bit;
+        if EARNS_A_BONUS[previous as usize] >> class & 1 != 0 {
+            boundary |= bit;
+        }
+        previous = class as u8;
+    }
+    (present, boundary, true)
+}
+
+/// Character classes `nucleo_matcher` sorts a haystack character into, for the
+/// ASCII characters a name column can hold. Its `Letter` class is for
+/// characters that are alphabetic without having a case, which no ASCII
+/// character is, so it is left out.
+const WHITESPACE: u8 = 0;
+const NON_WORD: u8 = 1;
+const DELIMITER: u8 = 2;
+const LOWER: u8 = 3;
+const UPPER: u8 = 4;
+const NUMBER: u8 = 5;
+const CLASS_COUNT: usize = 6;
+
+/// Characters `Config::DEFAULT` treats as delimiters.
+const DELIMITER_CHARS: &[u8] = b"/,:;|";
+
+const fn char_class(byte: u8) -> u8 {
+    match byte {
+        b'a'..=b'z' => LOWER,
+        b'A'..=b'Z' => UPPER,
+        b'0'..=b'9' => NUMBER,
+        b' ' | b'\t' | b'\n' | b'\x0c' | b'\r' => WHITESPACE,
+        _ => {
+            let mut nth = 0;
+            while nth < DELIMITER_CHARS.len() {
+                if DELIMITER_CHARS[nth] == byte {
+                    return DELIMITER;
+                }
+                nth += 1;
+            }
+            NON_WORD
+        }
+    }
+}
+
+/// Whether a character of `class` preceded by one of `previous` earns any bonus
+/// at all, which is the question [`name_masks`] asks of every position of a
+/// name. Mirrors `nucleo_matcher`'s `Config::bonus_for` under the configuration
+/// this engine builds its matcher with, reduced to whether the bonus is
+/// non-zero; `test_boundary_mask_agrees_with_the_matcher` keeps the two
+/// together.
+const fn earns_a_bonus(previous: u8, class: u8) -> bool {
+    let is_word = matches!(class, LOWER | UPPER | NUMBER);
+    if is_word && matches!(previous, WHITESPACE | DELIMITER | NON_WORD) {
+        // A word starting after whitespace, a delimiter or a non-word
+        // character.
+        return true;
+    }
+    if previous == LOWER && class == UPPER || previous != NUMBER && class == NUMBER {
+        // camelCase, or letter123.
+        return true;
+    }
+    matches!(class, WHITESPACE | NON_WORD)
+}
+
+/// Where a [`NAME_BYTES`] entry keeps the character class, above the mask bit.
+const CLASS_SHIFT: u32 = MASK_BITS;
+
+/// What one pass over a name needs to know about a byte: the mask bit it
+/// contributes and the class it belongs to, in one word, so that the pass costs
+/// a load per byte rather than two chains of comparisons.
+const NAME_BYTES: [u32; 128] = {
+    let mut table = [0; 128];
+    let mut byte = 0;
+    while byte < table.len() {
+        table[byte] = ascii_bit(byte as u8) | (char_class(byte as u8) as u32) << CLASS_SHIFT;
+        byte += 1;
+    }
+    table
+};
+
+/// Bit `class` of `EARNS_A_BONUS[previous]` is set exactly when
+/// [`earns_a_bonus`] holds for the pair.
+const EARNS_A_BONUS: [u32; CLASS_COUNT] = {
+    let mut table = [0; CLASS_COUNT];
+    let mut previous = 0;
+    while previous < CLASS_COUNT {
+        let mut class = 0;
+        while class < CLASS_COUNT {
+            if earns_a_bonus(previous as u8, class as u8) {
+                table[previous] |= 1 << class;
+            }
+            class += 1;
+        }
+        previous += 1;
+    }
+    table
+};
+
 fn unicode_mask(text: &str) -> u32 {
     let mut mask = 0;
     for ch in text.chars() {
@@ -326,15 +523,34 @@ fn unicode_mask(text: &str) -> u32 {
     mask
 }
 
-/// Mask of the characters a match requires. The needle is already normalized and
-/// lowercased, so every character maps to exactly the bit it needs.
-fn needle_mask(needle: &str) -> u32 {
-    needle.chars().map(char_bit).fold(0, |mask, bit| mask | bit)
+/// Masks of the characters a match requires. The needle is already normalized
+/// and lowercased, so every character maps to exactly the bit it needs.
+///
+/// The first character is kept apart from the rest because the matcher scores
+/// its bonus twice, so it is worth bounding on its own — see [`NameCeilings`].
+#[derive(Clone, Copy)]
+struct QueryMasks {
+    all_chars: u32,
+    first_char: u32,
 }
 
-const OTHER_CHAR_BIT: u32 = 1 << 26;
+fn needle_masks(needle: &str) -> QueryMasks {
+    let mut chars = needle.chars().map(char_bit);
+    let first_char = chars.next().unwrap_or(0);
+    QueryMasks {
+        all_chars: chars.fold(first_char, |mask, bit| mask | bit),
+        first_char,
+    }
+}
 
-fn ascii_bit(byte: u8) -> u32 {
+/// Bits a character mask occupies: one per ASCII letter plus the catch-all.
+const MASK_BITS: u32 = 27;
+const OTHER_CHAR_BIT: u32 = 1 << (MASK_BITS - 1);
+/// Every bit a character mask can hold: the mask of a haystack that has to be
+/// assumed to contain anything.
+const ALL_CHARS: u32 = (1 << MASK_BITS) - 1;
+
+const fn ascii_bit(byte: u8) -> u32 {
     match byte.to_ascii_lowercase() {
         lower @ b'a'..=b'z' => 1 << (lower - b'a'),
         _ => OTHER_CHAR_BIT,
@@ -353,6 +569,49 @@ fn char_bit(ch: char) -> u32 {
     }
 }
 
+/// Where the keyword mask sits in a [`prefilter_word`].
+const KEYWORD_MASK_SHIFT: u32 = MASK_BITS;
+/// Where the name length sits in a [`prefilter_word`]: the high bits, so that
+/// comparing whole words compares name lengths first.
+const NAME_LEN_SHIFT: u32 = 2 * MASK_BITS;
+/// Longest name a [`prefilter_word`] can hold the length of. A longer name
+/// saturates, which only makes the length test let more items through.
+const MAX_PACKED_NAME_LEN: u64 = (1 << (u64::BITS - NAME_LEN_SHIFT)) - 1;
+
+/// Everything one item contributes to the prefilter, in one word: its name mask
+/// in the low bits, its keyword mask above that, and its name length in the
+/// high bits.
+fn prefilter_word(name_mask: u32, keyword_mask: u32, name_len: usize) -> u64 {
+    let name_len = (name_len as u64).min(MAX_PACKED_NAME_LEN);
+    u64::from(name_mask)
+        | (u64::from(keyword_mask) << KEYWORD_MASK_SHIFT)
+        | (name_len << NAME_LEN_SHIFT)
+}
+
+/// Smallest prefilter word whose name is long enough to hold a needle of
+/// `chars` characters, which is what a name has to be for the matcher to have
+/// anything to look at. The name length occupies the high bits of a word, so a
+/// word compares greater than this exactly when its name is long enough — the
+/// same comparison the name length would make on its own, as one instruction
+/// on the word the masks were loaded with.
+///
+/// The lengths are byte lengths, as they were when they were compared field by
+/// field: a name that is not ASCII holds more bytes than characters, so the
+/// test stays on the conservative side of the character count.
+///
+/// A needle longer than a packed name length can be is not compared at all,
+/// since the saturated lengths no longer order against it.
+fn name_len_floor(chars: usize) -> u64 {
+    if chars as u64 > MAX_PACKED_NAME_LEN {
+        return 0;
+    }
+    (chars as u64) << NAME_LEN_SHIFT
+}
+
+/// Bit of [`ScanRow::name_bonuses`] that marks a name as pure ASCII, above the
+/// bits the boundary mask itself occupies.
+const NAME_IS_ASCII_BIT: u32 = 1 << MASK_BITS;
+
 #[derive(Clone, Copy)]
 struct ScanRow {
     name_start: u32,
@@ -360,11 +619,27 @@ struct ScanRow {
     keywords_start: u32,
     keywords_end: u32,
     launch_count: u32,
-    name_is_ascii: bool,
+    /// The characters of the name a match could earn a bonus on, as
+    /// [`name_masks`] builds them, plus [`NAME_IS_ASCII_BIT`]. Both ride in the
+    /// padding the row had anyway, so the boundary mask needs no column of its
+    /// own and arrives with the row the pruning path already reads.
+    name_bonuses: u32,
+}
+
+impl ScanRow {
+    /// Characters of the name a match could earn a bonus on.
+    fn boundary_mask(&self) -> u32 {
+        self.name_bonuses & ALL_CHARS
+    }
+
+    /// Whether the name is pure ASCII, and can therefore be matched byte-wise.
+    fn name_is_ascii(&self) -> bool {
+        self.name_bonuses & NAME_IS_ASCII_BIT != 0
+    }
 }
 
 impl ScanTable {
-    fn build(items: &[Arc<AppItem>]) -> Self {
+    fn build<T: IndexableItem>(items: &[Arc<T>]) -> Self {
         let names_len: usize = items.iter().map(|item| item.name().len()).sum();
         let keywords_len: usize = items
             .iter()
@@ -374,18 +649,17 @@ impl ScanTable {
         let mut table = Self {
             names: String::with_capacity(names_len),
             keywords: String::with_capacity(keywords_len),
-            name_masks: Vec::with_capacity(items.len()),
-            keyword_masks: Vec::with_capacity(items.len()),
+            prefilter: Vec::with_capacity(items.len()),
             launch_counts: Vec::with_capacity(items.len()),
             rows: Vec::with_capacity(items.len()),
         };
         for item in items {
-            table.push(item);
+            table.push(item.as_ref());
         }
         table
     }
 
-    fn push(&mut self, item: &AppItem) {
+    fn push<T: IndexableItem>(&mut self, item: &T) {
         let name_start = self.names.len() as u32;
         self.names.push_str(item.name());
         let keywords_start = self.keywords.len() as u32;
@@ -393,10 +667,10 @@ impl ScanTable {
             self.keywords.push_str(keyword);
             self.keywords.push(KEYWORD_SEPARATOR);
         }
-        let (name_mask, name_is_ascii) = haystack_mask(item.name());
+        let (name_mask, boundary_mask, name_is_ascii) = name_masks(item.name());
         let (keyword_mask, _) = haystack_mask(&self.keywords[keywords_start as usize..]);
-        self.name_masks.push(name_mask);
-        self.keyword_masks.push(keyword_mask);
+        self.prefilter
+            .push(prefilter_word(name_mask, keyword_mask, item.name().len()));
         self.launch_counts.push(item.launch_count());
         self.rows.push(ScanRow {
             name_start,
@@ -404,8 +678,38 @@ impl ScanTable {
             keywords_start,
             keywords_end: self.keywords.len() as u32,
             launch_count: item.launch_count(),
-            name_is_ascii,
+            name_bonuses: if name_is_ascii {
+                boundary_mask | NAME_IS_ASCII_BIT
+            } else {
+                boundary_mask
+            },
         });
+    }
+
+    /// Name of an item, as it was indexed.
+    fn name(&self, idx: u32) -> &str {
+        let row = &self.rows[idx as usize];
+        &self.names[row.name_start as usize..row.name_end as usize]
+    }
+
+    /// Best `limit` items of the index by launch count alone, highest score
+    /// first, ties going to the lower item index: what an empty query answers
+    /// with. Bounded selection over the launch count column, so ranking the
+    /// whole index does not require touching a single item.
+    fn best_by_launch_count(&self, limit: usize) -> Vec<(u32, i32)> {
+        let mut top: Vec<(u32, i32)> = Vec::with_capacity(limit.min(self.launch_counts.len()));
+        for (idx, &launch_count) in self.launch_counts.iter().enumerate() {
+            let score = launch_score(launch_count, TOP_ITEMS_FRECENCY_MULTIPLIER);
+            if top.len() == limit {
+                if score <= top[limit - 1].1 {
+                    continue;
+                }
+                top.pop();
+            }
+            let pos = top.partition_point(|&(_, kept)| kept >= score);
+            top.insert(pos, (idx as u32, score));
+        }
+        top
     }
 
     /// Scores every item that survives the mask prefilter and keeps the best
@@ -420,54 +724,50 @@ impl ScanTable {
         matcher: &mut Matcher,
         needle: Utf32Str<'_>,
         query_lower: &str,
-        query_mask: u32,
+        masks: QueryMasks,
         limit: usize,
         narrowed: Option<&[u32]>,
     ) -> Scan {
         match narrowed {
             Some(items) => {
-                let rows = items.iter().map(|&idx| {
-                    let index = idx as usize;
-                    (
-                        idx,
-                        &self.rows[index],
-                        self.name_masks[index],
-                        self.keyword_masks[index],
-                    )
-                });
-                self.scan(rows, matcher, needle, query_lower, query_mask, limit)
+                let words = items.iter().map(|&idx| (idx, self.prefilter[idx as usize]));
+                self.scan(words, matcher, needle, query_lower, masks, limit)
             }
             None => {
-                // Walked as parallel iterators: the whole index is read in
-                // order, so none of the columns needs a bounds check.
-                let rows = self
-                    .rows
+                // The whole column is read in order, so the prefilter word of
+                // an item needs no bounds check.
+                let words = self
+                    .prefilter
                     .iter()
-                    .zip(self.name_masks.iter().copied())
-                    .zip(self.keyword_masks.iter().copied())
+                    .copied()
                     .enumerate()
-                    .map(|(idx, ((row, name_mask), keyword_mask))| {
-                        (idx as u32, row, name_mask, keyword_mask)
-                    });
-                self.scan(rows, matcher, needle, query_lower, query_mask, limit)
+                    .map(|(idx, word)| (idx as u32, word));
+                self.scan(words, matcher, needle, query_lower, masks, limit)
             }
         }
     }
 
-    fn scan<'a, I: Iterator<Item = (u32, &'a ScanRow, u32, u32)>>(
+    fn scan<I: Iterator<Item = (u32, u64)>>(
         &self,
         mut source: I,
         matcher: &mut Matcher,
         needle: Utf32Str<'_>,
         query_lower: &str,
-        query_mask: u32,
+        masks: QueryMasks,
         limit: usize,
     ) -> Scan {
-        let needle_len = needle.len() as u32;
+        let query_mask = masks.all_chars;
+        // The prefilter reads one word per item and tests it against these
+        // three: the query characters a name must hold, the same characters in
+        // the keyword field, and the shortest name the needle fits in.
+        let name_probe = u64::from(query_mask);
+        let keyword_probe = name_probe << KEYWORD_MASK_SHIFT;
+        let name_len_floor = name_len_floor(needle.len());
+        let name_ceilings = NameCeilings::new(needle.len(), masks);
         let query = Query {
             needle,
             lowercased: query_lower,
-            name_ceiling: name_score_ceiling(needle.len()),
+            name_ceilings: &name_ceilings,
             ascii_needle: match needle {
                 Utf32Str::Ascii(needle) => Some(needle),
                 Utf32Str::Unicode(_) => None,
@@ -487,16 +787,17 @@ impl ScanTable {
         // never fills the shortlist — one matching fewer items than the limit,
         // or nothing at all — is scanned by this loop alone, and pays the mask
         // test and nothing else for an item the mask rejects.
-        for (idx, row, name_mask, keyword_mask) in source.by_ref() {
+        for (idx, word) in source.by_ref() {
             // A name shorter than the needle cannot hold it, which the matcher
             // would have to be called to find out.
-            let name_possible =
-                query_mask & !name_mask == 0 && needle_len <= row.name_end - row.name_start;
-            let keyword_possible = query_mask & !keyword_mask == 0;
+            let missing = !word;
+            let name_possible = name_probe & missing == 0 && word >= name_len_floor;
+            let keyword_possible = keyword_probe & missing == 0;
             if !name_possible && !keyword_possible {
                 continue;
             }
 
+            let row = &self.rows[idx as usize];
             self.score_row(&mut state, query, idx, row, name_possible, keyword_possible);
             if state.top.len() == limit {
                 break;
@@ -515,21 +816,22 @@ impl ScanTable {
         // narrows its scan with, which takes deciding whether it matches at all
         // — much less work than scoring it, but not always possible without the
         // matcher, in which case it is scored after all.
-        for (idx, row, name_mask, keyword_mask) in source {
-            let name_possible =
-                query_mask & !name_mask == 0 && needle_len <= row.name_end - row.name_start;
-            let keyword_possible = query_mask & !keyword_mask == 0;
+        for (idx, word) in source {
+            let missing = !word;
+            let name_possible = name_probe & missing == 0 && word >= name_len_floor;
+            let keyword_possible = keyword_probe & missing == 0;
             if !name_possible && !keyword_possible {
                 continue;
             }
 
             if let Some(is_match) = ruled_out_unscored(
                 self,
-                row,
+                idx,
                 name_possible,
                 keyword_possible,
                 &query,
                 state.top[limit - 1].score,
+                state.matched.is_some(),
             ) {
                 if is_match {
                     record_match(&mut state.matched, state.capacity, idx);
@@ -537,6 +839,8 @@ impl ScanTable {
                 continue;
             }
 
+            // Only an item the bound could not rule out is worth its row.
+            let row = &self.rows[idx as usize];
             self.score_row(&mut state, query, idx, row, name_possible, keyword_possible);
         }
 
@@ -564,7 +868,7 @@ impl ScanTable {
     ) {
         let name_score = if name_possible {
             let name_range = row.name_start as usize..row.name_end as usize;
-            let score = if row.name_is_ascii {
+            let score = if row.name_is_ascii() {
                 // Byte indexing skips the UTF-8 boundary checks of `str`.
                 let haystack = Utf32Str::Ascii(&self.names.as_bytes()[name_range]);
                 state.matcher.fuzzy_match(haystack, query.needle)
@@ -641,16 +945,22 @@ struct Query<'a> {
     needle: Utf32Str<'a>,
     /// The query as keyword matching compares it.
     lowercased: &'a str,
-    /// What [`name_score_ceiling`] bounds a name match by.
-    name_ceiling: i32,
+    /// What a name match is bounded by. Behind a reference: only the pruning
+    /// path reads it, and the scan loop carries the rest of this by value.
+    name_ceilings: &'a NameCeilings,
     /// The needle, when it is ASCII and can therefore be compared byte-wise.
     ascii_needle: Option<&'a [u8]>,
 }
 
-/// Whether the score ceiling rules `row` out, and if so whether it matches the
-/// query anyway, which is all the match set of the scan still needs from it.
+/// Whether the score ceiling rules `row` out, and if so whether the match set
+/// still being built wants it, which is all a ruled out item is still asked for.
 /// `None` leaves the item to be scored: either the ceiling does not rule it out,
 /// or deciding the match needs the matcher after all.
+///
+/// `collecting` says whether the match set is still alive. Once it has been
+/// given up, a ruled out item is not going anywhere, so whether it matches is
+/// nothing anyone reads and deciding it is work the scan can skip — which is
+/// what the rest of a scan over an index that matches the query widely does.
 ///
 /// Kept out of line, like the rest of what only some items reach: the scan loop
 /// calls this once the shortlist is full, and a scan whose shortlist never fills
@@ -658,20 +968,43 @@ struct Query<'a> {
 #[inline(never)]
 fn ruled_out_unscored(
     table: &ScanTable,
-    row: &ScanRow,
+    idx: u32,
     name_possible: bool,
     keyword_possible: bool,
     query: &Query<'_>,
     cutoff: i32,
+    collecting: bool,
 ) -> Option<bool> {
-    let mut ceiling = if name_possible { query.name_ceiling } else { 0 };
-    if keyword_possible {
-        ceiling = ceiling.max(KEYWORD_MATCH_SCORE);
+    // The two things a name match competes with: a keyword match, which scores
+    // a flat `KEYWORD_MATCH_SCORE`, and the item's frecency, which is added to
+    // either.
+    let row = &table.rows[idx as usize];
+    let keyword_ceiling = if keyword_possible {
+        KEYWORD_MATCH_SCORE
+    } else {
+        0
+    };
+    let boost = launch_score(row.launch_count, SEARCH_FRECENCY_MULTIPLIER);
+    let ruled_out =
+        |name_ceiling: i32| name_ceiling.max(keyword_ceiling).saturating_add(boost) <= cutoff;
+
+    let by_length = if name_possible {
+        query.name_ceilings.by_length
+    } else {
+        0
+    };
+    if !ruled_out(by_length) {
+        // What the needle's length allows is not enough to drop this item. What
+        // this name in particular can score often still is, and asking costs
+        // nothing beyond the row already read here — which is why the boundary
+        // mask lives in the row rather than in the word the prefilter streams
+        // for every item of the index.
+        if !name_possible || !ruled_out(query.name_ceilings.of(row.boundary_mask())) {
+            return None;
+        }
     }
-    let ceiling =
-        ceiling.saturating_add(launch_score(row.launch_count, SEARCH_FRECENCY_MULTIPLIER));
-    if ceiling > cutoff {
-        return None;
+    if !collecting {
+        return Some(false);
     }
 
     let by_name = match (name_possible, query.ascii_needle) {
@@ -679,13 +1012,13 @@ fn ruled_out_unscored(
         // An ASCII name holds an ASCII needle exactly when the needle is a
         // subsequence of it, which is what the matcher's own prefilter decides
         // before it scores anything.
-        (true, Some(needle)) if row.name_is_ascii => {
+        (true, Some(needle)) if row.name_is_ascii() => {
             let name = &table.names.as_bytes()[row.name_start as usize..row.name_end as usize];
             is_subsequence_ignore_ascii_case(name, needle)
         }
         // A needle that is not ASCII never matches an ASCII name, since
         // normalizing one leaves it as it is.
-        (true, None) if row.name_is_ascii => false,
+        (true, None) if row.name_is_ascii() => false,
         // Anything else has to be normalized before it can be compared, which
         // is the matcher's job.
         (true, _) => return None,
@@ -711,17 +1044,36 @@ fn record_match(matched: &mut Option<Vec<u32>>, capacity: usize, idx: u32) {
     }
 }
 
+/// Bit that tells an ASCII letter's two cases apart.
+const ASCII_CASE_BIT: u8 = 0b10_0000;
+
+/// The bit a haystack byte is folded with before it is compared to `wanted`:
+/// the case bit when `wanted` is a letter, since only that letter's two cases
+/// fold onto it, and nothing otherwise, since then only the byte itself equals
+/// it. Cheaper than lowercasing every haystack byte, and the same comparison.
+fn case_fold_bit(wanted: u8) -> u8 {
+    if wanted.is_ascii_lowercase() {
+        ASCII_CASE_BIT
+    } else {
+        0
+    }
+}
+
 /// Whether `needle`, which is ASCII and already lowercase, appears in
 /// `haystack` as a subsequence, ignoring case.
 fn is_subsequence_ignore_ascii_case(haystack: &[u8], needle: &[u8]) -> bool {
-    let mut needle = needle.iter();
+    let mut needle = needle.iter().copied();
     let Some(mut wanted) = needle.next() else {
         return true;
     };
-    for byte in haystack {
-        if byte.to_ascii_lowercase() == *wanted {
+    let mut fold = case_fold_bit(wanted);
+    for &byte in haystack {
+        if byte | fold == wanted {
             match needle.next() {
-                Some(next) => wanted = next,
+                Some(next) => {
+                    wanted = next;
+                    fold = case_fold_bit(next);
+                }
                 None => return true,
             }
         }
@@ -769,35 +1121,109 @@ const MAX_CHAR_BONUS: i64 = 10;
 /// The first matched character counts its bonus twice.
 const FIRST_CHAR_BONUS_MULTIPLIER: i64 = 2;
 
+/// Smallest bonus a matched character can be given when the one before it in
+/// the needle matched the character right before it in the name: a run of
+/// consecutive matches is never scored below this, whatever the characters sit
+/// next to.
+const MIN_CONSECUTIVE_BONUS: i64 = 4;
+
 /// Highest score [`Matcher::fuzzy_match`] can return for a needle of `chars`
-/// characters, against any name whatsoever.
+/// characters, when its first character earns at most `first` bonus and every
+/// other one at most `rest_bonus`.
 ///
 /// The matcher scores a match as one [`SCORE_MATCH`] per needle character plus
 /// that character's bonus, the first character's bonus counting twice, and
-/// unmatched characters in between only ever subtract. Bounding those bonuses
-/// by [`MAX_CHAR_BONUS`] therefore bounds the score, which is what lets the
-/// scan drop an item that cannot reach the shortlist without matching it.
-/// `test_name_score_never_exceeds_the_ceiling` keeps the constants honest.
-fn name_score_ceiling(chars: usize) -> i32 {
+/// unmatched characters in between only ever subtract. Bounding the bonuses
+/// therefore bounds the score, which is what lets the scan drop an item that
+/// cannot reach the shortlist without matching it.
+fn name_score_ceiling(chars: usize, first_bonus: i64, rest_bonus: i64) -> i32 {
     if chars == 0 {
         // An empty needle matches everything, and scores nothing.
         return 0;
     }
     let rest = chars as i64 - 1;
     let ceiling = SCORE_MATCH
-        + MAX_CHAR_BONUS * FIRST_CHAR_BONUS_MULTIPLIER
-        + rest.saturating_mul(SCORE_MATCH + MAX_CHAR_BONUS);
+        + first_bonus * FIRST_CHAR_BONUS_MULTIPLIER
+        + rest.saturating_mul(SCORE_MATCH + rest_bonus);
     // The matcher returns a `u16`, so nothing can score past its range.
     ceiling.min(u16::MAX as i64) as i32
+}
+
+/// What a name match is bounded by, given what the item's boundary mask says
+/// about the needle's characters.
+///
+/// A character only earns a bonus where it sits next to the right neighbour: at
+/// the start of a word, on a case or digit transition, or on a character that is
+/// not a word character at all. [`name_masks`] records which of a name's
+/// characters ever do, so a needle whose characters never sit anywhere like that
+/// in this name is held to a much lower bound than the needle's length alone
+/// gives — which is what a one or two character needle needs, since there the
+/// length bound is barely above the score a real match comes out with and never
+/// rules anything out.
+///
+/// The three bounds, and why they hold for every path the matcher can take:
+///
+/// * the first needle character scores [`SCORE_MATCH`] plus twice its own
+///   bonus, so a needle whose first character earns nothing loses the whole
+///   doubled term;
+/// * every later character scores [`SCORE_MATCH`] plus a bonus that is either
+///   its own, one inherited from an earlier character of the same needle — the
+///   matcher only ever carries a bonus forward within a run — or
+///   [`MIN_CONSECUTIVE_BONUS`], so if no needle character earns a bonus in this
+///   name, no character of the match is scored above the consecutive floor;
+/// * unmatched characters in between only ever subtract.
+///
+/// `test_name_ceilings_bound_every_match` and
+/// `test_boundary_mask_agrees_with_the_matcher` keep this honest against the
+/// matcher itself.
+#[derive(Clone, Copy)]
+struct NameCeilings {
+    /// Bit of the needle's first character.
+    first_char: u32,
+    /// Bits of every character of the needle.
+    all_chars: u32,
+    /// Bound that holds against any name at all, which is also the one a name
+    /// where the first needle character can earn a bonus holds to. What the
+    /// engine bounded every match by before the boundary mask existed, and
+    /// still the first thing the scan tries, since it needs nothing from the
+    /// item.
+    by_length: i32,
+    /// Bound when only a later needle character can earn a bonus.
+    trailing_bonus: i32,
+    /// Bound when none of them can.
+    no_bonus: i32,
+}
+
+impl NameCeilings {
+    fn new(chars: usize, masks: QueryMasks) -> Self {
+        Self {
+            first_char: masks.first_char,
+            all_chars: masks.all_chars,
+            by_length: name_score_ceiling(chars, MAX_CHAR_BONUS, MAX_CHAR_BONUS),
+            trailing_bonus: name_score_ceiling(chars, 0, MAX_CHAR_BONUS),
+            no_bonus: name_score_ceiling(chars, 0, MIN_CONSECUTIVE_BONUS),
+        }
+    }
+
+    /// The bound a name whose characters earn a bonus on `boundary` holds to.
+    fn of(&self, boundary: u32) -> i32 {
+        if self.first_char & boundary != 0 {
+            self.by_length
+        } else if self.all_chars & boundary != 0 {
+            self.trailing_bonus
+        } else {
+            self.no_bonus
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::models::LaunchTarget;
+    use crate::models::{AppItem, LaunchTarget};
 
-    fn sample_index() -> Engine {
-        let mut index = Engine::new();
+    fn sample_index() -> Index<AppItem> {
+        let mut index = Index::new();
         index.set_items(vec![
             AppItem::new(
                 "notepad",
@@ -834,12 +1260,12 @@ mod tests {
         index
     }
 
-    fn titles(results: &[SearchResult]) -> Vec<&str> {
-        results.iter().map(|r| r.title.as_ref()).collect()
+    fn titles(results: &[Match<AppItem>]) -> Vec<&str> {
+        results.iter().map(|r| r.item.name()).collect()
     }
 
-    fn named(results: &[SearchResult]) -> Vec<String> {
-        results.iter().map(|r| r.title.to_string()).collect()
+    fn named(results: &[Match<AppItem>]) -> Vec<String> {
+        results.iter().map(|r| r.item.name().to_string()).collect()
     }
 
     #[test]
@@ -848,11 +1274,11 @@ mod tests {
 
         let results = index.find("calc", 5);
         assert!(!results.is_empty());
-        assert_eq!(results[0].title.as_ref(), "Calculator");
+        assert_eq!(results[0].item.name(), "Calculator");
 
         let results = index.find("not", 5);
         assert!(!results.is_empty());
-        assert_eq!(results[0].title.as_ref(), "Notepad");
+        assert_eq!(results[0].item.name(), "Notepad");
     }
 
     #[test]
@@ -861,16 +1287,16 @@ mod tests {
 
         let results = index.find("vsc", 5);
         assert!(!results.is_empty());
-        assert_eq!(results[0].title.as_ref(), "Visual Studio Code");
+        assert_eq!(results[0].item.name(), "Visual Studio Code");
 
         let results = index.find("gc", 5);
         assert!(!results.is_empty());
-        assert_eq!(results[0].title.as_ref(), "Google Chrome");
+        assert_eq!(results[0].item.name(), "Google Chrome");
     }
 
     #[test]
     fn test_keyword_score_not_shadowed_by_weak_name_match() {
-        let mut index = Engine::new();
+        let mut index = Index::new();
         index.set_items(vec![
             AppItem::new(
                 "scattered",
@@ -913,7 +1339,7 @@ mod tests {
 
     #[test]
     fn test_uppercase_and_accented_queries_still_match() {
-        let mut index = Engine::new();
+        let mut index = Index::new();
         index.set_items(vec![
             AppItem::new(
                 "chrome",
@@ -936,12 +1362,12 @@ mod tests {
 
         let results = index.find("browser", 5);
         assert!(!results.is_empty());
-        assert_eq!(results[0].title.as_ref(), "Google Chrome");
+        assert_eq!(results[0].item.name(), "Google Chrome");
     }
 
     #[test]
     fn test_no_match_is_excluded_even_with_partial_letters() {
-        let mut index = Engine::new();
+        let mut index = Index::new();
         index.set_items(vec![
             AppItem::new("chrome", "Chrome", LaunchTarget::Path("chrome.exe".into())),
             AppItem::new(
@@ -970,7 +1396,7 @@ mod tests {
 
     #[test]
     fn test_prefix_outranks_acronym() {
-        let mut index = Engine::new();
+        let mut index = Index::new();
         index.set_items(vec![
             AppItem::new("vscode", "VS Code", LaunchTarget::Path("code.exe".into())),
             AppItem::new(
@@ -986,7 +1412,7 @@ mod tests {
 
     #[test]
     fn test_acronym_outranks_substring() {
-        let mut index = Engine::new();
+        let mut index = Index::new();
         index.set_items(vec![
             AppItem::new(
                 "open-office-go",
@@ -1002,7 +1428,7 @@ mod tests {
 
     #[test]
     fn test_word_start_bonus_can_outrank_a_midword_substring() {
-        let mut index = Engine::new();
+        let mut index = Index::new();
         index.set_items(vec![
             AppItem::new(
                 "notepad",
@@ -1022,7 +1448,7 @@ mod tests {
 
     #[test]
     fn test_keyword_match_outranks_a_weak_fuzzy_name_match() {
-        let mut index = Engine::new();
+        let mut index = Index::new();
         index.set_items(vec![
             AppItem::new(
                 "rand-setup",
@@ -1046,21 +1472,16 @@ mod tests {
 
     #[test]
     fn test_frecency_breaks_ties_between_identical_names() {
-        use crate::models::SearchResultKind;
-
         let popular =
             AppItem::new("a", "Test App", LaunchTarget::Path("a.exe".into())).with_launch_count(10);
         let rare = AppItem::new("b", "Test App", LaunchTarget::Path("b.exe".into()));
 
-        let mut index = Engine::new();
+        let mut index = Index::new();
         index.set_items(vec![rare, popular]);
 
         let results = index.find("test app", 5);
         assert_eq!(results.len(), 2);
-        let SearchResultKind::App(item) = &results[0].kind else {
-            panic!("expected an App result");
-        };
-        assert_eq!(item.id(), "a");
+        assert_eq!(results[0].item.id(), "a");
     }
 
     #[test]
@@ -1071,17 +1492,17 @@ mod tests {
         let rare = AppItem::new("b", "Yak Tool", LaunchTarget::Path("b.exe".into()))
             .with_keywords(vec!["zzzmatch".into()]);
 
-        let mut index = Engine::new();
+        let mut index = Index::new();
         index.set_items(vec![rare, popular]);
 
         let results = index.find("zzzmatch", 5);
         assert_eq!(results.len(), 2);
-        assert_eq!(results[0].title.as_ref(), "Aardvark Tool");
+        assert_eq!(results[0].item.name(), "Aardvark Tool");
     }
 
     #[test]
     fn test_keyword_matching_normalizes_case_at_construction_time() {
-        let mut index = Engine::new();
+        let mut index = Index::new();
         index.set_items(vec![
             AppItem::new(
                 "chrome",
@@ -1093,12 +1514,12 @@ mod tests {
 
         let results = index.find("browser", 5);
         assert!(!results.is_empty());
-        assert_eq!(results[0].title.as_ref(), "Google Chrome");
+        assert_eq!(results[0].item.name(), "Google Chrome");
     }
 
     #[test]
     fn test_unicode_names_match_case_insensitively_with_correct_indices() {
-        let mut index = Engine::new();
+        let mut index = Index::new();
         index.set_items(vec![
             AppItem::new("cafe", "Café", LaunchTarget::Path("cafe.exe".into())),
             AppItem::new(
@@ -1110,12 +1531,12 @@ mod tests {
 
         let results = index.find("CAF", 5);
         assert_eq!(results.len(), 1);
-        assert_eq!(results[0].title.as_ref(), "Café");
+        assert_eq!(results[0].item.name(), "Café");
         assert_eq!(results[0].matched_char_indices, vec![0, 1, 2]);
 
         let results = index.find("アプリ", 5);
         assert_eq!(results.len(), 1);
-        assert_eq!(results[0].title.as_ref(), "日本語アプリ");
+        assert_eq!(results[0].item.name(), "日本語アプリ");
         assert_eq!(results[0].matched_char_indices, vec![3, 4, 5]);
     }
 
@@ -1129,7 +1550,7 @@ mod tests {
     fn test_extreme_launch_count_does_not_panic_or_go_negative() {
         let item = AppItem::new("bulk", "Bulk App", LaunchTarget::Path("bulk.exe".into()))
             .with_launch_count(u32::MAX);
-        let mut index = Engine::new();
+        let mut index = Index::new();
         index.add_item(item);
 
         let top = index.top_items(1);
@@ -1143,7 +1564,7 @@ mod tests {
 
     #[test]
     fn test_query_with_multi_char_unicode_lowercase_expansion_still_matches() {
-        let mut index = Engine::new();
+        let mut index = Index::new();
         index.set_items(vec![AppItem::new(
             "istanbul",
             "İstanbul Maps",
@@ -1152,7 +1573,7 @@ mod tests {
 
         let results = index.find("İ", 5);
         assert_eq!(results.len(), 1);
-        assert_eq!(results[0].title.as_ref(), "İstanbul Maps");
+        assert_eq!(results[0].item.name(), "İstanbul Maps");
         assert_eq!(results[0].matched_char_indices, vec![0]);
     }
 
@@ -1199,7 +1620,7 @@ mod tests {
     fn test_typing_matches_a_cold_search_past_the_narrowing_capacity() {
         // Wide enough that early keystrokes match more items than the engine
         // keeps, which forces the following keystroke back to a full scan.
-        fn large_index() -> Engine {
+        fn large_index() -> Index<AppItem> {
             let items: Vec<AppItem> = (0..500)
                 .map(|i| {
                     let name = match i % 3 {
@@ -1215,7 +1636,7 @@ mod tests {
                     .with_keywords(vec!["tool".into()])
                 })
                 .collect();
-            let mut index = Engine::new();
+            let mut index = Index::new();
             index.set_items(items);
             index
         }
@@ -1306,7 +1727,7 @@ mod tests {
             })
             .collect();
 
-        let mut index = Engine::new();
+        let mut index = Index::new();
         index.set_items(items.clone());
 
         let queries = [
@@ -1334,7 +1755,7 @@ mod tests {
             let mut got: Vec<String> = index
                 .find(query, usize::MAX)
                 .into_iter()
-                .map(|r| r.title.to_string())
+                .map(|r| r.item.name().to_string())
                 .collect();
             got.sort();
             assert_eq!(got, reference_titles(&items, query), "query: {query:?}");
@@ -1344,8 +1765,9 @@ mod tests {
     /// Deterministic pseudo random strings, so the bound is checked against
     /// shapes nobody thought to write down: whitespace and delimiter
     /// boundaries, camel case, digits, non-word characters and accents.
+    const ALPHABET: [char; 12] = [' ', '/', ';', '|', '-', 'a', 'b', 'A', 'B', '1', '2', 'é'];
+
     fn random_strings(count: usize, max_len: usize, seed: u64) -> Vec<String> {
-        const ALPHABET: [char; 10] = [' ', '/', '-', 'a', 'b', 'A', 'B', '1', '2', 'é'];
         let mut state = seed;
         let mut next = move || {
             state = state
@@ -1363,23 +1785,82 @@ mod tests {
             .collect()
     }
 
+    /// The three fields a prefilter word packs have to stay out of each
+    /// other's way: either mask tests on its own, and the name length decides
+    /// the ordering against [`name_len_floor`] whatever the masks hold.
     #[test]
-    fn test_name_score_never_exceeds_the_ceiling() {
+    fn test_prefilter_word_fields_do_not_bleed_into_each_other() {
+        let full = u32::MAX >> (u32::BITS - MASK_BITS);
+        let word = prefilter_word(full, 0, 4);
+        assert_eq!(u64::from(full) & !word, 0, "the name mask is not readable");
+        assert_ne!(
+            u64::from(full) << KEYWORD_MASK_SHIFT & !word,
+            0,
+            "the name mask leaked into the keyword field"
+        );
+
+        let word = prefilter_word(full, full, 4);
+        assert!(word >= name_len_floor(4));
+        assert!(word < name_len_floor(5), "the masks outweighed the length");
+
+        // A name too long to pack saturates, and a needle that long stops
+        // comparing rather than ruling the name out.
+        let word = prefilter_word(0, 0, MAX_PACKED_NAME_LEN as usize + 1);
+        assert!(word >= name_len_floor(MAX_PACKED_NAME_LEN as usize));
+        assert_eq!(name_len_floor(MAX_PACKED_NAME_LEN as usize + 1), 0);
+    }
+
+    /// The subsequence test compares a haystack byte by folding it with the
+    /// case bit the needle byte asks for, instead of lowercasing it. Over every
+    /// byte pair, that has to be the same comparison.
+    #[test]
+    fn test_case_folded_comparison_matches_lowercasing() {
+        for wanted in 0..=u8::MAX {
+            if !wanted.is_ascii() || wanted != wanted.to_ascii_lowercase() {
+                // Needles reaching the test are ASCII and already lowercase.
+                continue;
+            }
+            let fold = case_fold_bit(wanted);
+            for byte in 0..=u8::MAX {
+                assert_eq!(
+                    byte | fold == wanted,
+                    byte.to_ascii_lowercase() == wanted,
+                    "byte {byte:#04x} against needle byte {wanted:#04x}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_name_ceilings_bound_every_match() {
         let mut config = Config::DEFAULT;
         config.ignore_case = true;
         let mut matcher = Matcher::new(config);
 
-        let names = random_strings(300, 16, 0x5eed);
-        let mut needles = random_strings(60, 5, 0xd00d);
+        let mut names = random_strings(400, 16, 0x5eed);
+        names.extend(random_strings(200, 4, 0xbeef));
+        names.push("Visual Studio Code".into());
+        let mut needles = random_strings(80, 5, 0xd00d);
+        // Every one and two character needle over the alphabet the names are
+        // drawn from, which is where the bound has to be tightest and where a
+        // single character out of place would show.
+        for first in ALPHABET {
+            needles.push(first.to_string());
+            for second in ALPHABET {
+                needles.push(format!("{first}{second}"));
+            }
+        }
         needles.push("visual studio".into());
-        needles.push("a".into());
 
         let mut hay_buf = Vec::new();
         let mut needle_buf = Vec::new();
         for needle in &needles {
             let normalized: String = needle.chars().map(normalize).map(to_lower_case).collect();
-            let ceiling = name_score_ceiling(normalized.chars().count());
+            let masks = needle_masks(&normalized);
+            let ceilings = NameCeilings::new(normalized.chars().count(), masks);
             for name in &names {
+                let (_, boundary, _) = name_masks(name);
+                let ceiling = ceilings.of(boundary);
                 hay_buf.clear();
                 needle_buf.clear();
                 let haystack = Utf32Str::new(name, &mut hay_buf);
@@ -1393,6 +1874,86 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// The boundary mask claims to hold exactly the characters of a name that
+    /// the matcher gives a bonus to. A one character needle scores
+    /// `SCORE_MATCH + 2 * bonus` at its best position, which is how the bonus
+    /// the matcher actually gave can be read back out of it.
+    #[test]
+    fn test_boundary_mask_agrees_with_the_matcher() {
+        let mut config = Config::DEFAULT;
+        config.ignore_case = true;
+        let mut matcher = Matcher::new(config);
+
+        let mut names = random_strings(400, 16, 0x0b0e);
+        names.extend(["A", " a", "aA", "a1", "1a", "a/b", "a-b", "a b", "aa"].map(String::from));
+
+        let mut hay_buf = Vec::new();
+        let mut needle_buf = Vec::new();
+        for name in &names {
+            let (present, boundary, is_ascii) = name_masks(name);
+            if !is_ascii {
+                continue;
+            }
+            for byte in 0..=127u8 {
+                let ch = byte as char;
+                let needle_string = ch.to_lowercase().to_string();
+                hay_buf.clear();
+                needle_buf.clear();
+                let haystack = Utf32Str::new(name, &mut hay_buf);
+                let needle = Utf32Str::new(&needle_string, &mut needle_buf);
+                let Some(score) = matcher.fuzzy_match(haystack, needle) else {
+                    continue;
+                };
+                let bit = ascii_bit(byte);
+                assert_ne!(present & bit, 0, "{ch:?} missing from {name:?}'s mask");
+                let bonus = (i64::from(score) - SCORE_MATCH) / FIRST_CHAR_BONUS_MULTIPLIER;
+                assert!(bonus <= MAX_CHAR_BONUS, "{bonus} beats the highest bonus");
+                if bonus > 0 {
+                    assert_ne!(
+                        boundary & bit,
+                        0,
+                        "{ch:?} earns {bonus} in {name:?} but is not a boundary character"
+                    );
+                }
+                // Letters have a bit to themselves, so for them the mask is not
+                // just sound but exact.
+                if byte.is_ascii_alphabetic() {
+                    assert_eq!(
+                        boundary & bit != 0,
+                        bonus > 0,
+                        "{ch:?} in {name:?} scored {score}"
+                    );
+                }
+            }
+        }
+    }
+
+    /// The boundary mask rides in the padding a row had anyway. If the row ever
+    /// grows past that, the scan pays for it on every item it looks at, so the
+    /// size is worth pinning.
+    #[test]
+    fn test_a_scan_row_still_fits_six_words() {
+        assert_eq!(size_of::<ScanRow>(), 6 * size_of::<u32>());
+        assert_eq!(NAME_IS_ASCII_BIT & ALL_CHARS, 0);
+    }
+
+    /// A name that is not ASCII is not held to a tightened bound, so its mask
+    /// has to claim every character.
+    #[test]
+    fn test_non_ascii_names_keep_the_untightened_bound() {
+        let (_, boundary, is_ascii) = name_masks("Ünïcöde Viewer");
+        assert!(!is_ascii);
+        assert_eq!(boundary, ALL_CHARS);
+
+        let masks = needle_masks("uv");
+        let ceilings = NameCeilings::new(2, masks);
+        assert_eq!(ceilings.of(boundary), ceilings.by_length);
+        assert_eq!(
+            ceilings.by_length,
+            name_score_ceiling(2, MAX_CHAR_BONUS, MAX_CHAR_BONUS)
+        );
     }
 
     #[test]
@@ -1421,7 +1982,7 @@ mod tests {
             })
             .collect();
 
-        let mut typed = Engine::new();
+        let mut typed = Index::new();
         typed.set_items(items.clone());
 
         let queries = [
@@ -1431,7 +1992,7 @@ mod tests {
             let expected = reference_ranking(&items, query, 6);
             // Cold every time as well: a narrowed scan is a different code
             // path, and the ranking has to come out the same on both.
-            let mut cold = Engine::new();
+            let mut cold = Index::new();
             cold.set_items(items.clone());
             assert_eq!(named(&cold.find(query, 6)), expected, "cold: {query:?}");
             assert_eq!(named(&typed.find(query, 6)), expected, "typed: {query:?}");
@@ -1480,42 +2041,20 @@ mod tests {
     }
 
     #[test]
-    fn test_math_expression_is_merged_into_results() {
-        let index = Engine::new();
-
-        let results = index.search("25 * 4", 5);
-        assert!(!results.is_empty());
-        assert_eq!(results[0].title.as_ref(), "100");
-    }
-
-    #[test]
-    fn test_math_result_ranks_above_app_matches() {
-        let mut index = Engine::new();
-        index.set_items(vec![AppItem::new(
-            "calc",
-            "2 Calculators",
-            LaunchTarget::OsUri("shell:AppsFolder\\Microsoft.WindowsCalculator".into()),
-        )]);
-
-        let results = index.search("2 + 2", 5);
-        assert_eq!(results[0].title.as_ref(), "4");
-    }
-
-    #[test]
-    fn test_empty_query_lists_top_items_without_touching_math() {
-        let mut index = Engine::new();
+    fn test_empty_query_lists_top_items() {
+        let mut index = Index::new();
         let popular = AppItem::new("a", "Popular App", LaunchTarget::Path("a.exe".into()))
             .with_launch_count(10);
         index.set_items(vec![popular]);
 
         let results = index.search("", 5);
         assert_eq!(results.len(), 1);
-        assert_eq!(results[0].title.as_ref(), "Popular App");
+        assert_eq!(results[0].item.name(), "Popular App");
     }
 
     #[test]
     fn test_zero_limit_yields_no_results_for_top_items_and_a_search() {
-        let mut index = Engine::new();
+        let mut index = Index::new();
         index.set_items(vec![AppItem::new(
             "a",
             "Calculator",

@@ -117,6 +117,20 @@ impl AppItem {
     }
 }
 
+impl crate::index::IndexableItem for AppItem {
+    fn name(&self) -> &str {
+        self.name()
+    }
+
+    fn keywords(&self) -> &[String] {
+        self.keywords()
+    }
+
+    fn launch_count(&self) -> u32 {
+        self.launch_count()
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum SearchResultKind {
     App(Arc<AppItem>),

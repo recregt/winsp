@@ -2,6 +2,8 @@
 #![forbid(unsafe_code)]
 
 mod config;
+mod search;
+mod sources;
 mod state;
 mod sync;
 mod ui;
@@ -31,12 +33,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         AcquireResult::Failed => return Ok(()),
     };
 
-    let plugins = sync::scan_plugins();
-    let index = sync::engine_from_plugins(&plugins);
+    let sources = sync::scan_sources();
+    let index = sync::engine_from_sources(&sources);
 
     let state = AppState::new(index);
 
-    let (_reindex_watcher, reconcile_tx) = sync::start_watching(plugins);
+    let (_reindex_watcher, reconcile_tx) = sync::start_watching(sources);
 
     ui::run(state, reconcile_tx).map_err(|e| e.into())
 }

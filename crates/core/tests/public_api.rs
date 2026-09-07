@@ -1,9 +1,16 @@
-use winsp_core::engine::Engine;
-use winsp_core::models::{AppItem, LaunchTarget, SearchResultKind};
+use winsp_core::index::{Index, Match};
+use winsp_core::models::{AppItem, LaunchTarget, SearchResult, SearchResultKind};
+
+fn to_results(matches: Vec<Match<AppItem>>) -> Vec<SearchResult> {
+    matches
+        .into_iter()
+        .map(|m| SearchResult::from_app(m.item, m.score, m.matched_char_indices))
+        .collect()
+}
 
 #[test]
 fn test_full_flow_from_construction_to_search_result() {
-    let mut index = Engine::new();
+    let mut index = Index::new();
     index.set_items(vec![
         AppItem::new(
             "notepad",
@@ -29,7 +36,7 @@ fn test_full_flow_from_construction_to_search_result() {
         ),
     ]);
 
-    let results = index.search("notepad", 5);
+    let results = to_results(index.search("notepad", 5));
     assert_eq!(results.len(), 1);
     assert_eq!(results[0].title.as_ref(), "Notepad");
     assert_eq!(results[0].subtitle.as_deref(), Some("notepad.exe"));
@@ -38,38 +45,23 @@ fn test_full_flow_from_construction_to_search_result() {
     };
     assert_eq!(item.id(), "notepad");
 
-    let results = index.search("calc", 5);
+    let results = to_results(index.search("calc", 5));
     assert_eq!(results[0].subtitle.as_deref(), None);
 
-    let results = index.search("display", 5);
+    let results = to_results(index.search("display", 5));
     assert_eq!(
         results[0].subtitle.as_deref(),
         Some("Change your display resolution")
     );
 
-    let results = index.search("shutdown", 5);
+    let results = to_results(index.search("shutdown", 5));
     assert_eq!(results[0].subtitle.as_deref(), None);
 }
 
 #[test]
-fn test_math_calculation_reachable_through_public_search() {
-    let index = Engine::new();
-
-    let results = index.search("12 * 12", 5);
-    assert!(!results.is_empty());
-    assert_eq!(results[0].title.as_ref(), "144");
-    let SearchResultKind::Calculation { expression, result } = &results[0].kind else {
-        panic!("expected a Calculation result");
-    };
-    assert_eq!(expression, "12 * 12");
-    assert_eq!(result, "144");
-}
-
-#[test]
 fn test_search_result_kind_is_exhaustively_matchable() {
-    let index = Engine::new();
-    let results = index.search("2+2", 5);
-    let kind = &results[0].kind;
+    let result = SearchResult::calculation("2+2".into(), "4".into());
+    let kind = &result.kind;
 
     let description = match kind {
         SearchResultKind::App(item) => item.name().to_string(),

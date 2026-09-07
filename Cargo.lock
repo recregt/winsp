@@ -1714,13 +1714,14 @@ dependencies = [
 name = "winsp-app"
 version = "0.3.0"
 dependencies = [
+ "compact_str",
  "embed-resource",
  "mimalloc",
  "rmp-serde",
  "serde",
  "tempfile",
+ "walkdir",
  "winsp-core",
- "winsp-plugins",
  "winsp-windows",
 ]
 
@@ -1733,16 +1734,6 @@ dependencies = [
  "logos",
  "nucleo-matcher",
  "trybuild",
-]
-
-[[package]]
-name = "winsp-plugins"
-version = "0.3.0"
-dependencies = [
- "tempfile",
- "walkdir",
- "winsp-core",
- "winsp-windows",
 ]
 
 [[package]]

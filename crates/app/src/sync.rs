@@ -1,31 +1,29 @@
-#![cfg(windows)]
-
 use std::sync::mpsc::{RecvTimeoutError, Sender, TryRecvError};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use winsp_core::engine::Engine;
-use winsp_plugins::Plugins;
+use crate::sources::Sources;
+use crate::state::Catalog;
 use winsp_windows::system::watcher::{WatchEvent, Watcher};
 
 const RECONCILE_INTERVAL: Duration = Duration::from_secs(600);
 const MIN_RECONCILE_GAP: Duration = Duration::from_secs(30);
 
-pub(crate) fn engine_from_plugins(plugins: &Plugins) -> Engine {
-    let mut index = Engine::new();
-    index.set_items(plugins.items());
+pub(crate) fn engine_from_sources(sources: &Sources) -> Catalog {
+    let mut index = Catalog::new();
+    index.set_items(sources.items());
     index
 }
 
-pub(crate) fn scan_plugins() -> Plugins {
-    let plugins = Plugins::scan();
-    notify_if_scan_incomplete(&plugins);
-    plugins
+pub(crate) fn scan_sources() -> Sources {
+    let sources = Sources::scan();
+    notify_if_scan_incomplete(&sources);
+    sources
 }
 
-fn notify_if_scan_incomplete(plugins: &Plugins) {
+fn notify_if_scan_incomplete(sources: &Sources) {
     static NOTIFIED: std::sync::Once = std::sync::Once::new();
-    if !plugins.unreadable_dirs().is_empty() {
+    if !sources.unreadable_dirs().is_empty() {
         NOTIFIED.call_once(|| {
             winsp_windows::system::toast::show(
                 "WinSP",
@@ -74,20 +72,20 @@ fn finish_watcher<E>(result: Result<(Watcher, Vec<std::path::PathBuf>), E>) -> O
     }
 }
 
-pub(crate) fn start_watching(plugins: Plugins) -> (Option<Watcher>, Sender<()>) {
-    let dirs = plugins.watch_dirs().to_vec();
-    let plugins = Arc::new(Mutex::new(plugins));
-    let tx = spawn_reconciler(Arc::clone(&plugins));
+pub(crate) fn start_watching(sources: Sources) -> (Option<Watcher>, Sender<()>) {
+    let dirs = sources.watch_dirs().to_vec();
+    let sources = Arc::new(Mutex::new(sources));
+    let tx = spawn_reconciler(Arc::clone(&sources));
     let reconcile_tx = tx.clone();
 
     let watcher = winsp_windows::system::watcher::for_dirs(&dirs, move |event| {
-        handle_watch_event(event, &plugins, &tx);
+        handle_watch_event(event, &sources, &tx);
     });
     (finish_watcher(watcher), reconcile_tx)
 }
 
-fn refresh_state(plugins: &Plugins) {
-    crate::ui::deliver_catalog(engine_from_plugins(plugins));
+fn refresh_state(sources: &Sources) {
+    crate::ui::deliver_catalog(engine_from_sources(sources));
 }
 
 fn next_wait(pending: bool, last_rescan: Instant) -> Duration {
@@ -98,7 +96,7 @@ fn next_wait(pending: bool, last_rescan: Instant) -> Duration {
     }
 }
 
-fn spawn_reconciler(plugins: Arc<Mutex<Plugins>>) -> Sender<()> {
+fn spawn_reconciler(sources: Arc<Mutex<Sources>>) -> Sender<()> {
     let (reconcile_tx, reconcile_rx) = std::sync::mpsc::channel::<()>();
 
     std::thread::spawn(move || {
@@ -124,7 +122,7 @@ fn spawn_reconciler(plugins: Arc<Mutex<Plugins>>) -> Sender<()> {
                 continue;
             }
 
-            if let Ok(mut cat) = plugins.lock() {
+            if let Ok(mut cat) = sources.lock() {
                 cat.rescan();
                 notify_if_scan_incomplete(&cat);
                 refresh_state(&cat);
@@ -137,10 +135,10 @@ fn spawn_reconciler(plugins: Arc<Mutex<Plugins>>) -> Sender<()> {
     reconcile_tx
 }
 
-fn handle_watch_event(event: WatchEvent, plugins: &Arc<Mutex<Plugins>>, reconcile_tx: &Sender<()>) {
+fn handle_watch_event(event: WatchEvent, sources: &Arc<Mutex<Sources>>, reconcile_tx: &Sender<()>) {
     match event {
         WatchEvent::Changed(paths) => {
-            if let Ok(mut cat) = plugins.lock() {
+            if let Ok(mut cat) = sources.lock() {
                 cat.apply_changes(&paths);
                 notify_if_scan_incomplete(&cat);
                 refresh_state(&cat);

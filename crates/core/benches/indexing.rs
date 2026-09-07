@@ -1,6 +1,6 @@
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use std::hint::black_box;
-use winsp_core::engine::Engine;
+use winsp_core::index::Index;
 use winsp_core::models::{AppItem, LaunchTarget};
 
 const WORDS: &[&str] = &[
@@ -37,7 +37,7 @@ fn bench_indexing(c: &mut Criterion) {
             b.iter_batched(
                 || items.clone(),
                 |items| {
-                    let mut engine = Engine::new();
+                    let mut engine = Index::new();
                     engine.set_items(items);
                     black_box(engine.len())
                 },
@@ -49,7 +49,7 @@ fn bench_indexing(c: &mut Criterion) {
             b.iter_batched(
                 || items.clone(),
                 |items| {
-                    let mut engine = Engine::new();
+                    let mut engine = Index::new();
                     for item in items {
                         engine.add_item(item);
                     }
