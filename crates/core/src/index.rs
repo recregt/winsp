@@ -227,6 +227,15 @@ impl Ranking {
 
     /// The best `limit` items for `query`, with the characters of their names
     /// the query matched, for highlighting.
+    ///
+    /// Kept out of line, and not because of its size: [`Index::find_into`] is
+    /// generic, so anything inlined into it is compiled again in every crate
+    /// that names an item type, under that crate's code generation instead of
+    /// this one's. That is enough to change how the scan's loop over an
+    /// index-sized column comes out — collecting the highlights below was
+    /// enough for the whole ranking to cross the boundary, and the no-match
+    /// scan read 7% slower for it at every index size.
+    #[inline(never)]
     fn find(&self, query: &str, limit: usize) -> RefMut<'_, Vec<Ranked>> {
         let mut ranked = self.ranked.borrow_mut();
         ranked.clear();
@@ -257,7 +266,7 @@ impl Ranking {
             .filter(|previous| narrows(&previous.query, query))
             .map(|previous| previous.items.as_slice());
 
-        let scan = self.scan.best_matches(
+        let mut scan = self.scan.best_matches(
             &mut matcher,
             needle,
             query_lower,
@@ -284,8 +293,15 @@ impl Ranking {
             }
         });
 
-        ranked.extend(scan.top.into_iter().map(|candidate| {
-            let indices = if candidate.matched_by_name {
+        // The buffers the scan just filled, which it left in the table for the
+        // next keystroke to fill again.
+        let scratch = self.scan.scratch.borrow();
+        ranked.extend(scan.top.drain(..).map(|candidate| {
+            let indices = if let Some(collected) = scratch.get(candidate.highlights) {
+                // The scan already matched this name with its indices, so the
+                // characters it reported are the ones this row highlights.
+                collected.iter().map(|&i| i as usize).collect()
+            } else if candidate.matched_by_name {
                 raw_indices.clear();
                 // The name the scan matched, out of the column it matched it
                 // in, which is the item's name as it was indexed.
@@ -309,6 +325,10 @@ struct Candidate {
     item: u32,
     score: i32,
     matched_by_name: bool,
+    /// Slot of [`ScanScratch`] holding the characters of this name the query
+    /// matched, or [`NO_SLOT`] when the scan did not collect them and the row
+    /// has to be matched again to highlight it.
+    highlights: u32,
 }
 
 /// The query in the two spellings a scan compares against: normalized and
@@ -384,10 +404,77 @@ fn narrowing_capacity(items: usize) -> usize {
 }
 
 /// What one scan produced: the best `limit` candidates, and the complete match
-/// set when it is small enough to narrow the next scan with.
+/// set when it is small enough to narrow the next scan with. The characters
+/// those candidates matched stay in the table's [`ScanScratch`], which each of
+/// them holds a slot of.
 struct Scan {
     top: Vec<Candidate>,
     matched: Option<Vec<u32>>,
+}
+
+/// Slot of a candidate whose matched characters the scan did not collect, and
+/// which is therefore matched again to highlight it.
+const NO_SLOT: u32 = u32::MAX;
+
+/// Everything a scan needs room for besides its results: the characters of the
+/// names it matched, for the rows it shortlists, and the buffer a name that is
+/// not ASCII is decoded into.
+///
+/// A candidate holds a slot rather than a buffer of its own, so the shortlist
+/// stays a list of small records and an eviction moves no characters. All of it
+/// sits behind a single reference, because the scan loop carries whatever the
+/// scored path needs over every item it walks, and a value it has to keep live
+/// there is a register the prefilter does not get: as separate fields of the
+/// scan state, a no-match scan read two words per item instead of one. The
+/// buffers outlive the search that filled them for the same reason the match
+/// set does — a launcher searches once per keystroke.
+#[derive(Default)]
+struct ScanScratch {
+    /// One buffer per slot ever handed out. At most `limit` of them, since only
+    /// a scan whose shortlist is still filling asks for one.
+    slots: Vec<Vec<u32>>,
+    /// Slots no candidate holds.
+    free: Vec<u32>,
+    /// Where the match being scored reports its characters, before it is known
+    /// whether the shortlist keeps it.
+    pending: Vec<u32>,
+    /// Where a name that is not ASCII is decoded to, to be matched at all.
+    hay_buf: Vec<char>,
+}
+
+impl ScanScratch {
+    /// Readies the pool for the next scan.
+    fn start(&mut self) {
+        self.free.clear();
+        self.free.extend(0..self.slots.len() as u32);
+    }
+
+    /// The buffer the match about to be scored reports its characters in.
+    #[inline(always)]
+    fn collect_into(&mut self) -> &mut Vec<u32> {
+        self.pending.clear();
+        &mut self.pending
+    }
+
+    /// Gives the characters just collected a slot of their own, for a candidate
+    /// the shortlist is keeping.
+    fn keep(&mut self) -> u32 {
+        match self.free.pop() {
+            Some(slot) => {
+                std::mem::swap(&mut self.slots[slot as usize], &mut self.pending);
+                slot
+            }
+            None => {
+                self.slots.push(std::mem::take(&mut self.pending));
+                self.slots.len() as u32 - 1
+            }
+        }
+    }
+
+    /// The characters collected for `slot`, if any were.
+    fn get(&self, slot: u32) -> Option<&[u32]> {
+        (slot != NO_SLOT).then(|| self.slots[slot as usize].as_slice())
+    }
 }
 
 /// Keyword separator inside [`ScanTable::keywords`]. Queries come from a
@@ -417,6 +504,9 @@ struct ScanTable {
     /// rescan those alone, and growing that set from nothing was a chain of
     /// reallocations on every keystroke.
     spare_matched: RefCell<Vec<u32>>,
+    /// The buffers a scan fills and empties again: kept here, and not in the
+    /// scan, so a keystroke reuses them instead of allocating its own.
+    scratch: RefCell<ScanScratch>,
 }
 
 /// Bit set over the characters a haystack contains, as [`MASK_BITS`] groups
@@ -715,6 +805,7 @@ impl ScanTable {
             launch_counts: Vec::with_capacity(items.len()),
             rows: Vec::with_capacity(items.len()),
             spare_matched: RefCell::new(Vec::new()),
+            scratch: RefCell::new(ScanScratch::default()),
         };
         for item in items {
             table.push(item.as_ref());
@@ -865,13 +956,15 @@ impl ScanTable {
                 Utf32Str::Unicode(_) => None,
             },
         };
+        let mut scratch = self.scratch.borrow_mut();
+        scratch.start();
         let mut state = ScanState {
             matcher,
             top: Vec::with_capacity(limit.min(self.rows.len())),
+            scratch: &mut scratch,
             matched: Some(self.take_spare()),
             capacity: narrowing_capacity(self.rows.len()),
             limit,
-            hay_buf: Vec::new(),
         };
 
         // Nothing can be ruled out before the shortlist is full, so the scan
@@ -879,6 +972,16 @@ impl ScanTable {
         // never fills the shortlist — one matching fewer items than the limit,
         // or nothing at all — is scanned by this loop alone, and pays the mask
         // test and nothing else for an item the mask rejects.
+        //
+        // It is also the loop that collects the characters its matches consist
+        // of, which is what a highlighted row needs and what the ranking used
+        // to ask the matcher for a second time once the scan was over. Every
+        // match here is kept — the shortlist has room by definition — so the
+        // most it can collect for is the `limit` rows the window shows, and a
+        // query that matches nothing collects nothing. The loop after it
+        // collects nothing at all: once the shortlist is full a match is more
+        // likely to be dropped than shown, and asking the matcher for the
+        // characters of a row nobody sees is the work this is meant to avoid.
         for (idx, word) in source.by_ref() {
             // A name shorter than the needle cannot hold it, which the matcher
             // would have to be called to find out.
@@ -890,7 +993,7 @@ impl ScanTable {
             }
 
             let row = &self.rows[idx as usize];
-            self.score_row(&mut state, query, idx, row, name_possible, keyword_possible);
+            self.score_row::<true>(&mut state, query, idx, row, name_possible, keyword_possible);
             if state.top.len() == limit {
                 break;
             }
@@ -933,7 +1036,7 @@ impl ScanTable {
 
             // Only an item the bound could not rule out is worth its row.
             let row = &self.rows[idx as usize];
-            self.score_row(&mut state, query, idx, row, name_possible, keyword_possible);
+            self.score_row::<false>(&mut state, query, idx, row, name_possible, keyword_possible);
         }
 
         Scan {
@@ -943,13 +1046,15 @@ impl ScanTable {
     }
 
     /// Scores a row the mask prefilter let through, and folds it into the
-    /// shortlist and the match set.
+    /// shortlist and the match set. `COLLECT` says whether the matcher is asked
+    /// for the characters it matched along the way, which is what the loop with
+    /// a filling shortlist wants and the one after it does not.
     ///
     /// Inlined into both scan loops, which is what lets the first one compile to
     /// the loop a scan without a ceiling compiles to: the shortlist is not full
     /// there, so nothing of the pruning above belongs in it.
     #[inline(always)]
-    fn score_row(
+    fn score_row<const COLLECT: bool>(
         &self,
         state: &mut ScanState<'_>,
         query: Query<'_>,
@@ -976,15 +1081,28 @@ impl ScanTable {
                     Some(needle) if !is_subsequence_ignore_ascii_case(name, needle) => None,
                     _ => {
                         let haystack = Utf32Str::Ascii(name);
-                        state.matcher.fuzzy_match(haystack, query.needle)
+                        // While the shortlist is still filling, the matcher is
+                        // asked for the characters it matched as well as the
+                        // score: it has the matrix in front of it, and a row
+                        // that reaches the window is then one the window does
+                        // not have to match a second time.
+                        if COLLECT {
+                            let indices = state.scratch.collect_into();
+                            state.matcher.fuzzy_indices(haystack, query.needle, indices)
+                        } else {
+                            state.matcher.fuzzy_match(haystack, query.needle)
+                        }
                     }
                 }
             } else {
+                // A name that is not ASCII is left to the second pass: it has
+                // to be decoded before it can be matched at all, and keeping
+                // that rare path as it was keeps it out of the scan loop.
                 match_unicode_name(
                     state.matcher,
                     &self.names[name_range],
                     query.needle,
-                    &mut state.hay_buf,
+                    &mut state.scratch.hay_buf,
                 )
             };
             score.map(|score| score as i32)
@@ -1016,15 +1134,18 @@ impl ScanTable {
             if state.top.len() == state.limit && score <= state.top[state.limit - 1].score {
                 return;
             }
-            keep_best(
-                &mut state.top,
-                state.limit,
-                Candidate {
-                    item: idx,
-                    score,
-                    matched_by_name,
-                },
-            );
+            let mut candidate = Candidate {
+                item: idx,
+                score,
+                matched_by_name,
+                highlights: NO_SLOT,
+            };
+            // Only a name match has characters to highlight, and only a name
+            // this scan matched with them has any to hand over.
+            if COLLECT && matched_by_name && row.name_is_ascii() {
+                candidate.highlights = state.scratch.keep();
+            }
+            keep_best(&mut state.top, state.limit, candidate);
         }
     }
 }
@@ -1034,6 +1155,10 @@ struct ScanState<'m> {
     matcher: &'m mut Matcher,
     /// The best candidates seen so far, highest score first.
     top: Vec<Candidate>,
+    /// The buffers the scored path fills: the characters the names of those
+    /// candidates matched, as far as the scan collected them, and the room a
+    /// name that is not ASCII is decoded in.
+    scratch: &'m mut ScanScratch,
     /// Every item matched so far, until there are more of them than narrowing
     /// the next scan with is worth.
     matched: Option<Vec<u32>>,
@@ -1041,8 +1166,6 @@ struct ScanState<'m> {
     capacity: usize,
     /// How many candidates the shortlist keeps.
     limit: usize,
-    /// Scratch the matcher decodes a name that is not ASCII into.
-    hay_buf: Vec<char>,
 }
 
 /// The query in the spellings a scan compares against.
@@ -1665,6 +1788,105 @@ mod tests {
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].item.name(), "日本語アプリ");
         assert_eq!(results[0].matched_char_indices, vec![3, 4, 5]);
+    }
+
+    /// The characters a result highlights come from one of two places now: the
+    /// scan collected them while it scored the name, or the row was matched
+    /// again after the scan gave up collecting. Both have to report what the
+    /// matcher reports for that name, and one session has to mix them: the
+    /// queries below run against an index wide enough to spend the budget
+    /// mid-scan, and are checked cold and typed.
+    #[test]
+    fn test_highlights_are_the_characters_the_matcher_reports() {
+        let items: Vec<AppItem> = (0..800u32)
+            .map(|i| {
+                let name = match i % 5 {
+                    0 => format!("Visual Studio {i}"),
+                    1 => format!("Video Ace {i}"),
+                    2 => format!("visual-basic-{i}"),
+                    3 => format!("Vidéo Aperçu {i}"),
+                    _ => format!("aVi{i} Viewer"),
+                };
+                AppItem::new(
+                    format!("id-{i}"),
+                    name,
+                    LaunchTarget::Path(format!("{i}.exe")),
+                )
+                .with_keywords(vec!["tool".into()])
+                .with_launch_count(i / 100)
+            })
+            .collect();
+
+        let mut typed = Index::new();
+        typed.set_items(items.clone());
+
+        // A handful of items, where every match the scan scores fits in the
+        // budget and the window is highlighted from what the scan collected.
+        let narrow: Vec<AppItem> = [
+            "Visual Studio Code",
+            "Video Ace",
+            "visual-basic",
+            "Vidéo Aperçu",
+            "aVi Viewer",
+            "Notepad",
+        ]
+        .iter()
+        .enumerate()
+        .map(|(i, name)| {
+            AppItem::new(
+                format!("narrow-{i}"),
+                *name,
+                LaunchTarget::Path(format!("{i}.exe")),
+            )
+            .with_keywords(vec!["tool".into()])
+        })
+        .collect();
+        let mut narrow_typed = Index::new();
+        narrow_typed.set_items(narrow.clone());
+
+        let queries = [
+            "v", "vi", "vis", "visu", "visual", "visual s", "vs", "a", "tool", "vidé", "aperçu",
+            "é", "vi u",
+        ];
+        for query in queries {
+            let mut cold = Index::new();
+            cold.set_items(items.clone());
+            let mut narrow_cold = Index::new();
+            narrow_cold.set_items(narrow.clone());
+            let runs = [
+                (&cold, "cold"),
+                (&typed, "typed"),
+                (&narrow_cold, "narrow cold"),
+                (&narrow_typed, "narrow typed"),
+            ];
+            for (index, run) in runs {
+                for result in index.find(query, 6) {
+                    assert_eq!(
+                        result.matched_char_indices,
+                        reference_indices(result.item.name(), query),
+                        "{run}: {query:?} on {:?}",
+                        result.item.name()
+                    );
+                }
+            }
+        }
+    }
+
+    /// The characters of `name` the matcher reports for `query`, which is what a
+    /// highlighted row shows. Empty when the name does not match at all, since
+    /// the result is then one a keyword matched and highlights nothing.
+    fn reference_indices(name: &str, query: &str) -> Vec<usize> {
+        let mut config = Config::DEFAULT;
+        config.ignore_case = true;
+        let mut matcher = Matcher::new(config);
+        let needle_string: String = query.chars().map(normalize).map(to_lower_case).collect();
+        let mut needle_buf = Vec::new();
+        let needle = Utf32Str::new(&needle_string, &mut needle_buf);
+        let mut hay_buf = Vec::new();
+        let haystack = Utf32Str::new(name, &mut hay_buf);
+        let mut indices = Vec::new();
+        matcher.fuzzy_indices(haystack, needle, &mut indices);
+        indices.into_iter().map(|i| i as usize).collect()
     }
 
     #[test]
