@@ -1716,12 +1716,29 @@ version = "0.3.0"
 dependencies = [
  "embed-resource",
  "mimalloc",
- "rmp-serde",
- "serde",
+ "winsp-service",
+ "winsp-ui",
+ "winsp-windows",
+]
+
+[[package]]
+name = "winsp-catalog"
+version = "0.3.0"
+dependencies = [
+ "lnk",
  "tempfile",
  "walkdir",
  "winsp-core",
- "winsp-search",
+ "winsp-windows",
+]
+
+[[package]]
+name = "winsp-config"
+version = "0.3.0"
+dependencies = [
+ "rmp-serde",
+ "serde",
+ "tempfile",
  "winsp-windows",
 ]
 
@@ -1746,10 +1763,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "winsp-service"
+version = "0.3.0"
+dependencies = [
+ "winsp-catalog",
+ "winsp-config",
+ "winsp-core",
+ "winsp-search",
+ "winsp-windows",
+]
+
+[[package]]
+name = "winsp-ui"
+version = "0.3.0"
+dependencies = [
+ "winsp-service",
+ "winsp-windows",
+]
+
+[[package]]
 name = "winsp-windows"
 version = "0.3.0"
 dependencies = [
- "lnk",
  "lru",
  "notify-debouncer-mini",
  "tempfile",

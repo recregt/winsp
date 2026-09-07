@@ -1,22 +1,15 @@
 [package]
-name = "winsp-app"
+name = "winsp-ui"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
 
-[[bin]]
-name = "winsp"
-path = "src/main.rs"
-
 [dependencies]
 winsp-service = { path = "../service" }
-winsp-ui = { path = "../ui" }
 winsp-windows = { path = "../windows" }
 
-[build-dependencies]
-embed-resource = "3"
-
-[target.'cfg(windows)'.dependencies]
-mimalloc = "0.1.52"
+[dev-dependencies]
+winsp-service = { path = "../service", features = ["test-support"] }
+winsp-windows = { path = "../windows", features = ["test-support"] }

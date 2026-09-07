@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use walkdir::WalkDir;
 use winsp_core::models::{AppItem, LaunchTarget};
 
-use winsp_windows::system::shortcut;
+use crate::shortcut;
 
 fn start_menu_dirs() -> Vec<PathBuf> {
     let mut dirs = Vec::new();

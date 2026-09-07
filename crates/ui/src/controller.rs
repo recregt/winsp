@@ -1,14 +1,8 @@
-use std::io;
-
-use winsp_core::models::LaunchTarget;
 use winsp_windows::window::{Anchor, Key, MenuItem, Modifiers, Window, WindowEvent};
 
-use crate::config::{Settings, WindowPosition};
-
-use super::ExecuteOutcome;
 use super::hotkey::{self, CaptureOutcome, CommitResult};
-use super::view::{self, render, result_list_height, to_anchor};
-use super::{CATALOG_READY_EVENT, context};
+use super::view::{self, render, result_list_height};
+use super::{REFRESH_EVENT, context};
 
 const CMD_TOGGLE: usize = 1001;
 const CMD_AUTOSTART: usize = 1002;
@@ -24,8 +18,8 @@ pub(super) fn handle_event(window: &Window, event: WindowEvent) {
         WindowEvent::Hotkey => toggle_visibility(window),
         WindowEvent::ShowRequest => show_fresh(window),
         WindowEvent::User(id) => {
-            if id == CATALOG_READY_EVENT {
-                apply_catalog_ready(window);
+            if id == REFRESH_EVENT {
+                refresh_from_service(window);
             }
         }
         WindowEvent::TaskbarRestarted => {
@@ -49,8 +43,8 @@ pub(super) fn handle_event(window: &Window, event: WindowEvent) {
                 }
                 begin_hotkey_capture(window);
             }
-            CMD_POSITION_TOP => set_position(window, WindowPosition::Top),
-            CMD_POSITION_CENTER => set_position(window, WindowPosition::Center),
+            CMD_POSITION_TOP => set_position(window, Anchor::Top),
+            CMD_POSITION_CENTER => set_position(window, Anchor::Center),
             CMD_EXIT => window.close(),
             _ => {}
         },
@@ -70,21 +64,13 @@ pub(super) fn handle_event(window: &Window, event: WindowEvent) {
             }
         }
         WindowEvent::Char(c) => {
-            // Asked before the state is locked: peeking the queue lets the
-            // window procedure run for messages other threads sent, and that
-            // takes the very locks held here.
             let more_typing = window.has_pending_keystroke();
             if let Some(ctx) = context() {
                 let mut results_count = None;
-                if let (Ok(app_state), Ok(mut ui_state)) =
-                    (ctx.app_state.lock(), ctx.ui_state.lock())
-                {
+                if let Ok(mut ui_state) = ctx.ui_state.lock() {
                     if !ui_state.is_capturing_hotkey() {
                         ui_state.insert_char(c);
-                        // The keystroke already queued behind this one replaces
-                        // these results before anything can show them, so the
-                        // search for them is left to it.
-                        if !more_typing && ui_state.settle(app_state.engine()) {
+                        if !more_typing && ui_state.settle(&ctx.service) {
                             results_count = Some(ui_state.results().len());
                         }
                     }
@@ -112,78 +98,33 @@ pub(super) fn handle_event(window: &Window, event: WindowEvent) {
             let mut should_resize = false;
             let mut results_count = 0;
             let mut should_hide = false;
-            // See the `Char` arm: peeked before the state is locked.
             let more_typing = window.has_pending_keystroke();
 
-            if let (Ok(app_state), Ok(mut ui_state)) = (ctx.app_state.lock(), ctx.ui_state.lock()) {
-                // A search a burst of typing deferred is owed by the first key
-                // press that reads the results, acts on them, or simply ends
-                // the burst.
+            if let Ok(mut ui_state) = ctx.ui_state.lock() {
                 let mut settled = false;
                 match key {
                     Key::Back => {
                         ui_state.backspace();
-                        settled = !more_typing && ui_state.settle(app_state.engine());
+                        settled = !more_typing && ui_state.settle(&ctx.service);
                     }
                     Key::Down | Key::Tab => {
-                        settled = ui_state.settle(app_state.engine());
+                        settled = ui_state.settle(&ctx.service);
                         ui_state.select_next();
                     }
                     Key::Up => {
-                        settled = ui_state.settle(app_state.engine());
+                        settled = ui_state.settle(&ctx.service);
                         ui_state.select_prev();
                     }
                     Key::Enter => {
-                        ui_state.settle(app_state.engine());
-                        match ui_state.execute_selected() {
-                            ExecuteOutcome::Copy(result) => {
-                                winsp_windows::system::clipboard::copy(&result);
-                                winsp_windows::system::toast::show(
-                                    "WinSP",
-                                    &format!("Copied: {result}"),
-                                );
-                            }
-                            ExecuteOutcome::Launch(target) => {
-                                let submitted =
-                                    winsp_windows::system::threadpool::spawn_on_threadpool(
-                                        move || {
-                                            let result = match target {
-                                                LaunchTarget::Path(path) => {
-                                                    winsp_windows::shell::open_path(&path)
-                                                }
-                                                LaunchTarget::WebUrl(uri)
-                                                | LaunchTarget::OsUri(uri) => {
-                                                    winsp_windows::shell::open_uri(&uri)
-                                                }
-                                                LaunchTarget::Command(cmd) => {
-                                                    std::process::Command::new("cmd")
-                                                        .args(["/C", &cmd])
-                                                        .spawn()
-                                                        .map(|_| ())
-                                                        .map_err(|err| err.to_string())
-                                                }
-                                            };
-                                            if let Err(error) = result {
-                                                winsp_windows::system::toast::show("WinSP", &error);
-                                            }
-                                        },
-                                    );
-                                if !submitted {
-                                    winsp_windows::system::toast::show(
-                                        "WinSP",
-                                        "Failed to launch: the system thread pool rejected the task.",
-                                    );
-                                }
-                            }
-                            ExecuteOutcome::None => {}
-                        }
+                        ui_state.settle(&ctx.service);
+                        ctx.service.activate(ui_state.selected_index());
                         should_hide = true;
                     }
                     Key::Escape => {
                         should_hide = true;
                     }
                     _ => {
-                        settled = !more_typing && ui_state.settle(app_state.engine());
+                        settled = !more_typing && ui_state.settle(&ctx.service);
                     }
                 }
 
@@ -203,16 +144,11 @@ pub(super) fn handle_event(window: &Window, event: WindowEvent) {
             }
         }
         WindowEvent::Redraw => window.paint(|canvas, rect| {
-            // Painting is the last place a deferred search can still be owed,
-            // so the results are settled before they are drawn.
-            let state =
-                context().and_then(|ctx| match (ctx.app_state.lock(), ctx.ui_state.lock()) {
-                    (Ok(app_state), Ok(mut ui_state)) => {
-                        ui_state.settle(app_state.engine());
-                        Some(ui_state)
-                    }
-                    _ => None,
-                });
+            let state = context().and_then(|ctx| {
+                let mut ui_state = ctx.ui_state.lock().ok()?;
+                ui_state.settle(&ctx.service);
+                Some(ui_state)
+            });
             match state {
                 Some(ui_state) => render(canvas, &ui_state, rect),
                 None => canvas.fill_rect(rect, view::BACKGROUND_COLOR),
@@ -223,8 +159,7 @@ pub(super) fn handle_event(window: &Window, event: WindowEvent) {
 
 fn current_anchor() -> Anchor {
     context()
-        .and_then(|ctx| ctx.settings.lock().ok().map(|settings| settings.position))
-        .map(to_anchor)
+        .map(|ctx| ctx.service.current_position())
         .unwrap_or(Anchor::Top)
 }
 
@@ -271,14 +206,12 @@ fn show_fresh(handle: &Window) {
         current_anchor(),
     );
     if let Some(ctx) = context() {
-        if let (Ok(app_state), Ok(mut ui_state)) = (ctx.app_state.lock(), ctx.ui_state.lock()) {
+        if let Ok(mut ui_state) = ctx.ui_state.lock() {
             ui_state.clear_query();
-            ui_state.settle(app_state.engine());
+            ui_state.settle(&ctx.service);
             resize_window_for_results(handle, ui_state.results().len());
         }
-        if ctx.reconcile_tx.send(()).is_err() {
-            crate::sync::notify_reconcile_channel_broken();
-        }
+        ctx.service.on_window_shown();
     }
     handle.show();
     handle.invalidate();
@@ -307,47 +240,36 @@ fn begin_hotkey_capture(handle: &Window) {
     handle.invalidate();
 }
 
-fn apply_catalog_ready(window: &Window) {
-    let Some(index) = super::take_pending_catalog() else {
-        return;
-    };
+fn refresh_from_service(window: &Window) {
     let Some(ctx) = context() else {
         return;
     };
-    let Ok(mut app_state) = ctx.app_state.lock() else {
-        return;
-    };
-    app_state.update_index(index);
     let Ok(mut ui_state) = ctx.ui_state.lock() else {
         return;
     };
-    ui_state.refresh_against(app_state.engine());
+    ui_state.refresh_against(&ctx.service);
     let results_count = ui_state.results().len();
     drop(ui_state);
-    drop(app_state);
 
     resize_window_for_results(window, results_count);
     window.invalidate();
 }
 
-fn set_position(window: &Window, position: WindowPosition) {
+fn set_position(window: &Window, position: Anchor) {
     let Some(ctx) = context() else {
         return;
     };
-    let Ok(mut settings) = ctx.settings.lock() else {
-        return;
-    };
-    let outcome = update_position(&mut settings, position, Settings::save);
-    drop(settings);
+    let current = ctx.service.current_position();
+    let outcome = update_position(current, position, |p| ctx.service.change_position(p));
 
     apply_position_outcome(window, position, outcome);
 }
 
-fn apply_position_outcome(window: &Window, position: WindowPosition, outcome: io::Result<bool>) {
+fn apply_position_outcome(window: &Window, position: Anchor, outcome: Result<bool, String>) {
     match outcome {
         Ok(true) => {
             if window.is_visible() {
-                window.reposition(to_anchor(position));
+                window.reposition(position);
             }
         }
         Ok(false) => {}
@@ -358,19 +280,14 @@ fn apply_position_outcome(window: &Window, position: WindowPosition, outcome: io
 }
 
 fn update_position(
-    settings: &mut Settings,
-    position: WindowPosition,
-    save: impl FnOnce(&Settings) -> io::Result<()>,
-) -> io::Result<bool> {
-    let previous = settings.position;
-    if previous == position {
+    current: Anchor,
+    position: Anchor,
+    persist: impl FnOnce(Anchor) -> Result<(), String>,
+) -> Result<bool, String> {
+    if current == position {
         return Ok(false);
     }
-    settings.position = position;
-    if let Err(err) = save(settings) {
-        settings.position = previous;
-        return Err(err);
-    }
+    persist(position)?;
     Ok(true)
 }
 
@@ -378,17 +295,21 @@ fn handle_capture_key(window: &Window, key: Key, modifiers: Modifiers) {
     match hotkey::evaluate(key, modifiers) {
         CaptureOutcome::Cancelled => end_capture(window),
         CaptureOutcome::Invalid => {}
-        CaptureOutcome::Candidate(candidate) => {
+        CaptureOutcome::Candidate(modifiers, key) => {
             let Some(ctx) = context() else {
                 return;
             };
-            let Ok(mut settings) = ctx.settings.lock() else {
-                return;
-            };
+            let current = ctx.service.current_hotkey();
             let Ok(mut active_slot) = ctx.active_hotkey_slot.lock() else {
                 return;
             };
-            match hotkey::try_commit(window, &mut settings, &mut active_slot, candidate) {
+            match hotkey::try_commit(
+                window,
+                current,
+                &mut active_slot,
+                (modifiers, key),
+                |m, k| ctx.service.change_hotkey(m, k),
+            ) {
                 CommitResult::Committed => end_capture(window),
                 CommitResult::Conflict => winsp_windows::system::toast::show(
                     "WinSP",
@@ -405,9 +326,9 @@ fn handle_capture_key(window: &Window, key: Key, modifiers: Modifiers) {
 
 fn end_capture(window: &Window) {
     if let Some(ctx) = context()
-        && let (Ok(app_state), Ok(mut ui_state)) = (ctx.app_state.lock(), ctx.ui_state.lock())
+        && let Ok(mut ui_state) = ctx.ui_state.lock()
     {
-        ui_state.stop_capturing_hotkey(app_state.engine());
+        ui_state.stop_capturing_hotkey(&ctx.service);
     }
     window.discard_pending_char();
     window.hide();
@@ -419,37 +340,29 @@ mod tests {
 
     #[test]
     fn an_unchanged_position_is_a_no_op() {
-        let mut settings = Settings::default();
-        assert_eq!(settings.position, WindowPosition::Top);
-
-        let result = update_position(&mut settings, WindowPosition::Top, |_| {
+        let result = update_position(Anchor::Top, Anchor::Top, |_| {
             panic!("save should not be called when the position does not change")
         });
 
         assert!(matches!(result, Ok(false)));
-        assert_eq!(settings.position, WindowPosition::Top);
     }
 
     #[test]
     fn a_changed_position_is_saved() {
-        let mut settings = Settings::default();
-
-        let result = update_position(&mut settings, WindowPosition::Center, |_| Ok(()));
+        let result = update_position(Anchor::Top, Anchor::Center, |_| Ok(()));
 
         assert!(matches!(result, Ok(true)));
-        assert_eq!(settings.position, WindowPosition::Center);
     }
 
     #[test]
-    fn a_persist_failure_rolls_back_the_position() {
-        let mut settings = Settings::default();
-
-        let result = update_position(&mut settings, WindowPosition::Center, |_| {
-            Err(io::Error::other("disk full"))
-        });
+    fn a_persist_failure_is_reported_as_an_error() {
+        let result = update_position(
+            Anchor::Top,
+            Anchor::Center,
+            |_| Err("disk full".to_string()),
+        );
 
         assert!(result.is_err());
-        assert_eq!(settings.position, WindowPosition::Top);
     }
 
     #[test]
@@ -460,7 +373,7 @@ mod tests {
         window.show();
         let before = window.outer_position();
 
-        apply_position_outcome(&window, WindowPosition::Center, Ok(true));
+        apply_position_outcome(&window, Anchor::Center, Ok(true));
 
         assert_ne!(
             window.outer_position(),
@@ -479,7 +392,7 @@ mod tests {
         assert!(!window.is_visible(), "the window should start out hidden");
         let before = window.outer_position();
 
-        apply_position_outcome(&window, WindowPosition::Center, Ok(true));
+        apply_position_outcome(&window, Anchor::Center, Ok(true));
 
         assert_eq!(
             window.outer_position(),
@@ -498,7 +411,7 @@ mod tests {
         window.show();
         let before = window.outer_position();
 
-        apply_position_outcome(&window, WindowPosition::Center, Ok(false));
+        apply_position_outcome(&window, Anchor::Center, Ok(false));
 
         assert_eq!(window.outer_position(), before);
 
@@ -513,11 +426,7 @@ mod tests {
         window.show();
         let before = window.outer_position();
 
-        apply_position_outcome(
-            &window,
-            WindowPosition::Center,
-            Err(io::Error::other("disk full")),
-        );
+        apply_position_outcome(&window, Anchor::Center, Err("disk full".to_string()));
 
         assert_eq!(
             window.outer_position(),
