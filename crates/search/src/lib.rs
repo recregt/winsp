@@ -129,4 +129,80 @@ mod tests {
                 .any(|r| matches!(r.kind, SearchResultKind::Calculation { .. }))
         );
     }
+
+    #[test]
+    fn a_matching_app_becomes_a_search_result_with_highlights() {
+        let mut index = Index::new();
+        index.set_items(vec![AppItem::new(
+            "vscode",
+            "Visual Studio Code",
+            LaunchTarget::Path("code.exe".into()),
+        )]);
+
+        let mut matches = Vec::new();
+        let mut results = Vec::new();
+        query(&index, "vscode", 5, &mut matches, &mut results);
+
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].title.as_ref(), "Visual Studio Code");
+        assert!(results[0].score > 0);
+        assert!(!results[0].matched_char_indices.is_empty());
+        let SearchResultKind::App(item) = &results[0].kind else {
+            panic!("expected an App result");
+        };
+        assert_eq!(item.id(), "vscode");
+    }
+
+    #[test]
+    fn a_query_matching_fewer_items_does_not_leak_stale_results() {
+        let mut index = Index::new();
+        index.set_items((0..5).map(|i| {
+            AppItem::new(
+                format!("id-{i}"),
+                format!("Studio Tool {i}"),
+                LaunchTarget::Path(format!("app{i}.exe")),
+            )
+        }));
+
+        let mut matches = Vec::new();
+        let mut results = Vec::new();
+        query(&index, "studio", 5, &mut matches, &mut results);
+        assert_eq!(results.len(), 5);
+
+        query(&index, "studio tool 2", 5, &mut matches, &mut results);
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].title.as_ref(), "Studio Tool 2");
+    }
+
+    #[test]
+    fn a_whitespace_only_query_behaves_like_an_empty_one() {
+        let mut index = Index::new();
+        index.set_items(vec![
+            AppItem::new("calc", "Calculator", LaunchTarget::Path("calc.exe".into()))
+                .with_launch_count(5),
+        ]);
+
+        let mut matches = Vec::new();
+        let mut results = Vec::new();
+        query(&index, "   ", 5, &mut matches, &mut results);
+
+        assert_eq!(results.len(), 1);
+        assert!(matches!(results[0].kind, SearchResultKind::App(_)));
+    }
+
+    #[test]
+    fn a_zero_limit_returns_no_results_without_panicking() {
+        let mut index = Index::new();
+        index.set_items(vec![AppItem::new(
+            "calc",
+            "Calculator",
+            LaunchTarget::Path("calc.exe".into()),
+        )]);
+
+        let mut matches = Vec::new();
+        let mut results = Vec::new();
+        query(&index, "12 * 12", 0, &mut matches, &mut results);
+
+        assert!(results.is_empty());
+    }
 }
