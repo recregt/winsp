@@ -3,6 +3,7 @@ import re
 import subprocess
 import sys
 from pathlib import Path
+from typing import NoReturn
 
 TYPES = ["feat", "fix", "refactor", "ci", "perf", "test", "chore", "docs"]
 
@@ -42,7 +43,7 @@ IMPERATIVE_BASE_FORMS = {
 EXEMPT_PREFIXES = ("Merge ", "Revert ", "fixup! ", "squash! ")
 
 
-def fail(context_line: str, reason: str, label: str = "Invalid commit message:") -> None:
+def fail(context_line: str, reason: str, label: str = "Invalid commit message:") -> NoReturn:
     print(label, file=sys.stderr)
     print(f"  {context_line}", file=sys.stderr)
     print(file=sys.stderr)

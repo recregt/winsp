@@ -2,9 +2,10 @@
 import re
 import sys
 from pathlib import Path
+from typing import NoReturn
 
 
-def fail(message: str) -> None:
+def fail(message: str) -> NoReturn:
     print(message, file=sys.stderr)
     sys.exit(1)
 

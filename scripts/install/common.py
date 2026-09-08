@@ -9,11 +9,12 @@ import urllib.error
 import urllib.request
 import zipfile
 from pathlib import Path
+from typing import NoReturn
 
 TIMEOUT_SECONDS = 30
 
 
-def fail(message: str) -> None:
+def fail(message: str) -> NoReturn:
     print(message, file=sys.stderr)
     sys.exit(1)
 
