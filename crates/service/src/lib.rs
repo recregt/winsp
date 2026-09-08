@@ -185,11 +185,6 @@ impl Service {
                 drop(inner);
                 launch(target);
             }
-            SearchResultKind::SystemCommand { command, .. } => {
-                let target = LaunchTarget::Command(command.clone());
-                drop(inner);
-                launch(target);
-            }
         }
     }
 }
