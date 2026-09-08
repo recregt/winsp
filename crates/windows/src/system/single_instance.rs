@@ -41,14 +41,40 @@ pub fn acquire(mutex_name: &str, window_class_name: &str) -> AcquireResult {
     AcquireResult::Acquired(InstanceGuard(handle))
 }
 
+const ACTIVATION_RETRY_ATTEMPTS: u32 = 10;
+const ACTIVATION_RETRY_DELAY: std::time::Duration = std::time::Duration::from_millis(20);
+
+/// Retries briefly because the first instance may still be between creating
+/// its mutex and creating its window when a second instance calls this.
 fn request_show(window_class_name: &str) -> bool {
     let class_name = HSTRING::from(window_class_name);
-    unsafe {
-        let Ok(existing) = FindWindowW(&class_name, None) else {
-            return false;
-        };
-        PostMessageW(Some(existing), WM_SHOW_REQUEST, WPARAM(0), LPARAM(0)).is_ok()
+    let existing = retry(ACTIVATION_RETRY_ATTEMPTS, ACTIVATION_RETRY_DELAY, || {
+        unsafe { FindWindowW(&class_name, None) }.ok()
+    });
+    match existing {
+        Some(hwnd) => {
+            unsafe { PostMessageW(Some(hwnd), WM_SHOW_REQUEST, WPARAM(0), LPARAM(0)) }.is_ok()
+        }
+        None => false,
     }
+}
+
+/// Calls `poll` up to `attempts` times, sleeping `delay` between misses,
+/// until it returns `Some`.
+fn retry<T>(
+    attempts: u32,
+    delay: std::time::Duration,
+    mut poll: impl FnMut() -> Option<T>,
+) -> Option<T> {
+    for attempt in 0..attempts {
+        if let Some(value) = poll() {
+            return Some(value);
+        }
+        if attempt + 1 < attempts {
+            std::thread::sleep(delay);
+        }
+    }
+    None
 }
 
 #[cfg(test)]
@@ -141,6 +167,28 @@ mod tests {
             !posted,
             "expected request_show to report failure when no window matches"
         );
+    }
+
+    #[test]
+    fn retry_keeps_polling_until_a_later_attempt_succeeds() {
+        let calls = std::cell::Cell::new(0);
+        let result = retry(5, std::time::Duration::ZERO, || {
+            calls.set(calls.get() + 1);
+            (calls.get() == 3).then_some(calls.get())
+        });
+        assert_eq!(result, Some(3));
+        assert_eq!(calls.get(), 3, "should stop as soon as poll succeeds");
+    }
+
+    #[test]
+    fn retry_gives_up_after_exhausting_its_attempts() {
+        let calls = std::cell::Cell::new(0);
+        let result = retry(5, std::time::Duration::ZERO, || {
+            calls.set(calls.get() + 1);
+            None::<()>
+        });
+        assert_eq!(result, None);
+        assert_eq!(calls.get(), 5, "should try exactly `attempts` times");
     }
 
     #[test]
