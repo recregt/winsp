@@ -129,6 +129,7 @@ pub enum WindowEvent {
     TaskbarRestarted,
     Redraw,
     User(u32),
+    MouseClicked { x: i32, y: i32 },
 }
 
 fn is_key_down(vk: VIRTUAL_KEY) -> bool {
