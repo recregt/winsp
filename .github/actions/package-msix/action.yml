@@ -9,10 +9,42 @@ runs:
         New-Item -ItemType Directory -Path "$stagingDir\Assets" -Force | Out-Null
 
         $cargoToml = Get-Content Cargo.toml -Raw
-        if ($cargoToml -notmatch '(?ms)^\[workspace\.package\].*?^version\s*=\s*"([0-9]+\.[0-9]+\.[0-9]+)(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?"') {
+        if ($cargoToml -notmatch '(?ms)^\[workspace\.package\].*?^version\s*=\s*"([0-9]+\.[0-9]+\.[0-9]+)(?:-([0-9A-Za-z.-]+))?(?:\+[0-9A-Za-z.-]+)?"') {
           throw "could not find [workspace.package] version in Cargo.toml"
         }
-        $msixVersion = "$($Matches[1]).0"
+        $baseVersion = $Matches[1]
+        $prerelease = $Matches[2]
+
+        # MSIX package versions are Major.Minor.Build.Revision (each a UInt16).
+        # Encode the prerelease distinction into Revision so alpha/beta/rc/stable
+        # builds of the same base version don't collide, ordered so a later
+        # stage always sorts higher (stable is the reserved maximum, so
+        # promoting a prerelease to stable is always seen as an upgrade).
+        function Get-PrereleaseRevision([string]$Prerelease) {
+          if ([string]::IsNullOrEmpty($Prerelease)) {
+            return 65535
+          }
+          $parts = $Prerelease -split '\.', 2
+          $label = $parts[0].ToLowerInvariant()
+          $number = 0
+          if ($parts.Length -gt 1 -and $parts[1] -match '^[0-9]+') {
+            $number = [Math]::Min([int]$Matches[0], 9999)
+          }
+          switch ($label) {
+            'alpha' { return 0 + $number }
+            'beta'  { return 10000 + $number }
+            'rc'    { return 20000 + $number }
+            default {
+              $hash = 0
+              foreach ($ch in $Prerelease.ToCharArray()) {
+                $hash = ($hash * 31 + [int][char]$ch) % 9999
+              }
+              return 30000 + $hash
+            }
+          }
+        }
+
+        $msixVersion = "$baseVersion.$(Get-PrereleaseRevision $prerelease)"
 
         $manifest = Get-Content packaging\AppxManifest.xml -Raw
         $manifest = $manifest -replace '(<Identity[^>]*\bVersion=")[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+(")', "`${1}$msixVersion`${2}"
