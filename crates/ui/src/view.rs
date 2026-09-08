@@ -230,7 +230,7 @@ pub(super) fn render(canvas: &Canvas, state: &UiState, client_rect: Rect) {
                 right: WINDOW_WIDTH - 32,
                 bottom: current_y + ITEM_ROW_HEIGHT - 8,
             };
-            canvas.draw_text(sub, sub_rect);
+            canvas.draw_text_ellipsized(sub, sub_rect);
         }
 
         current_y += ITEM_ROW_HEIGHT;
