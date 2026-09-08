@@ -1112,21 +1112,37 @@ impl ScanTable {
                 match query.ascii_needle {
                     // The mask says the name holds every needle character, not
                     // that it holds them in the needle's order — which is what
-                    // the matcher decides first, with one `memchr2` per needle
-                    // character, whose vector setup costs more than a launcher's
-                    // name is long. Half of the items a mask lets through fail
-                    // that order test, and deciding it here in one pass over the
-                    // name is what they cost instead. An item that passes pays
-                    // the pass on top of a match it was going to be scored for
-                    // anyway, which is the cheaper half of the trade.
-                    Some(needle) if !is_subsequence_ignore_ascii_case(name, needle) => None,
-                    _ => {
-                        let haystack = Utf32Str::Ascii(name);
+                    // the matcher decides first, walking the name once per
+                    // needle character. Half of the items a mask lets through
+                    // fail that order test, and deciding it here in one pass
+                    // over the name is what they cost instead.
+                    //
+                    // An item that passes hands the walk's result to the
+                    // matcher, which is what makes the pass free for it too:
+                    // where the needle's first and last characters sit is the
+                    // prefilter the matcher would run itself, and this is the
+                    // walk that found them.
+                    Some(needle) => match subsequence_ignore_ascii_case(name, needle) {
+                        None => None,
                         // While the shortlist is still filling, the matcher is
                         // asked for the characters it matched as well as the
                         // score: it has the matrix in front of it, and a row
                         // that reaches the window is then one the window does
                         // not have to match a second time.
+                        Some((start, greedy_end)) if COLLECT => {
+                            let indices = state.scratch.collect_into();
+                            state.matcher.fuzzy_indices_ascii_prefiltered(
+                                name, needle, start, greedy_end, indices,
+                            )
+                        }
+                        Some((start, greedy_end)) => state
+                            .matcher
+                            .fuzzy_match_ascii_prefiltered(name, needle, start, greedy_end),
+                    },
+                    // A needle that is not ASCII never matches an ASCII name,
+                    // which the matcher decides for itself.
+                    None => {
+                        let haystack = Utf32Str::Ascii(name);
                         if COLLECT {
                             let indices = state.scratch.collect_into();
                             state.matcher.fuzzy_indices(haystack, query.needle, indices)
@@ -1332,6 +1348,12 @@ fn case_fold_bit(wanted: u8) -> u8 {
 
 /// Whether `needle`, which is ASCII and already lowercase, appears in
 /// `haystack` as a subsequence, ignoring case.
+///
+/// Written out rather than deferred to [`subsequence_ignore_ascii_case`], whose
+/// answer this is a part of: this one is what the pruning path calls for every
+/// item a wide query lets through, and it walks the name once where the other
+/// restarts a search per needle character. Reusing the other cost a keystroke
+/// against a ten thousand item index 10%.
 fn is_subsequence_ignore_ascii_case(haystack: &[u8], needle: &[u8]) -> bool {
     let mut needle = needle.iter().copied();
     let Some(mut wanted) = needle.next() else {
@@ -1350,6 +1372,33 @@ fn is_subsequence_ignore_ascii_case(haystack: &[u8], needle: &[u8]) -> bool {
         }
     }
     false
+}
+
+/// Where `needle`, which is ASCII and already lowercase, appears in `haystack`
+/// as a subsequence, ignoring case: the index of the byte its first character
+/// matches and one past the byte its last one matches, walking the haystack
+/// left to right and taking the first byte that fits. `None` when the needle is
+/// not a subsequence at all, in which case it does not match the haystack.
+///
+/// That pair is exactly what the matcher's own ASCII prefilter computes before
+/// it scores anything, so a caller that has run this test hands it over rather
+/// than let the matcher walk the same name a second time.
+fn subsequence_ignore_ascii_case(haystack: &[u8], needle: &[u8]) -> Option<(usize, usize)> {
+    let mut rest = needle.iter().copied();
+    let Some(first) = rest.next() else {
+        return Some((0, 0));
+    };
+    let fold = case_fold_bit(first);
+    let start = haystack.iter().position(|&byte| byte | fold == first)?;
+    let mut end = start + 1;
+    for wanted in rest {
+        let fold = case_fold_bit(wanted);
+        let at = haystack[end..]
+            .iter()
+            .position(|&byte| byte | fold == wanted)?;
+        end += at + 1;
+    }
+    Some((start, end))
 }
 
 /// Matches a name that is not pure ASCII, which has to be decoded into
@@ -2313,6 +2362,73 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// The scan decides the order test itself and hands the matcher what that
+    /// walk found instead of letting it walk the name again. Score and
+    /// highlights therefore have to come out exactly as the matcher's own entry
+    /// points report them, for every name and needle, matching or not.
+    #[test]
+    fn test_prefiltered_matching_agrees_with_the_matcher() {
+        let mut config = Config::DEFAULT;
+        config.ignore_case = true;
+        let mut matcher = Matcher::new(config);
+
+        let mut names = random_strings(400, 16, 0xfeed);
+        names.extend(random_strings(200, 3, 0xf00d));
+        names.push("Visual Studio Code".into());
+        let mut needles = random_strings(120, 4, 0xc0de);
+        for first in ALPHABET {
+            needles.push(first.to_string());
+            for second in ALPHABET {
+                needles.push(format!("{first}{second}"));
+            }
+        }
+        needles.extend(["visual studio", "vsc", "code"].map(String::from));
+
+        let mut expected = Vec::new();
+        let mut collected = Vec::new();
+        let mut compared = 0;
+        for needle in &needles {
+            let normalized: String = needle.chars().map(normalize).map(to_lower_case).collect();
+            // The prefiltered path is the ASCII one, which is what the scan
+            // takes it for.
+            if !normalized.is_ascii() || normalized.is_empty() {
+                continue;
+            }
+            let needle = normalized.as_bytes();
+            for name in &names {
+                if !name.is_ascii() {
+                    continue;
+                }
+                let name = name.as_bytes();
+                expected.clear();
+                collected.clear();
+                let want = matcher.fuzzy_indices(
+                    Utf32Str::Ascii(name),
+                    Utf32Str::Ascii(needle),
+                    &mut expected,
+                );
+                let got =
+                    subsequence_ignore_ascii_case(name, needle).and_then(|(start, greedy_end)| {
+                        matcher.fuzzy_indices_ascii_prefiltered(
+                            name,
+                            needle,
+                            start,
+                            greedy_end,
+                            &mut collected,
+                        )
+                    });
+                let name = std::str::from_utf8(name).unwrap();
+                let needle = std::str::from_utf8(needle).unwrap();
+                assert_eq!(want, got, "score for {needle:?} in {name:?}");
+                if want.is_some() {
+                    assert_eq!(expected, collected, "indices for {needle:?} in {name:?}");
+                    compared += 1;
+                }
+            }
+        }
+        assert!(compared > 1_000, "only {compared} matches compared");
     }
 
     /// The boundary mask claims to hold exactly the characters of a name that
