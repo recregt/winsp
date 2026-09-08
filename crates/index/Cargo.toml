@@ -10,6 +10,9 @@ authors.workspace = true
 memchr = "2.5.0"
 unicode-segmentation = { version = "1.10", optional = true }
 
+[package.metadata.cargo-machete]
+ignored = ["memchr", "unicode-segmentation"]
+
 [features]
 default = ["unicode-normalization", "unicode-casefold", "unicode-segmentation"]
 unicode-normalization = []
