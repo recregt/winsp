@@ -73,6 +73,29 @@ impl Matcher {
         }
     }
 
+    /// One past the last haystack byte a match can reach: everything after the
+    /// last occurrence of the needle's last character can hold nothing of it.
+    ///
+    /// The half of [`Matcher::prefilter_ascii`] that a caller which walked the
+    /// haystack left to right itself has not computed, so that such a caller
+    /// can hand its own `greedy_end` over instead of paying for that walk a
+    /// second time. See [`Matcher::fuzzy_ascii_prefiltered`].
+    pub(crate) fn prefilter_ascii_end(
+        &self,
+        haystack: &[u8],
+        needle: &[u8],
+        greedy_end: usize,
+    ) -> usize {
+        let rest = &haystack[greedy_end..];
+        let last = *needle.last().unwrap();
+        let found = if self.config.ignore_case {
+            find_ascii_ignore_case_rev(last, rest)
+        } else {
+            memrchr(last, rest)
+        };
+        greedy_end + found.map_or(0, |i| i + 1)
+    }
+
     pub(crate) fn prefilter_non_ascii(
         &self,
         haystack: &[char],

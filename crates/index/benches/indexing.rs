@@ -68,6 +68,19 @@ fn bench_indexing(c: &mut Criterion) {
             );
         });
 
+        group.bench_with_input(BenchmarkId::new("rescan", size), &items, |b, items| {
+            let mut engine = Index::new();
+            engine.set_items(items.clone());
+            b.iter_batched(
+                || items.clone(),
+                |items| {
+                    engine.set_items(items);
+                    black_box(engine.len())
+                },
+                criterion::BatchSize::LargeInput,
+            );
+        });
+
         group.bench_with_input(BenchmarkId::new("add_item", size), &items, |b, items| {
             b.iter_batched(
                 || items.clone(),

@@ -202,7 +202,7 @@ impl Ranking {
     }
 
     fn rebuild<T: IndexableItem>(&mut self, items: &[Arc<T>]) {
-        self.scan = ScanTable::build(items);
+        self.scan.rebuild(items);
         self.narrowing.get_mut().take();
     }
 
@@ -386,18 +386,31 @@ impl<'a> Needles<'a> {
     }
 }
 
-/// Complete match set of the last query, kept so the next keystroke can rescan
-/// those items only.
+/// Items the last query could not rule out, kept so the next keystroke can
+/// rescan those alone.
+///
+/// A superset of what the query matched, and only ever read as one: the scan
+/// that reads it puts every item it holds through the same prefilter and the
+/// same matcher a full scan would, so an item in here that never matched
+/// anything is scanned and dropped exactly as it would have been. What the set
+/// must not do is miss an item the next query matches, which is what
+/// [`narrows`] establishes, and it holds for a superset the same way it holds
+/// for the match set itself.
+///
+/// Recording a superset is what makes the set nearly free to build: the items
+/// the score ceiling drops go in on the strength of the character mask alone,
+/// without the walk over the name it would take to prove the match.
 struct Narrowing {
     query: String,
     items: Vec<u32>,
 }
 
 /// Whether the items matching `query` are a subset of the ones that matched
-/// `previous`. Appending characters to a query can only shrink the match set:
-/// fuzzy name matching needs the needle to be a subsequence of the name, and
-/// keyword matching needs the query to be a substring of a keyword, and both
-/// still hold for any prefix of the query.
+/// `previous`, and therefore of anything recorded for `previous`. Appending
+/// characters to a query can only shrink the match set: fuzzy name matching
+/// needs the needle to be a subsequence of the name, and keyword matching needs
+/// the query to be a substring of a keyword, and both still hold for any prefix
+/// of the query.
 ///
 /// Restricted to ASCII queries because `str::to_lowercase`, which the keyword
 /// comparison uses, is context sensitive: a final sigma lowercases differently
@@ -411,12 +424,21 @@ fn narrows(previous: &str, query: &str) -> bool {
 /// list costs a cache miss per item, where a full scan streams through the
 /// columnar buffers, so a barely narrowed set is not worth reusing. Small
 /// indexes are scanned quickly either way, hence the floor.
+///
+/// A share of the index rather than a count, and a wider one than the exact
+/// match set needed: what is recorded is every item the character mask lets
+/// through, and about half of those fail the order test a real match has to
+/// pass, so the same reach costs roughly twice the room. Measured natively on
+/// the typing benchmarks, an eighth of the index gives the set up on keystrokes
+/// a quarter still narrows — `keystroke[vis]` reads 10.4 µs against 5.6 µs, and
+/// a whole typing session 72 µs against 62 µs.
 fn narrowing_capacity(items: usize) -> usize {
-    (items / 8).max(64)
+    (items / 4).max(64)
 }
 
-/// What one scan produced: the best `limit` candidates, and the complete match
-/// set when it is small enough to narrow the next scan with. The characters
+/// What one scan produced: the best `limit` candidates, and the items it could
+/// not rule out, when there are few enough of them to narrow the next scan
+/// with. The characters
 /// those candidates matched stay in the table's [`ScanScratch`], which each of
 /// them holds a slot of.
 struct Scan {
@@ -511,10 +533,10 @@ struct ScanTable {
     /// [`ScanRow::launch_count`] so the no-query path scans 4 bytes per item.
     launch_counts: Vec<u32>,
     rows: Vec<ScanRow>,
-    /// The match set of an earlier search, emptied, for the next one to fill
-    /// again. A scan records every item it matched so the next keystroke can
-    /// rescan those alone, and growing that set from nothing was a chain of
-    /// reallocations on every keystroke.
+    /// The narrowing set of an earlier search, emptied, for the next one to
+    /// fill again. A scan records the items it could not rule out so the next
+    /// keystroke can rescan those alone, and growing that set from nothing was
+    /// a chain of reallocations on every keystroke.
     spare_matched: RefCell<Vec<u32>>,
     /// The buffers a scan fills and empties again: kept here, and not in the
     /// scan, so a keystroke reuses them instead of allocating its own.
@@ -803,26 +825,28 @@ impl ScanRow {
 }
 
 impl ScanTable {
-    fn build<T: IndexableItem>(items: &[Arc<T>]) -> Self {
+    fn rebuild<T: IndexableItem>(&mut self, items: &[Arc<T>]) {
+        self.names.clear();
+        self.keywords.clear();
+        self.prefilter.clear();
+        self.launch_counts.clear();
+        self.rows.clear();
+
         let names_len: usize = items.iter().map(|item| item.name().len()).sum();
         let keywords_len: usize = items
             .iter()
             .flat_map(|item| item.keywords())
             .map(|keyword| keyword.len() + 1)
             .sum();
-        let mut table = Self {
-            names: String::with_capacity(names_len),
-            keywords: String::with_capacity(keywords_len),
-            prefilter: Vec::with_capacity(items.len()),
-            launch_counts: Vec::with_capacity(items.len()),
-            rows: Vec::with_capacity(items.len()),
-            spare_matched: RefCell::new(Vec::new()),
-            scratch: RefCell::new(ScanScratch::default()),
-        };
+        self.names.reserve(names_len);
+        self.keywords.reserve(keywords_len);
+        self.prefilter.reserve(items.len());
+        self.launch_counts.reserve(items.len());
+        self.rows.reserve(items.len());
+
         for item in items {
-            table.push(item.as_ref());
+            self.push(item.as_ref());
         }
-        table
     }
 
     fn push<T: IndexableItem>(&mut self, item: &T) {
@@ -912,7 +936,7 @@ impl ScanTable {
     /// The selection is a bounded insertion, which assumes the small result
     /// limits a launcher UI asks for.
     ///
-    /// `narrowed`, when given, is the complete match set of a query this one
+    /// `narrowed`, when given, holds every item that matched a query this one
     /// extends, and replaces the index as the set of items to score.
     fn best_matches(
         &self,
@@ -1033,10 +1057,13 @@ impl ScanTable {
         // makes below, on a value that can only be larger, so the ranking stays
         // the one an unpruned scan produces.
         //
-        // A dropped item still has to go into the match set the next keystroke
-        // narrows its scan with, which takes deciding whether it matches at all
-        // — much less work than scoring it, but not always possible without the
-        // matcher, in which case it is scored after all.
+        // A dropped item still has to go into the set the next keystroke
+        // narrows its scan with, and it goes in on the strength of the mask
+        // alone: the set only has to hold every item that matches, not only
+        // those, so an item the mask let through is recorded without deciding
+        // whether it really matches. Proving that took a walk over the name for
+        // every item a wide query let through, which was the single most
+        // expensive thing left in a keystroke.
         //
         // The mask test stays inline here, flat, even though everything the
         // scored path holds is live across it and the three values it compares
@@ -1058,18 +1085,15 @@ impl ScanTable {
                 continue;
             }
 
-            if let Some(is_match) = ruled_out_unscored(
+            if ruled_out_unscored(
                 self,
                 idx,
                 name_possible,
                 keyword_possible,
                 &query,
                 state.top[limit - 1].score,
-                state.matched.is_some(),
             ) {
-                if is_match {
-                    record_match(&mut state.matched, state.capacity, idx);
-                }
+                record_match(&mut state.matched, state.capacity, idx);
                 continue;
             }
 
@@ -1110,21 +1134,37 @@ impl ScanTable {
                 match query.ascii_needle {
                     // The mask says the name holds every needle character, not
                     // that it holds them in the needle's order — which is what
-                    // the matcher decides first, with one `memchr2` per needle
-                    // character, whose vector setup costs more than a launcher's
-                    // name is long. Half of the items a mask lets through fail
-                    // that order test, and deciding it here in one pass over the
-                    // name is what they cost instead. An item that passes pays
-                    // the pass on top of a match it was going to be scored for
-                    // anyway, which is the cheaper half of the trade.
-                    Some(needle) if !is_subsequence_ignore_ascii_case(name, needle) => None,
-                    _ => {
-                        let haystack = Utf32Str::Ascii(name);
+                    // the matcher decides first, walking the name once per
+                    // needle character. Half of the items a mask lets through
+                    // fail that order test, and deciding it here in one pass
+                    // over the name is what they cost instead.
+                    //
+                    // An item that passes hands the walk's result to the
+                    // matcher, which is what makes the pass free for it too:
+                    // where the needle's first and last characters sit is the
+                    // prefilter the matcher would run itself, and this is the
+                    // walk that found them.
+                    Some(needle) => match subsequence_ignore_ascii_case(name, needle) {
+                        None => None,
                         // While the shortlist is still filling, the matcher is
                         // asked for the characters it matched as well as the
                         // score: it has the matrix in front of it, and a row
                         // that reaches the window is then one the window does
                         // not have to match a second time.
+                        Some((start, greedy_end)) if COLLECT => {
+                            let indices = state.scratch.collect_into();
+                            state.matcher.fuzzy_indices_ascii_prefiltered(
+                                name, needle, start, greedy_end, indices,
+                            )
+                        }
+                        Some((start, greedy_end)) => state
+                            .matcher
+                            .fuzzy_match_ascii_prefiltered(name, needle, start, greedy_end),
+                    },
+                    // A needle that is not ASCII never matches an ASCII name,
+                    // which the matcher decides for itself.
+                    None => {
+                        let haystack = Utf32Str::Ascii(name);
                         if COLLECT {
                             let indices = state.scratch.collect_into();
                             state.matcher.fuzzy_indices(haystack, query.needle, indices)
@@ -1198,10 +1238,10 @@ struct ScanState<'m> {
     /// candidates matched, as far as the scan collected them, and the room a
     /// name that is not ASCII is decoded in.
     scratch: &'m mut ScanScratch,
-    /// Every item matched so far, until there are more of them than narrowing
-    /// the next scan with is worth.
+    /// Every item this scan could not rule out, until there are more of them
+    /// than narrowing the next scan with is worth.
     matched: Option<Vec<u32>>,
-    /// How many items the match set is willing to hold.
+    /// How many items the narrowing set is willing to hold.
     capacity: usize,
     /// How many candidates the shortlist keeps.
     limit: usize,
@@ -1221,15 +1261,9 @@ struct Query<'a> {
     ascii_needle: Option<&'a [u8]>,
 }
 
-/// Whether the score ceiling rules `row` out, and if so whether the match set
-/// still being built wants it, which is all a ruled out item is still asked for.
-/// `None` leaves the item to be scored: either the ceiling does not rule it out,
-/// or deciding the match needs the matcher after all.
-///
-/// `collecting` says whether the match set is still alive. Once it has been
-/// given up, a ruled out item is not going anywhere, so whether it matches is
-/// nothing anyone reads and deciding it is work the scan can skip — which is
-/// what the rest of a scan over an index that matches the query widely does.
+/// Whether the score ceiling puts this item out of reach of the shortlist, so
+/// that scoring it would only confirm what the bound already says. `false`
+/// leaves the item to be scored.
 ///
 /// Kept out of line, like the rest of what only some items reach: the scan loop
 /// calls this once the shortlist is full, and a scan whose shortlist never fills
@@ -1242,8 +1276,7 @@ fn ruled_out_unscored(
     keyword_possible: bool,
     query: &Query<'_>,
     cutoff: i32,
-    collecting: bool,
-) -> Option<bool> {
+) -> bool {
     // The two things a name match competes with: a keyword match, which scores
     // a flat `KEYWORD_MATCH_SCORE`, and the item's frecency, which is added to
     // either.
@@ -1269,40 +1302,14 @@ fn ruled_out_unscored(
         // mask lives in the row rather than in the word the prefilter streams
         // for every item of the index.
         if !name_possible || !ruled_out(query.name_ceilings.of(row.boundary_mask())) {
-            return None;
+            return false;
         }
     }
-    if !collecting {
-        return Some(false);
-    }
-
-    let by_name = match (name_possible, query.ascii_needle) {
-        (false, _) => false,
-        // An ASCII name holds an ASCII needle exactly when the needle is a
-        // subsequence of it, which is what the matcher's own prefilter decides
-        // before it scores anything.
-        (true, Some(needle)) if row.name_is_ascii() => {
-            let name = &table.names.as_bytes()[row.name_start as usize..row.name_end as usize];
-            is_subsequence_ignore_ascii_case(name, needle)
-        }
-        // A needle that is not ASCII never matches an ASCII name, since
-        // normalizing one leaves it as it is.
-        (true, None) if row.name_is_ascii() => false,
-        // Anything else has to be normalized before it can be compared, which
-        // is the matcher's job.
-        (true, _) => return None,
-    };
-
-    let by_keyword = keyword_possible && {
-        let keywords = &table.keywords[row.keywords_start as usize..row.keywords_end as usize];
-        keywords.contains(query.lowercased)
-    };
-
-    Some(by_name || by_keyword)
+    true
 }
 
-/// Records `idx` in the match set the next keystroke narrows its scan with, or
-/// gives the set up once it holds more items than that is worth.
+/// Records `idx` in the set the next keystroke narrows its scan with, or gives
+/// the set up once it holds more items than that is worth.
 fn record_match(matched: &mut Option<Vec<u32>>, capacity: usize, idx: u32) {
     if let Some(items) = matched {
         if items.len() == capacity {
@@ -1328,26 +1335,31 @@ fn case_fold_bit(wanted: u8) -> u8 {
     }
 }
 
-/// Whether `needle`, which is ASCII and already lowercase, appears in
-/// `haystack` as a subsequence, ignoring case.
-fn is_subsequence_ignore_ascii_case(haystack: &[u8], needle: &[u8]) -> bool {
-    let mut needle = needle.iter().copied();
-    let Some(mut wanted) = needle.next() else {
-        return true;
+/// Where `needle`, which is ASCII and already lowercase, appears in `haystack`
+/// as a subsequence, ignoring case: the index of the byte its first character
+/// matches and one past the byte its last one matches, walking the haystack
+/// left to right and taking the first byte that fits. `None` when the needle is
+/// not a subsequence at all, in which case it does not match the haystack.
+///
+/// That pair is exactly what the matcher's own ASCII prefilter computes before
+/// it scores anything, so a caller that has run this test hands it over rather
+/// than let the matcher walk the same name a second time.
+fn subsequence_ignore_ascii_case(haystack: &[u8], needle: &[u8]) -> Option<(usize, usize)> {
+    let mut rest = needle.iter().copied();
+    let Some(first) = rest.next() else {
+        return Some((0, 0));
     };
-    let mut fold = case_fold_bit(wanted);
-    for &byte in haystack {
-        if byte | fold == wanted {
-            match needle.next() {
-                Some(next) => {
-                    wanted = next;
-                    fold = case_fold_bit(next);
-                }
-                None => return true,
-            }
-        }
+    let fold = case_fold_bit(first);
+    let start = haystack.iter().position(|&byte| byte | fold == first)?;
+    let mut end = start + 1;
+    for wanted in rest {
+        let fold = case_fold_bit(wanted);
+        let at = haystack[end..]
+            .iter()
+            .position(|&byte| byte | fold == wanted)?;
+        end += at + 1;
     }
-    false
+    Some((start, end))
 }
 
 /// Matches a name that is not pure ASCII, which has to be decoded into
@@ -1995,6 +2007,45 @@ mod tests {
         }
     }
 
+    /// The set a keystroke narrows the next scan with holds every item the
+    /// character mask let through, not only the ones that matched, so most of
+    /// what a session rescans never matched anything. Names spelled from the
+    /// query's own characters in the wrong order are exactly that case: the
+    /// mask cannot tell them apart from a real match, and the ranking still has
+    /// to be the one a cold search produces.
+    #[test]
+    fn test_typing_matches_a_cold_search_over_a_set_of_non_matches() {
+        fn scrambled_index() -> (Vec<TestItem>, Index<TestItem>) {
+            let items: Vec<TestItem> = (0..400)
+                .map(|i| {
+                    let name = match i % 4 {
+                        0 => format!("Visual Studio {i}"),
+                        // Every character the query holds, never in its order.
+                        1 => format!("Lausiv Oidut {i}"),
+                        2 => format!("laVsui doitus {i}"),
+                        _ => format!("Suital Vodius {i}"),
+                    };
+                    TestItem::new(format!("id-{i}"), name)
+                        .with_keywords(vec!["tool".into()])
+                        .with_launch_count(i as u32 / 50)
+                })
+                .collect();
+            let mut index = Index::new();
+            index.set_items(items.clone());
+            (items, index)
+        }
+
+        let session = "visual studio";
+        let (items, typed) = scrambled_index();
+        for (offset, ch) in session.char_indices() {
+            let query = &session[..offset + ch.len_utf8()];
+            let (_, cold) = scrambled_index();
+            let expected = reference_ranking(&items, query, 6);
+            assert_eq!(named(&cold.find(query, 6)), expected, "cold: {query:?}");
+            assert_eq!(named(&typed.find(query, 6)), expected, "typed: {query:?}");
+        }
+    }
+
     /// Queries that share no prefix cannot narrow one another, so each one
     /// rescans the index while reusing what the last one left behind: the
     /// matcher's buffers and the set it recorded its matches in.
@@ -2311,6 +2362,73 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// The scan decides the order test itself and hands the matcher what that
+    /// walk found instead of letting it walk the name again. Score and
+    /// highlights therefore have to come out exactly as the matcher's own entry
+    /// points report them, for every name and needle, matching or not.
+    #[test]
+    fn test_prefiltered_matching_agrees_with_the_matcher() {
+        let mut config = Config::DEFAULT;
+        config.ignore_case = true;
+        let mut matcher = Matcher::new(config);
+
+        let mut names = random_strings(400, 16, 0xfeed);
+        names.extend(random_strings(200, 3, 0xf00d));
+        names.push("Visual Studio Code".into());
+        let mut needles = random_strings(120, 4, 0xc0de);
+        for first in ALPHABET {
+            needles.push(first.to_string());
+            for second in ALPHABET {
+                needles.push(format!("{first}{second}"));
+            }
+        }
+        needles.extend(["visual studio", "vsc", "code"].map(String::from));
+
+        let mut expected = Vec::new();
+        let mut collected = Vec::new();
+        let mut compared = 0;
+        for needle in &needles {
+            let normalized: String = needle.chars().map(normalize).map(to_lower_case).collect();
+            // The prefiltered path is the ASCII one, which is what the scan
+            // takes it for.
+            if !normalized.is_ascii() || normalized.is_empty() {
+                continue;
+            }
+            let needle = normalized.as_bytes();
+            for name in &names {
+                if !name.is_ascii() {
+                    continue;
+                }
+                let name = name.as_bytes();
+                expected.clear();
+                collected.clear();
+                let want = matcher.fuzzy_indices(
+                    Utf32Str::Ascii(name),
+                    Utf32Str::Ascii(needle),
+                    &mut expected,
+                );
+                let got =
+                    subsequence_ignore_ascii_case(name, needle).and_then(|(start, greedy_end)| {
+                        matcher.fuzzy_indices_ascii_prefiltered(
+                            name,
+                            needle,
+                            start,
+                            greedy_end,
+                            &mut collected,
+                        )
+                    });
+                let name = std::str::from_utf8(name).unwrap();
+                let needle = std::str::from_utf8(needle).unwrap();
+                assert_eq!(want, got, "score for {needle:?} in {name:?}");
+                if want.is_some() {
+                    assert_eq!(expected, collected, "indices for {needle:?} in {name:?}");
+                    compared += 1;
+                }
+            }
+        }
+        assert!(compared > 1_000, "only {compared} matches compared");
     }
 
     /// The boundary mask claims to hold exactly the characters of a name that

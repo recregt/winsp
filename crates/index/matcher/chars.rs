@@ -51,25 +51,42 @@ impl PartialEq<AsciiChar> for char {
     }
 }
 
+/// The class of an ASCII byte, given the delimiters a configuration was built
+/// with.
+///
+/// The definition, but not what a match calls: every byte's class is the same
+/// for the lifetime of a [`Config`], so a config holds the answer for all 256
+/// of them and [`AsciiChar::char_class`] reads it. The tests of the two ways it
+/// used to be reached — the case chain here and the linear search through the
+/// delimiters — are what a scan paid for every character of every name it
+/// scored.
+pub(crate) const fn ascii_char_class(byte: u8, delimiter_chars: &[u8]) -> CharClass {
+    // using manual if conditions instead optimizes better
+    if byte >= b'a' && byte <= b'z' {
+        CharClass::Lower
+    } else if byte >= b'A' && byte <= b'Z' {
+        CharClass::Upper
+    } else if byte >= b'0' && byte <= b'9' {
+        CharClass::Number
+    } else if byte.is_ascii_whitespace() {
+        CharClass::Whitespace
+    } else {
+        let mut nth = 0;
+        while nth < delimiter_chars.len() {
+            if delimiter_chars[nth] == byte {
+                return CharClass::Delimiter;
+            }
+            nth += 1;
+        }
+        CharClass::NonWord
+    }
+}
+
 impl Char for AsciiChar {
     const ASCII: bool = true;
     #[inline]
     fn char_class(self, config: &Config) -> CharClass {
-        let c = self.0;
-        // using manual if conditions instead optimizes better
-        if c >= b'a' && c <= b'z' {
-            CharClass::Lower
-        } else if c >= b'A' && c <= b'Z' {
-            CharClass::Upper
-        } else if c >= b'0' && c <= b'9' {
-            CharClass::Number
-        } else if c.is_ascii_whitespace() {
-            CharClass::Whitespace
-        } else if config.delimiter_chars.contains(&c) {
-            CharClass::Delimiter
-        } else {
-            CharClass::NonWord
-        }
+        config.ascii_char_classes[self.0 as usize]
     }
 
     #[inline(always)]
@@ -179,6 +196,7 @@ pub fn is_upper_case(c: char) -> bool {
 }
 
 #[derive(Debug, Eq, PartialEq, PartialOrd, Ord, Copy, Clone, Hash)]
+#[repr(u8)]
 pub(crate) enum CharClass {
     Whitespace,
     NonWord,
@@ -187,6 +205,25 @@ pub(crate) enum CharClass {
     Upper,
     Letter,
     Number,
+}
+
+impl CharClass {
+    /// How many classes there are, which is how wide the bonus table a
+    /// [`Config`] holds is.
+    pub(crate) const COUNT: usize = CharClass::Number as usize + 1;
+
+    /// The class `index` stands for, for building a table over all of them.
+    pub(crate) const fn from_index(index: usize) -> Self {
+        match index {
+            0 => CharClass::Whitespace,
+            1 => CharClass::NonWord,
+            2 => CharClass::Delimiter,
+            3 => CharClass::Lower,
+            4 => CharClass::Upper,
+            5 => CharClass::Letter,
+            _ => CharClass::Number,
+        }
+    }
 }
 
 /// Nucleo cannot match graphemes as single units. To work around

@@ -235,6 +235,89 @@ impl Matcher {
         self.fuzzy_matcher_impl::<true>(haystack, needle, indices)
     }
 
+    /// [`Matcher::fuzzy_match`] for an ASCII haystack and needle whose
+    /// prefilter the caller already ran. See [`Matcher::fuzzy_ascii_prefiltered`].
+    pub(crate) fn fuzzy_match_ascii_prefiltered(
+        &mut self,
+        haystack: &[u8],
+        needle: &[u8],
+        start: usize,
+        greedy_end: usize,
+    ) -> Option<u16> {
+        self.fuzzy_ascii_prefiltered::<false>(haystack, needle, start, greedy_end, &mut Vec::new())
+    }
+
+    /// [`Matcher::fuzzy_indices`] for an ASCII haystack and needle whose
+    /// prefilter the caller already ran. See [`Matcher::fuzzy_ascii_prefiltered`].
+    pub(crate) fn fuzzy_indices_ascii_prefiltered(
+        &mut self,
+        haystack: &[u8],
+        needle: &[u8],
+        start: usize,
+        greedy_end: usize,
+        indices: &mut Vec<u32>,
+    ) -> Option<u16> {
+        self.fuzzy_ascii_prefiltered::<true>(haystack, needle, start, greedy_end, indices)
+    }
+
+    /// [`Matcher::fuzzy_match`], and with `INDICES` [`Matcher::fuzzy_indices`],
+    /// for an ASCII haystack and needle whose prefilter the caller already ran.
+    ///
+    /// `start` is the haystack byte the needle's first character matches and
+    /// `greedy_end` one past the byte its last character matches, walking the
+    /// haystack left to right and taking the first byte that fits — the pair
+    /// [`Matcher::prefilter_ascii`] computes, and the one a caller that decides
+    /// whether the needle is a subsequence of the haystack at all has computed
+    /// already. Handing them over is what keeps that walk from happening twice
+    /// per candidate.
+    ///
+    /// The score and indices are the ones [`Matcher::fuzzy_match`] and
+    /// [`Matcher::fuzzy_indices`] report for the same pair, as long as `start`
+    /// and `greedy_end` are that walk's. `needle` must not be empty, and both
+    /// it and `haystack` must be ASCII.
+    fn fuzzy_ascii_prefiltered<const INDICES: bool>(
+        &mut self,
+        haystack: &[u8],
+        needle: &[u8],
+        start: usize,
+        greedy_end: usize,
+        indices: &mut Vec<u32>,
+    ) -> Option<u16> {
+        debug_assert!(!needle.is_empty());
+        debug_assert!(needle.len() <= haystack.len());
+        debug_assert!(haystack.len() <= u32::MAX as usize);
+        if needle.len() == haystack.len() {
+            return self.exact_match_impl::<INDICES>(
+                Utf32Str::Ascii(haystack),
+                Utf32Str::Ascii(needle),
+                0,
+                haystack.len(),
+                indices,
+            );
+        }
+        if let &[needle] = needle {
+            return self.substring_match_1_ascii::<INDICES>(haystack, needle, indices);
+        }
+        let end = self.prefilter_ascii_end(haystack, needle, greedy_end);
+        if needle.len() == end - start {
+            return Some(self.calculate_score::<INDICES, _, _>(
+                AsciiChar::cast(haystack),
+                AsciiChar::cast(needle),
+                start,
+                greedy_end,
+                indices,
+            ));
+        }
+        self.fuzzy_match_optimal::<INDICES, AsciiChar, AsciiChar>(
+            AsciiChar::cast(haystack),
+            AsciiChar::cast(needle),
+            start,
+            greedy_end,
+            end,
+            indices,
+        )
+    }
+
     fn fuzzy_matcher_impl<const INDICES: bool>(
         &mut self,
         haystack_: Utf32Str<'_>,
