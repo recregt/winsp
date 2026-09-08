@@ -117,7 +117,7 @@ impl AppItem {
     }
 }
 
-impl crate::index::IndexableItem for AppItem {
+impl winsp_index::IndexableItem for AppItem {
     fn name(&self) -> &str {
         self.name()
     }

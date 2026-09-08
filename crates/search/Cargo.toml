@@ -9,6 +9,7 @@ authors.workspace = true
 [dependencies]
 compact_str = "0.10"
 winsp-core = { path = "../core" }
+winsp-index = { path = "../index" }
 
 [dev-dependencies]
 criterion = { version = "5.0.1", package = "codspeed-criterion-compat", features = ["html_reports"] }

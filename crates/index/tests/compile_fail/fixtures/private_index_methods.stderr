@@ -1,0 +1,10 @@
+error[E0624]: method `find_into` is private
+  --> tests/compile_fail/fixtures/private_index_methods.rs:24:11
+   |
+24 |     index.find_into("test", 5, &mut out);
+   |           ^^^^^^^^^ private method
+   |
+  ::: src/lib.rs
+   |
+   |     fn find_into(&self, query: &str, limit: usize, out: &mut Vec<Match<T>>) {
+   |     ----------------------------------------------------------------------- private method defined here

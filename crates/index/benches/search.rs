@@ -1,7 +1,31 @@
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
 use criterion::{BatchSize, Bencher, BenchmarkId, Criterion, criterion_group, criterion_main};
 use std::hint::black_box;
-use winsp_core::index::Index;
-use winsp_core::models::{AppItem, LaunchTarget};
+use winsp_index::{Index, IndexableItem};
+
+/// Minimal stand-in for a real launcher item, so this bench exercises only
+/// what [`Index`] itself needs from one.
+struct BenchItem {
+    name: String,
+    keywords: Vec<String>,
+}
+
+impl IndexableItem for BenchItem {
+    fn name(&self) -> &str {
+        &self.name
+    }
+
+    fn keywords(&self) -> &[String] {
+        &self.keywords
+    }
+
+    fn launch_count(&self) -> u32 {
+        0
+    }
+}
 
 const WORDS: &[&str] = &[
     "Advanced",
@@ -36,9 +60,9 @@ const WORDS: &[&str] = &[
     "Inspector",
 ];
 
-fn synthetic_index(size: usize) -> Index<AppItem> {
+fn synthetic_index(size: usize) -> Index<BenchItem> {
     let mut index = Index::new();
-    let items: Vec<AppItem> = (0..size)
+    let items: Vec<BenchItem> = (0..size)
         .map(|i| {
             let name = format!(
                 "{} {} {}",
@@ -46,9 +70,10 @@ fn synthetic_index(size: usize) -> Index<AppItem> {
                 WORDS[(i / WORDS.len()) % WORDS.len()],
                 i
             );
-            let id = format!("bench-app-{i}");
-            AppItem::new(id, name, LaunchTarget::Path(format!("app{i}.exe")))
-                .with_keywords(vec!["tool".into(), "utility".into()])
+            BenchItem {
+                name,
+                keywords: vec!["tool".into(), "utility".into()],
+            }
         })
         .collect();
     index.set_items(items);
@@ -70,7 +95,7 @@ const UNRELATED_QUERY: &str = "zq";
 /// query they just ran. One iteration per batch is also what the search
 /// measures under CodSpeed, which runs the setup right before the one search it
 /// measures, so both runs measure the same thing.
-fn bench_cold_query(b: &mut Bencher, index: &Index<AppItem>, query: &str) {
+fn bench_cold_query(b: &mut Bencher, index: &Index<BenchItem>, query: &str) {
     b.iter_batched(
         || {
             black_box(index.search(UNRELATED_QUERY, 6));

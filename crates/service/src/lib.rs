@@ -4,8 +4,8 @@
 use std::sync::mpsc::Sender;
 use std::sync::{Arc, Mutex, OnceLock};
 
-use winsp_core::index::{Index, Match};
 use winsp_core::models::{AppItem, IconSource, LaunchTarget, SearchResult, SearchResultKind};
+use winsp_index::{Index, Match};
 use winsp_windows::system::watcher::Watcher;
 use winsp_windows::window::{Anchor, Key, Modifiers};
 

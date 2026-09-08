@@ -1,14 +1,39 @@
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use std::hint::black_box;
-use winsp_core::index::Index;
-use winsp_core::models::{AppItem, LaunchTarget};
+use winsp_index::{Index, IndexableItem};
 
 const WORDS: &[&str] = &[
     "Advanced", "Cloud", "Digital", "Media", "System", "File", "Network", "Secure", "Quick",
     "Visual",
 ];
 
-fn synthetic_items(size: usize) -> Vec<AppItem> {
+/// Minimal stand-in for a real launcher item, so this bench exercises only
+/// what [`Index`] itself needs from one.
+#[derive(Clone)]
+struct BenchItem {
+    name: String,
+    keywords: Vec<String>,
+}
+
+impl IndexableItem for BenchItem {
+    fn name(&self) -> &str {
+        &self.name
+    }
+
+    fn keywords(&self) -> &[String] {
+        &self.keywords
+    }
+
+    fn launch_count(&self) -> u32 {
+        0
+    }
+}
+
+fn synthetic_items(size: usize) -> Vec<BenchItem> {
     (0..size)
         .map(|i| {
             let name = format!(
@@ -17,12 +42,10 @@ fn synthetic_items(size: usize) -> Vec<AppItem> {
                 WORDS[(i / 7) % WORDS.len()],
                 i
             );
-            AppItem::new(
-                format!("bench-app-{i}"),
+            BenchItem {
                 name,
-                LaunchTarget::Path(format!("app{i}.exe")),
-            )
-            .with_keywords(vec!["tool".into(), "Utility".into()])
+                keywords: vec!["tool".into(), "utility".into()],
+            }
         })
         .collect()
 }

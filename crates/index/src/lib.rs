@@ -1,8 +1,20 @@
-use nucleo_matcher::chars::{normalize, to_lower_case};
-use nucleo_matcher::{Config, Matcher, Utf32Str};
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
+// `matcher` is a vendored copy of `nucleo-matcher`, whose scoring matrix
+// relies on `unsafe` for a manual arena allocator; everything outside it
+// stays forbidden.
+#![deny(unsafe_code)]
+
+use crate::matcher::chars::{normalize, to_lower_case};
+use crate::matcher::{Config, Matcher, Utf32Str};
 use std::borrow::Cow;
 use std::cell::{RefCell, RefMut};
 use std::sync::Arc;
+
+#[path = "../matcher/mod.rs"]
+mod matcher;
 
 const KEYWORD_MATCH_SCORE: i32 = 5_000;
 const SEARCH_FRECENCY_MULTIPLIER: i64 = 50;
@@ -1477,51 +1489,78 @@ impl NameCeilings {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::models::{AppItem, LaunchTarget};
 
-    fn sample_index() -> Index<AppItem> {
+    /// Minimal stand-in for a real launcher item, so these tests exercise
+    /// only what [`Index`] itself needs from one.
+    #[derive(Clone)]
+    struct TestItem {
+        id: String,
+        name: String,
+        keywords: Vec<String>,
+        launch_count: u32,
+    }
+
+    impl TestItem {
+        fn new(id: impl Into<String>, name: impl Into<String>) -> Self {
+            Self {
+                id: id.into(),
+                name: name.into(),
+                keywords: Vec::new(),
+                launch_count: 0,
+            }
+        }
+
+        fn id(&self) -> &str {
+            &self.id
+        }
+
+        fn with_keywords(mut self, keywords: Vec<String>) -> Self {
+            self.keywords = keywords.into_iter().map(|kw| kw.to_lowercase()).collect();
+            self
+        }
+
+        fn with_launch_count(mut self, launch_count: u32) -> Self {
+            self.launch_count = launch_count;
+            self
+        }
+    }
+
+    impl IndexableItem for TestItem {
+        fn name(&self) -> &str {
+            &self.name
+        }
+
+        fn keywords(&self) -> &[String] {
+            &self.keywords
+        }
+
+        fn launch_count(&self) -> u32 {
+            self.launch_count
+        }
+    }
+
+    fn sample_index() -> Index<TestItem> {
         let mut index = Index::new();
         index.set_items(vec![
-            AppItem::new(
-                "notepad",
-                "Notepad",
-                LaunchTarget::Path("notepad.exe".into()),
-            ),
-            AppItem::new(
-                "vscode",
-                "Visual Studio Code",
-                LaunchTarget::Path("code.exe".into()),
-            ),
-            AppItem::new(
-                "calc",
-                "Calculator",
-                LaunchTarget::OsUri("shell:AppsFolder\\Microsoft.WindowsCalculator".into()),
-            ),
-            AppItem::new(
-                "terminal",
-                "Windows Terminal",
-                LaunchTarget::Path("wt.exe".into()),
-            ),
-            AppItem::new(
-                "chrome",
-                "Google Chrome",
-                LaunchTarget::Path("chrome.exe".into()),
-            )
-            .with_keywords(vec!["browser".into(), "web".into(), "internet".into()]),
-            AppItem::new(
-                "settings",
-                "Windows Settings",
-                LaunchTarget::OsUri("ms-settings:".into()),
-            ),
+            TestItem::new("notepad", "Notepad"),
+            TestItem::new("vscode", "Visual Studio Code"),
+            TestItem::new("calc", "Calculator"),
+            TestItem::new("terminal", "Windows Terminal"),
+            TestItem::new("chrome", "Google Chrome").with_keywords(vec![
+                "browser".into(),
+                "web".into(),
+                "internet".into(),
+            ]),
+            TestItem::new("settings", "Windows Settings"),
         ]);
         index
     }
 
-    fn titles(results: &[Match<AppItem>]) -> Vec<&str> {
+    fn titles(results: &[Match<TestItem>]) -> Vec<&str> {
         results.iter().map(|r| r.item.name()).collect()
     }
 
-    fn named(results: &[Match<AppItem>]) -> Vec<String> {
+    fn named(results: &[Match<TestItem>]) -> Vec<String> {
         results.iter().map(|r| r.item.name().to_string()).collect()
     }
 
@@ -1555,10 +1594,9 @@ mod tests {
     fn test_keyword_score_not_shadowed_by_weak_name_match() {
         let mut index = Index::new();
         index.set_items(vec![
-            AppItem::new(
+            TestItem::new(
                 "scattered",
                 "T z z z z e z z z z r z z z z m z z z z z z z z",
-                LaunchTarget::Path("term.exe".into()),
             )
             .with_keywords(vec!["term".into()]),
         ]);
@@ -1598,13 +1636,8 @@ mod tests {
     fn test_uppercase_and_accented_queries_still_match() {
         let mut index = Index::new();
         index.set_items(vec![
-            AppItem::new(
-                "chrome",
-                "Google Chrome",
-                LaunchTarget::Path("c.exe".into()),
-            )
-            .with_keywords(vec!["BROWSER".into()]),
-            AppItem::new("uber", "Über Editor", LaunchTarget::Path("u.exe".into())),
+            TestItem::new("chrome", "Google Chrome").with_keywords(vec!["BROWSER".into()]),
+            TestItem::new("uber", "Über Editor"),
         ]);
 
         assert_eq!(titles(&index.find("CHROME", 5)), vec!["Google Chrome"]);
@@ -1626,22 +1659,10 @@ mod tests {
     fn test_no_match_is_excluded_even_with_partial_letters() {
         let mut index = Index::new();
         index.set_items(vec![
-            AppItem::new("chrome", "Chrome", LaunchTarget::Path("chrome.exe".into())),
-            AppItem::new(
-                "google-chrome",
-                "Google Chrome",
-                LaunchTarget::Path("chrome.exe".into()),
-            ),
-            AppItem::new(
-                "chromium",
-                "Chromium",
-                LaunchTarget::Path("chromium.exe".into()),
-            ),
-            AppItem::new(
-                "chrome-devtools",
-                "Chrome DevTools",
-                LaunchTarget::Path("chrome.exe".into()),
-            ),
+            TestItem::new("chrome", "Chrome"),
+            TestItem::new("google-chrome", "Google Chrome"),
+            TestItem::new("chromium", "Chromium"),
+            TestItem::new("chrome-devtools", "Chrome DevTools"),
         ]);
 
         let results = index.find("chrome", 10);
@@ -1659,10 +1680,9 @@ mod tests {
     fn test_a_name_holding_the_query_out_of_order_is_no_match() {
         let mut index = Index::new();
         index.set_items(vec![
-            AppItem::new("dcoe", "Dcoe", LaunchTarget::Path("dcoe.exe".into())),
-            AppItem::new("code", "Code", LaunchTarget::Path("code.exe".into())),
-            AppItem::new("oecd", "Oecd", LaunchTarget::Path("oecd.exe".into()))
-                .with_keywords(vec!["code".into()]),
+            TestItem::new("dcoe", "Dcoe"),
+            TestItem::new("code", "Code"),
+            TestItem::new("oecd", "Oecd").with_keywords(vec!["code".into()]),
         ]);
 
         // Highest first, so the keyword match leads and the name that holds the
@@ -1675,12 +1695,8 @@ mod tests {
     fn test_prefix_outranks_acronym() {
         let mut index = Index::new();
         index.set_items(vec![
-            AppItem::new("vscode", "VS Code", LaunchTarget::Path("code.exe".into())),
-            AppItem::new(
-                "vstudio",
-                "Visual Studio",
-                LaunchTarget::Path("devenv.exe".into()),
-            ),
+            TestItem::new("vscode", "VS Code"),
+            TestItem::new("vstudio", "Visual Studio"),
         ]);
 
         let results = index.find("vs", 5);
@@ -1691,12 +1707,8 @@ mod tests {
     fn test_acronym_outranks_substring() {
         let mut index = Index::new();
         index.set_items(vec![
-            AppItem::new(
-                "open-office-go",
-                "Open Office Go",
-                LaunchTarget::Path("oog.exe".into()),
-            ),
-            AppItem::new("google", "Google", LaunchTarget::Path("chrome.exe".into())),
+            TestItem::new("open-office-go", "Open Office Go"),
+            TestItem::new("google", "Google"),
         ]);
 
         let results = index.find("oog", 5);
@@ -1707,16 +1719,8 @@ mod tests {
     fn test_word_start_bonus_can_outrank_a_midword_substring() {
         let mut index = Index::new();
         index.set_items(vec![
-            AppItem::new(
-                "notepad",
-                "Notepad",
-                LaunchTarget::Path("notepad.exe".into()),
-            ),
-            AppItem::new(
-                "paint-design",
-                "Paint Design",
-                LaunchTarget::Path("paint.exe".into()),
-            ),
+            TestItem::new("notepad", "Notepad"),
+            TestItem::new("paint-design", "Paint Design"),
         ]);
 
         let results = index.find("pad", 5);
@@ -1727,17 +1731,8 @@ mod tests {
     fn test_keyword_match_outranks_a_weak_fuzzy_name_match() {
         let mut index = Index::new();
         index.set_items(vec![
-            AppItem::new(
-                "rand-setup",
-                "Random Windows Setup",
-                LaunchTarget::Path("setup.exe".into()),
-            ),
-            AppItem::new(
-                "chrome",
-                "Google Chrome",
-                LaunchTarget::Path("chrome.exe".into()),
-            )
-            .with_keywords(vec!["browser".into()]),
+            TestItem::new("rand-setup", "Random Windows Setup"),
+            TestItem::new("chrome", "Google Chrome").with_keywords(vec!["browser".into()]),
         ]);
 
         let results = index.find("rows", 5);
@@ -1749,9 +1744,8 @@ mod tests {
 
     #[test]
     fn test_frecency_breaks_ties_between_identical_names() {
-        let popular =
-            AppItem::new("a", "Test App", LaunchTarget::Path("a.exe".into())).with_launch_count(10);
-        let rare = AppItem::new("b", "Test App", LaunchTarget::Path("b.exe".into()));
+        let popular = TestItem::new("a", "Test App").with_launch_count(10);
+        let rare = TestItem::new("b", "Test App");
 
         let mut index = Index::new();
         index.set_items(vec![rare, popular]);
@@ -1763,11 +1757,10 @@ mod tests {
 
     #[test]
     fn test_frecency_applies_to_keyword_matches_too() {
-        let popular = AppItem::new("a", "Aardvark Tool", LaunchTarget::Path("a.exe".into()))
+        let popular = TestItem::new("a", "Aardvark Tool")
             .with_keywords(vec!["zzzmatch".into()])
             .with_launch_count(10);
-        let rare = AppItem::new("b", "Yak Tool", LaunchTarget::Path("b.exe".into()))
-            .with_keywords(vec!["zzzmatch".into()]);
+        let rare = TestItem::new("b", "Yak Tool").with_keywords(vec!["zzzmatch".into()]);
 
         let mut index = Index::new();
         index.set_items(vec![rare, popular]);
@@ -1781,12 +1774,7 @@ mod tests {
     fn test_keyword_matching_normalizes_case_at_construction_time() {
         let mut index = Index::new();
         index.set_items(vec![
-            AppItem::new(
-                "chrome",
-                "Google Chrome",
-                LaunchTarget::Path("chrome.exe".into()),
-            )
-            .with_keywords(vec!["BROWSER".into()]),
+            TestItem::new("chrome", "Google Chrome").with_keywords(vec!["BROWSER".into()]),
         ]);
 
         let results = index.find("browser", 5);
@@ -1798,12 +1786,8 @@ mod tests {
     fn test_unicode_names_match_case_insensitively_with_correct_indices() {
         let mut index = Index::new();
         index.set_items(vec![
-            AppItem::new("cafe", "Café", LaunchTarget::Path("cafe.exe".into())),
-            AppItem::new(
-                "nihongo",
-                "日本語アプリ",
-                LaunchTarget::Path("nihongo.exe".into()),
-            ),
+            TestItem::new("cafe", "Café"),
+            TestItem::new("nihongo", "日本語アプリ"),
         ]);
 
         let results = index.find("CAF", 5);
@@ -1825,7 +1809,7 @@ mod tests {
     /// mid-scan, and are checked cold and typed.
     #[test]
     fn test_highlights_are_the_characters_the_matcher_reports() {
-        let items: Vec<AppItem> = (0..800u32)
+        let items: Vec<TestItem> = (0..800u32)
             .map(|i| {
                 let name = match i % 5 {
                     0 => format!("Visual Studio {i}"),
@@ -1834,13 +1818,9 @@ mod tests {
                     3 => format!("Vidéo Aperçu {i}"),
                     _ => format!("aVi{i} Viewer"),
                 };
-                AppItem::new(
-                    format!("id-{i}"),
-                    name,
-                    LaunchTarget::Path(format!("{i}.exe")),
-                )
-                .with_keywords(vec!["tool".into()])
-                .with_launch_count(i / 100)
+                TestItem::new(format!("id-{i}"), name)
+                    .with_keywords(vec!["tool".into()])
+                    .with_launch_count(i / 100)
             })
             .collect();
 
@@ -1849,7 +1829,7 @@ mod tests {
 
         // A handful of items, where every match the scan scores fits in the
         // budget and the window is highlighted from what the scan collected.
-        let narrow: Vec<AppItem> = [
+        let narrow: Vec<TestItem> = [
             "Visual Studio Code",
             "Video Ace",
             "visual-basic",
@@ -1860,12 +1840,7 @@ mod tests {
         .iter()
         .enumerate()
         .map(|(i, name)| {
-            AppItem::new(
-                format!("narrow-{i}"),
-                *name,
-                LaunchTarget::Path(format!("{i}.exe")),
-            )
-            .with_keywords(vec!["tool".into()])
+            TestItem::new(format!("narrow-{i}"), *name).with_keywords(vec!["tool".into()])
         })
         .collect();
         let mut narrow_typed = Index::new();
@@ -1924,8 +1899,7 @@ mod tests {
 
     #[test]
     fn test_extreme_launch_count_does_not_panic_or_go_negative() {
-        let item = AppItem::new("bulk", "Bulk App", LaunchTarget::Path("bulk.exe".into()))
-            .with_launch_count(u32::MAX);
+        let item = TestItem::new("bulk", "Bulk App").with_launch_count(u32::MAX);
         let mut index = Index::new();
         index.add_item(item);
 
@@ -1941,11 +1915,7 @@ mod tests {
     #[test]
     fn test_query_with_multi_char_unicode_lowercase_expansion_still_matches() {
         let mut index = Index::new();
-        index.set_items(vec![AppItem::new(
-            "istanbul",
-            "İstanbul Maps",
-            LaunchTarget::Path("istanbul.exe".into()),
-        )]);
+        index.set_items(vec![TestItem::new("istanbul", "İstanbul Maps")]);
 
         let results = index.find("İ", 5);
         assert_eq!(results.len(), 1);
@@ -1996,20 +1966,15 @@ mod tests {
     fn test_typing_matches_a_cold_search_past_the_narrowing_capacity() {
         // Wide enough that early keystrokes match more items than the engine
         // keeps, which forces the following keystroke back to a full scan.
-        fn large_index() -> Index<AppItem> {
-            let items: Vec<AppItem> = (0..500)
+        fn large_index() -> Index<TestItem> {
+            let items: Vec<TestItem> = (0..500)
                 .map(|i| {
                     let name = match i % 3 {
                         0 => format!("Visual Studio {i}"),
                         1 => format!("Video Editor {i}"),
                         _ => format!("Notepad {i}"),
                     };
-                    AppItem::new(
-                        format!("id-{i}"),
-                        name,
-                        LaunchTarget::Path(format!("{i}.exe")),
-                    )
-                    .with_keywords(vec!["tool".into()])
+                    TestItem::new(format!("id-{i}"), name).with_keywords(vec!["tool".into()])
                 })
                 .collect();
             let mut index = Index::new();
@@ -2052,18 +2017,10 @@ mod tests {
         let mut index = sample_index();
         assert!(titles(&index.find("vis", 5)).contains(&"Visual Studio Code"));
 
-        index.add_item(AppItem::new(
-            "vim",
-            "Vim",
-            LaunchTarget::Path("vim.exe".into()),
-        ));
+        index.add_item(TestItem::new("vim", "Vim"));
         assert!(titles(&index.find("vi", 5)).contains(&"Vim"));
 
-        index.set_items(vec![AppItem::new(
-            "gimp",
-            "GIMP",
-            LaunchTarget::Path("gimp.exe".into()),
-        )]);
+        index.set_items(vec![TestItem::new("gimp", "GIMP")]);
         assert_eq!(titles(&index.find("gi", 5)), vec!["GIMP"]);
 
         index.clear();
@@ -2071,7 +2028,7 @@ mod tests {
     }
 
     /// Same scoring rules as [`ScanTable::best_matches`], without any prefilter.
-    fn reference_titles(items: &[AppItem], query: &str) -> Vec<String> {
+    fn reference_titles(items: &[TestItem], query: &str) -> Vec<String> {
         let mut config = Config::DEFAULT;
         config.ignore_case = true;
         let mut matcher = Matcher::new(config);
@@ -2107,16 +2064,15 @@ mod tests {
             "system-monitor",
             "Файл Менеджер",
         ];
-        let items: Vec<AppItem> = names
+        let items: Vec<TestItem> = names
             .iter()
             .enumerate()
             .map(|(i, name)| {
-                AppItem::new(
-                    format!("id-{i}"),
-                    *name,
-                    LaunchTarget::Path(format!("{i}.exe")),
-                )
-                .with_keywords(vec!["Tool".into(), "Café".into(), "42".into()])
+                TestItem::new(format!("id-{i}"), *name).with_keywords(vec![
+                    "Tool".into(),
+                    "Café".into(),
+                    "42".into(),
+                ])
             })
             .collect();
 
@@ -2164,16 +2120,11 @@ mod tests {
     fn test_masks_never_drop_a_match_over_random_input() {
         let names = random_strings(64, 12, 0x5eed);
         let keywords = random_strings(64, 6, 0xc0ffee);
-        let items: Vec<AppItem> = names
+        let items: Vec<TestItem> = names
             .iter()
             .enumerate()
             .map(|(i, name)| {
-                AppItem::new(
-                    format!("id-{i}"),
-                    name.as_str(),
-                    LaunchTarget::Path(format!("{i}.exe")),
-                )
-                .with_keywords(vec![
+                TestItem::new(format!("id-{i}"), name.as_str()).with_keywords(vec![
                     keywords[i].clone(),
                     keywords[(i + 1) % keywords.len()].clone(),
                 ])
@@ -2250,8 +2201,7 @@ mod tests {
     fn test_keyword_mask_holds_only_what_a_keyword_can_match() {
         let mut table = ScanTable::default();
         table.push(
-            &AppItem::new("id", "Name", LaunchTarget::Path("n.exe".into()))
-                .with_keywords(vec!["tool".into(), "utility".into()]),
+            &TestItem::new("id", "Name").with_keywords(vec!["tool".into(), "utility".into()]),
         );
 
         let keyword_mask = (table.prefilter[0] >> KEYWORD_MASK_SHIFT) as u32 & ALL_CHARS;
@@ -2447,7 +2397,7 @@ mod tests {
     fn test_score_ceiling_never_prunes_a_result_a_full_scan_would_keep() {
         // Wider than the match set the engine is willing to keep, so the scan
         // gives up narrowing and the ceiling starts dropping items.
-        let items: Vec<AppItem> = (0..800u32)
+        let items: Vec<TestItem> = (0..800u32)
             .map(|i| {
                 let name = match i % 5 {
                     0 => format!("Visual Studio {i}"),
@@ -2456,16 +2406,12 @@ mod tests {
                     3 => format!("Vidéo Aperçu {i}"),
                     _ => format!("aVi{i} Viewer"),
                 };
-                AppItem::new(
-                    format!("id-{i}"),
-                    name,
-                    LaunchTarget::Path(format!("{i}.exe")),
-                )
-                .with_keywords(vec!["tool".into()])
-                // Frecency climbs with the item index, so the results a full
-                // scan keeps are the ones a scan that prunes too eagerly would
-                // never reach.
-                .with_launch_count(i / 100)
+                TestItem::new(format!("id-{i}"), name)
+                    .with_keywords(vec!["tool".into()])
+                    // Frecency climbs with the item index, so the results a full
+                    // scan keeps are the ones a scan that prunes too eagerly would
+                    // never reach.
+                    .with_launch_count(i / 100)
             })
             .collect();
 
@@ -2489,7 +2435,7 @@ mod tests {
     /// The `limit` best matches for `query`, scored the way
     /// [`ScanTable::scan`] scores them but without any prefilter or bound, and
     /// ordered the way [`keep_best`] orders them.
-    fn reference_ranking(items: &[AppItem], query: &str, limit: usize) -> Vec<String> {
+    fn reference_ranking(items: &[TestItem], query: &str, limit: usize) -> Vec<String> {
         let mut config = Config::DEFAULT;
         config.ignore_case = true;
         let mut matcher = Matcher::new(config);
@@ -2530,8 +2476,7 @@ mod tests {
     #[test]
     fn test_empty_query_lists_top_items() {
         let mut index = Index::new();
-        let popular = AppItem::new("a", "Popular App", LaunchTarget::Path("a.exe".into()))
-            .with_launch_count(10);
+        let popular = TestItem::new("a", "Popular App").with_launch_count(10);
         index.set_items(vec![popular]);
 
         let results = index.search("", 5);
@@ -2542,11 +2487,7 @@ mod tests {
     #[test]
     fn test_zero_limit_yields_no_results_for_top_items_and_a_search() {
         let mut index = Index::new();
-        index.set_items(vec![AppItem::new(
-            "a",
-            "Calculator",
-            LaunchTarget::Path("calc.exe".into()),
-        )]);
+        index.set_items(vec![TestItem::new("a", "Calculator")]);
 
         assert!(index.search("", 0).is_empty());
         assert!(index.search("calc", 0).is_empty());

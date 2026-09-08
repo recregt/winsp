@@ -41,13 +41,13 @@ jobs:
         run: cargo fmt --all -- --check
 
       - name: Clippy
-        run: cargo clippy -p winsp-core -p winsp-search --all-targets --locked -- -D warnings
+        run: cargo clippy -p winsp-core -p winsp-index -p winsp-search --all-targets --locked -- -D warnings
 
       - name: Machete
         run: cargo machete
 
       - name: Test
-        run: cargo test -p winsp-core -p winsp-search --locked -- --show-output
+        run: cargo test -p winsp-core -p winsp-index -p winsp-search --locked -- --show-output
 
   windows:
     name: Build and test (windows)

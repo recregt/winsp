@@ -1,7 +1,7 @@
 use criterion::{BatchSize, Bencher, Criterion, criterion_group, criterion_main};
 use std::hint::black_box;
-use winsp_core::index::{Index, Match};
 use winsp_core::models::{AppItem, LaunchTarget, SearchResult};
+use winsp_index::{Index, Match};
 
 const WORDS: &[&str] = &[
     "Advanced", "Cloud", "Digital", "Media", "System", "File", "Network", "Secure", "Quick",
