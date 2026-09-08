@@ -17,15 +17,16 @@ use windows::Win32::UI::HiDpi::{
 };
 use windows::Win32::UI::Input::KeyboardAndMouse::{MOD_NOREPEAT, RegisterHotKey, UnregisterHotKey};
 use windows::Win32::UI::WindowsAndMessaging::{
-    CREATESTRUCTW, CS_HREDRAW, CS_VREDRAW, CreateWindowExW, DefWindowProcW, DestroyWindow,
-    DispatchMessageW, GWLP_USERDATA, GetClientRect, GetCursorPos, GetMessageW, GetSystemMetrics,
-    GetWindowLongPtrW, GetWindowRect, HCURSOR, HICON, HWND_TOPMOST, IDC_ARROW, IsWindowVisible,
-    LoadCursorW, LoadIconW, MSG, PM_NOREMOVE, PM_REMOVE, PeekMessageW, PostMessageW,
-    PostQuitMessage, RegisterClassExW, SM_CXSCREEN, SM_CYSCREEN, SPI_GETWORKAREA, SW_HIDE, SW_SHOW,
-    SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SetForegroundWindow, SetWindowLongPtrW, SetWindowPos,
-    ShowWindow, SystemParametersInfoW, TranslateMessage, WM_APP, WM_CHAR, WM_COMMAND, WM_DESTROY,
-    WM_ERASEBKGND, WM_HOTKEY, WM_KEYDOWN, WM_KILLFOCUS, WM_NCCREATE, WM_PAINT, WM_RBUTTONUP,
-    WM_SYSKEYDOWN, WNDCLASSEXW, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP,
+    CREATESTRUCTW, CS_DROPSHADOW, CS_HREDRAW, CS_VREDRAW, CreateWindowExW, DefWindowProcW,
+    DestroyWindow, DispatchMessageW, GWLP_USERDATA, GetClientRect, GetCursorPos, GetMessageW,
+    GetSystemMetrics, GetWindowLongPtrW, GetWindowRect, HCURSOR, HICON, HWND_TOPMOST, IDC_ARROW,
+    IsWindowVisible, LoadCursorW, LoadIconW, MSG, PM_NOREMOVE, PM_REMOVE, PeekMessageW,
+    PostMessageW, PostQuitMessage, RegisterClassExW, SM_CXSCREEN, SM_CYSCREEN, SPI_GETWORKAREA,
+    SW_HIDE, SW_SHOW, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SetForegroundWindow,
+    SetWindowLongPtrW, SetWindowPos, ShowWindow, SystemParametersInfoW, TranslateMessage, WM_APP,
+    WM_CHAR, WM_COMMAND, WM_DESTROY, WM_ERASEBKGND, WM_HOTKEY, WM_KEYDOWN, WM_KILLFOCUS,
+    WM_NCCREATE, WM_PAINT, WM_RBUTTONUP, WM_SYSKEYDOWN, WNDCLASSEXW, WS_EX_TOOLWINDOW,
+    WS_EX_TOPMOST, WS_POPUP,
 };
 use windows::core::{HSTRING, PCWSTR};
 
@@ -245,7 +246,7 @@ impl Window {
 
             let wnd_class = WNDCLASSEXW {
                 cbSize: std::mem::size_of::<WNDCLASSEXW>() as u32,
-                style: CS_HREDRAW | CS_VREDRAW,
+                style: CS_HREDRAW | CS_VREDRAW | CS_DROPSHADOW,
                 lpfnWndProc: Some(dispatch),
                 cbClsExtra: 0,
                 cbWndExtra: 0,
