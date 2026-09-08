@@ -7,25 +7,14 @@ use winsp_core::models::{AppItem, LaunchTarget};
 use crate::shortcut;
 
 fn start_menu_dirs() -> Vec<PathBuf> {
-    let mut dirs = Vec::new();
-
-    if let Ok(app_data) = std::env::var("APPDATA") {
-        dirs.push(format!(
-            "{}\\Microsoft\\Windows\\Start Menu\\Programs",
-            app_data
-        ));
-    }
-    if let Ok(program_data) = std::env::var("ProgramData") {
-        dirs.push(format!(
-            "{}\\Microsoft\\Windows\\Start Menu\\Programs",
-            program_data
-        ));
-    }
-
-    dirs.into_iter()
-        .map(PathBuf::from)
-        .filter(|p| p.exists())
-        .collect()
+    [
+        winsp_windows::system::known_folders::user_start_menu_programs(),
+        winsp_windows::system::known_folders::common_start_menu_programs(),
+    ]
+    .into_iter()
+    .flatten()
+    .filter(|p| p.exists())
+    .collect()
 }
 
 struct ScannedShortcut {
