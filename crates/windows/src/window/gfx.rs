@@ -1,10 +1,10 @@
 use windows::Win32::Foundation::{COLORREF, RECT, SIZE};
 use windows::Win32::Graphics::Gdi::{
     AddFontMemResourceEx, CLEARTYPE_QUALITY, CreateFontW, CreatePen, CreateSolidBrush,
-    DEFAULT_GUI_FONT, DT_CENTER, DT_LEFT, DT_SINGLELINE, DT_VCENTER, DeleteObject, DrawTextW,
-    FONT_CHARSET, FONT_CLIP_PRECISION, FONT_OUTPUT_PRECISION, FW_NORMAL, FW_SEMIBOLD, FillRect,
-    GetStockObject, GetTextExtentPoint32W, HDC, HFONT, HGDIOBJ, LineTo, MoveToEx, PS_SOLID,
-    SelectObject, SetTextColor,
+    DEFAULT_GUI_FONT, DT_CENTER, DT_LEFT, DT_PATH_ELLIPSIS, DT_SINGLELINE, DT_VCENTER,
+    DeleteObject, DrawTextW, FONT_CHARSET, FONT_CLIP_PRECISION, FONT_OUTPUT_PRECISION, FW_NORMAL,
+    FW_SEMIBOLD, FillRect, GetStockObject, GetTextExtentPoint32W, HDC, HFONT, HGDIOBJ, LineTo,
+    MoveToEx, PS_SOLID, SelectObject, SetTextColor,
 };
 use windows::Win32::UI::WindowsAndMessaging::{DI_NORMAL, DrawIconEx, HICON};
 use windows::core::HSTRING;
@@ -98,6 +98,22 @@ impl Canvas {
                 &mut wide,
                 &mut gdi_rect,
                 DT_LEFT | DT_SINGLELINE | DT_VCENTER,
+            );
+        }
+    }
+
+    /// Like [`Canvas::draw_text`], but shortens text that doesn't fit `rect`
+    /// with a path-aware ellipsis (keeps the start and the final segment,
+    /// e.g. a file name) instead of hard-clipping it at the rect boundary.
+    pub fn draw_text_ellipsized(&self, text: &str, rect: Rect) {
+        unsafe {
+            let mut wide: Vec<u16> = text.encode_utf16().collect();
+            let mut gdi_rect: RECT = rect.to_win32();
+            DrawTextW(
+                self.hdc,
+                &mut wide,
+                &mut gdi_rect,
+                DT_LEFT | DT_SINGLELINE | DT_VCENTER | DT_PATH_ELLIPSIS,
             );
         }
     }
@@ -358,6 +374,30 @@ mod tests {
         );
 
         assert!(surface.contains_pixel_other_than(Color(0x00000000)));
+    }
+
+    #[test]
+    fn draw_text_ellipsized_paints_long_text_into_a_narrow_rect() {
+        let surface = OffscreenSurface::new(60, 20);
+        let canvas = surface.canvas();
+        let font = Font::new("Arial", 14, FontWeight::Normal);
+
+        let _font_guard = canvas.select_font(&font);
+        canvas.set_text_color(Color(0x00FFFFFF));
+        canvas.draw_text_ellipsized(
+            r"C:\Program Files (x86)\SomeVendor\SomeProduct\1.2.3\bin\app.exe",
+            Rect {
+                left: 0,
+                top: 0,
+                right: 60,
+                bottom: 20,
+            },
+        );
+
+        assert!(
+            surface.contains_pixel_other_than(Color(0x00000000)),
+            "text too long for the rect should still be painted, just shortened"
+        );
     }
 
     #[test]
