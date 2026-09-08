@@ -386,18 +386,31 @@ impl<'a> Needles<'a> {
     }
 }
 
-/// Complete match set of the last query, kept so the next keystroke can rescan
-/// those items only.
+/// Items the last query could not rule out, kept so the next keystroke can
+/// rescan those alone.
+///
+/// A superset of what the query matched, and only ever read as one: the scan
+/// that reads it puts every item it holds through the same prefilter and the
+/// same matcher a full scan would, so an item in here that never matched
+/// anything is scanned and dropped exactly as it would have been. What the set
+/// must not do is miss an item the next query matches, which is what
+/// [`narrows`] establishes, and it holds for a superset the same way it holds
+/// for the match set itself.
+///
+/// Recording a superset is what makes the set nearly free to build: the items
+/// the score ceiling drops go in on the strength of the character mask alone,
+/// without the walk over the name it would take to prove the match.
 struct Narrowing {
     query: String,
     items: Vec<u32>,
 }
 
 /// Whether the items matching `query` are a subset of the ones that matched
-/// `previous`. Appending characters to a query can only shrink the match set:
-/// fuzzy name matching needs the needle to be a subsequence of the name, and
-/// keyword matching needs the query to be a substring of a keyword, and both
-/// still hold for any prefix of the query.
+/// `previous`, and therefore of anything recorded for `previous`. Appending
+/// characters to a query can only shrink the match set: fuzzy name matching
+/// needs the needle to be a subsequence of the name, and keyword matching needs
+/// the query to be a substring of a keyword, and both still hold for any prefix
+/// of the query.
 ///
 /// Restricted to ASCII queries because `str::to_lowercase`, which the keyword
 /// comparison uses, is context sensitive: a final sigma lowercases differently
@@ -411,12 +424,21 @@ fn narrows(previous: &str, query: &str) -> bool {
 /// list costs a cache miss per item, where a full scan streams through the
 /// columnar buffers, so a barely narrowed set is not worth reusing. Small
 /// indexes are scanned quickly either way, hence the floor.
+///
+/// A share of the index rather than a count, and a wider one than the exact
+/// match set needed: what is recorded is every item the character mask lets
+/// through, and about half of those fail the order test a real match has to
+/// pass, so the same reach costs roughly twice the room. Measured natively on
+/// the typing benchmarks, an eighth of the index gives the set up on keystrokes
+/// a quarter still narrows — `keystroke[vis]` reads 10.4 µs against 5.6 µs, and
+/// a whole typing session 72 µs against 62 µs.
 fn narrowing_capacity(items: usize) -> usize {
-    (items / 8).max(64)
+    (items / 4).max(64)
 }
 
-/// What one scan produced: the best `limit` candidates, and the complete match
-/// set when it is small enough to narrow the next scan with. The characters
+/// What one scan produced: the best `limit` candidates, and the items it could
+/// not rule out, when there are few enough of them to narrow the next scan
+/// with. The characters
 /// those candidates matched stay in the table's [`ScanScratch`], which each of
 /// them holds a slot of.
 struct Scan {
@@ -511,10 +533,10 @@ struct ScanTable {
     /// [`ScanRow::launch_count`] so the no-query path scans 4 bytes per item.
     launch_counts: Vec<u32>,
     rows: Vec<ScanRow>,
-    /// The match set of an earlier search, emptied, for the next one to fill
-    /// again. A scan records every item it matched so the next keystroke can
-    /// rescan those alone, and growing that set from nothing was a chain of
-    /// reallocations on every keystroke.
+    /// The narrowing set of an earlier search, emptied, for the next one to
+    /// fill again. A scan records the items it could not rule out so the next
+    /// keystroke can rescan those alone, and growing that set from nothing was
+    /// a chain of reallocations on every keystroke.
     spare_matched: RefCell<Vec<u32>>,
     /// The buffers a scan fills and empties again: kept here, and not in the
     /// scan, so a keystroke reuses them instead of allocating its own.
@@ -914,7 +936,7 @@ impl ScanTable {
     /// The selection is a bounded insertion, which assumes the small result
     /// limits a launcher UI asks for.
     ///
-    /// `narrowed`, when given, is the complete match set of a query this one
+    /// `narrowed`, when given, holds every item that matched a query this one
     /// extends, and replaces the index as the set of items to score.
     fn best_matches(
         &self,
@@ -1035,10 +1057,13 @@ impl ScanTable {
         // makes below, on a value that can only be larger, so the ranking stays
         // the one an unpruned scan produces.
         //
-        // A dropped item still has to go into the match set the next keystroke
-        // narrows its scan with, which takes deciding whether it matches at all
-        // — much less work than scoring it, but not always possible without the
-        // matcher, in which case it is scored after all.
+        // A dropped item still has to go into the set the next keystroke
+        // narrows its scan with, and it goes in on the strength of the mask
+        // alone: the set only has to hold every item that matches, not only
+        // those, so an item the mask let through is recorded without deciding
+        // whether it really matches. Proving that took a walk over the name for
+        // every item a wide query let through, which was the single most
+        // expensive thing left in a keystroke.
         //
         // The mask test stays inline here, flat, even though everything the
         // scored path holds is live across it and the three values it compares
@@ -1060,18 +1085,15 @@ impl ScanTable {
                 continue;
             }
 
-            if let Some(is_match) = ruled_out_unscored(
+            if ruled_out_unscored(
                 self,
                 idx,
                 name_possible,
                 keyword_possible,
                 &query,
                 state.top[limit - 1].score,
-                state.matched.is_some(),
             ) {
-                if is_match {
-                    record_match(&mut state.matched, state.capacity, idx);
-                }
+                record_match(&mut state.matched, state.capacity, idx);
                 continue;
             }
 
@@ -1216,10 +1238,10 @@ struct ScanState<'m> {
     /// candidates matched, as far as the scan collected them, and the room a
     /// name that is not ASCII is decoded in.
     scratch: &'m mut ScanScratch,
-    /// Every item matched so far, until there are more of them than narrowing
-    /// the next scan with is worth.
+    /// Every item this scan could not rule out, until there are more of them
+    /// than narrowing the next scan with is worth.
     matched: Option<Vec<u32>>,
-    /// How many items the match set is willing to hold.
+    /// How many items the narrowing set is willing to hold.
     capacity: usize,
     /// How many candidates the shortlist keeps.
     limit: usize,
@@ -1239,15 +1261,9 @@ struct Query<'a> {
     ascii_needle: Option<&'a [u8]>,
 }
 
-/// Whether the score ceiling rules `row` out, and if so whether the match set
-/// still being built wants it, which is all a ruled out item is still asked for.
-/// `None` leaves the item to be scored: either the ceiling does not rule it out,
-/// or deciding the match needs the matcher after all.
-///
-/// `collecting` says whether the match set is still alive. Once it has been
-/// given up, a ruled out item is not going anywhere, so whether it matches is
-/// nothing anyone reads and deciding it is work the scan can skip — which is
-/// what the rest of a scan over an index that matches the query widely does.
+/// Whether the score ceiling puts this item out of reach of the shortlist, so
+/// that scoring it would only confirm what the bound already says. `false`
+/// leaves the item to be scored.
 ///
 /// Kept out of line, like the rest of what only some items reach: the scan loop
 /// calls this once the shortlist is full, and a scan whose shortlist never fills
@@ -1260,8 +1276,7 @@ fn ruled_out_unscored(
     keyword_possible: bool,
     query: &Query<'_>,
     cutoff: i32,
-    collecting: bool,
-) -> Option<bool> {
+) -> bool {
     // The two things a name match competes with: a keyword match, which scores
     // a flat `KEYWORD_MATCH_SCORE`, and the item's frecency, which is added to
     // either.
@@ -1287,40 +1302,14 @@ fn ruled_out_unscored(
         // mask lives in the row rather than in the word the prefilter streams
         // for every item of the index.
         if !name_possible || !ruled_out(query.name_ceilings.of(row.boundary_mask())) {
-            return None;
+            return false;
         }
     }
-    if !collecting {
-        return Some(false);
-    }
-
-    let by_name = match (name_possible, query.ascii_needle) {
-        (false, _) => false,
-        // An ASCII name holds an ASCII needle exactly when the needle is a
-        // subsequence of it, which is what the matcher's own prefilter decides
-        // before it scores anything.
-        (true, Some(needle)) if row.name_is_ascii() => {
-            let name = &table.names.as_bytes()[row.name_start as usize..row.name_end as usize];
-            is_subsequence_ignore_ascii_case(name, needle)
-        }
-        // A needle that is not ASCII never matches an ASCII name, since
-        // normalizing one leaves it as it is.
-        (true, None) if row.name_is_ascii() => false,
-        // Anything else has to be normalized before it can be compared, which
-        // is the matcher's job.
-        (true, _) => return None,
-    };
-
-    let by_keyword = keyword_possible && {
-        let keywords = &table.keywords[row.keywords_start as usize..row.keywords_end as usize];
-        keywords.contains(query.lowercased)
-    };
-
-    Some(by_name || by_keyword)
+    true
 }
 
-/// Records `idx` in the match set the next keystroke narrows its scan with, or
-/// gives the set up once it holds more items than that is worth.
+/// Records `idx` in the set the next keystroke narrows its scan with, or gives
+/// the set up once it holds more items than that is worth.
 fn record_match(matched: &mut Option<Vec<u32>>, capacity: usize, idx: u32) {
     if let Some(items) = matched {
         if items.len() == capacity {
@@ -1344,34 +1333,6 @@ fn case_fold_bit(wanted: u8) -> u8 {
     } else {
         0
     }
-}
-
-/// Whether `needle`, which is ASCII and already lowercase, appears in
-/// `haystack` as a subsequence, ignoring case.
-///
-/// Written out rather than deferred to [`subsequence_ignore_ascii_case`], whose
-/// answer this is a part of: this one is what the pruning path calls for every
-/// item a wide query lets through, and it walks the name once where the other
-/// restarts a search per needle character. Reusing the other cost a keystroke
-/// against a ten thousand item index 10%.
-fn is_subsequence_ignore_ascii_case(haystack: &[u8], needle: &[u8]) -> bool {
-    let mut needle = needle.iter().copied();
-    let Some(mut wanted) = needle.next() else {
-        return true;
-    };
-    let mut fold = case_fold_bit(wanted);
-    for &byte in haystack {
-        if byte | fold == wanted {
-            match needle.next() {
-                Some(next) => {
-                    wanted = next;
-                    fold = case_fold_bit(next);
-                }
-                None => return true,
-            }
-        }
-    }
-    false
 }
 
 /// Where `needle`, which is ASCII and already lowercase, appears in `haystack`
@@ -2043,6 +2004,45 @@ mod tests {
                 titles(&cold.find(query, 6)),
                 "query: {query:?}"
             );
+        }
+    }
+
+    /// The set a keystroke narrows the next scan with holds every item the
+    /// character mask let through, not only the ones that matched, so most of
+    /// what a session rescans never matched anything. Names spelled from the
+    /// query's own characters in the wrong order are exactly that case: the
+    /// mask cannot tell them apart from a real match, and the ranking still has
+    /// to be the one a cold search produces.
+    #[test]
+    fn test_typing_matches_a_cold_search_over_a_set_of_non_matches() {
+        fn scrambled_index() -> (Vec<TestItem>, Index<TestItem>) {
+            let items: Vec<TestItem> = (0..400)
+                .map(|i| {
+                    let name = match i % 4 {
+                        0 => format!("Visual Studio {i}"),
+                        // Every character the query holds, never in its order.
+                        1 => format!("Lausiv Oidut {i}"),
+                        2 => format!("laVsui doitus {i}"),
+                        _ => format!("Suital Vodius {i}"),
+                    };
+                    TestItem::new(format!("id-{i}"), name)
+                        .with_keywords(vec!["tool".into()])
+                        .with_launch_count(i as u32 / 50)
+                })
+                .collect();
+            let mut index = Index::new();
+            index.set_items(items.clone());
+            (items, index)
+        }
+
+        let session = "visual studio";
+        let (items, typed) = scrambled_index();
+        for (offset, ch) in session.char_indices() {
+            let query = &session[..offset + ch.len_utf8()];
+            let (_, cold) = scrambled_index();
+            let expected = reference_ranking(&items, query, 6);
+            assert_eq!(named(&cold.find(query, 6)), expected, "cold: {query:?}");
+            assert_eq!(named(&typed.find(query, 6)), expected, "typed: {query:?}");
         }
     }
 
