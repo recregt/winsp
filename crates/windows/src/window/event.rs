@@ -152,14 +152,15 @@ pub(super) fn decode_wm_char(unit: u16) -> Option<char> {
 }
 
 fn decode_utf16_unit(pending: &mut Option<u16>, unit: u16) -> Option<char> {
-    if let Some(high) = pending.take() {
-        if (0xDC00..=0xDFFF).contains(&unit) {
-            let scalar = 0x10000 + (u32::from(high) - 0xD800) * 0x400 + (u32::from(unit) - 0xDC00);
-            char::from_u32(scalar)
-        } else {
-            None
-        }
-    } else if (0xD800..=0xDBFF).contains(&unit) {
+    if let Some(high) = pending.take()
+        && (0xDC00..=0xDFFF).contains(&unit)
+    {
+        let scalar = 0x10000 + (u32::from(high) - 0xD800) * 0x400 + (u32::from(unit) - 0xDC00);
+        return char::from_u32(scalar);
+    }
+    // Either there was no pending high surrogate, or `unit` didn't complete
+    // it (already discarded above): decode `unit` on its own terms.
+    if (0xD800..=0xDBFF).contains(&unit) {
         *pending = Some(unit);
         None
     } else {
@@ -195,11 +196,11 @@ mod tests {
     }
 
     #[test]
-    fn drops_pending_high_surrogate_on_invalid_follow_up() {
+    fn drops_pending_high_surrogate_but_still_decodes_invalid_follow_up() {
         let mut pending = None;
         assert_eq!(decode_utf16_unit(&mut pending, 0xD83D), None);
         assert_eq!(pending, Some(0xD83D));
-        assert_eq!(decode_utf16_unit(&mut pending, 0x0041), None);
+        assert_eq!(decode_utf16_unit(&mut pending, 0x0041), Some('A'));
         assert_eq!(pending, None);
     }
 
