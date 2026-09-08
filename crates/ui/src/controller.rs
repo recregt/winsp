@@ -1,7 +1,7 @@
 use winsp_windows::window::{Anchor, Key, MenuItem, Modifiers, Window, WindowEvent};
 
 use super::hotkey::{self, CaptureOutcome, CommitResult};
-use super::view::{self, render, result_list_height};
+use super::view::{self, render, result_index_at, result_list_height};
 use super::{REFRESH_EVENT, context};
 
 const CMD_TOGGLE: usize = 1001;
@@ -141,6 +141,19 @@ pub(super) fn handle_event(window: &Window, event: WindowEvent) {
                     resize_window_for_results(window, results_count);
                 }
                 window.invalidate();
+            }
+        }
+        WindowEvent::MouseClicked { y, .. } => {
+            let Some(ctx) = context() else {
+                return;
+            };
+            let clicked = ctx.ui_state.lock().ok().and_then(|mut ui_state| {
+                ui_state.settle(&ctx.service);
+                result_index_at(y, ui_state.results().len())
+            });
+            if let Some(index) = clicked {
+                ctx.service.activate(index);
+                window.hide();
             }
         }
         WindowEvent::Redraw => window.paint(|canvas, rect| {

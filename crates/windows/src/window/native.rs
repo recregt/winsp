@@ -24,8 +24,8 @@ use windows::Win32::UI::WindowsAndMessaging::{
     SW_HIDE, SW_SHOW, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SetForegroundWindow,
     SetWindowLongPtrW, SetWindowPos, ShowWindow, SystemParametersInfoW, TranslateMessage, WM_APP,
     WM_CHAR, WM_COMMAND, WM_DESTROY, WM_ERASEBKGND, WM_HOTKEY, WM_KEYDOWN, WM_KILLFOCUS,
-    WM_NCCREATE, WM_PAINT, WM_RBUTTONUP, WM_SYSKEYDOWN, WNDCLASSEXW, WS_EX_TOOLWINDOW,
-    WS_EX_TOPMOST, WS_POPUP,
+    WM_LBUTTONDOWN, WM_NCCREATE, WM_PAINT, WM_RBUTTONUP, WM_SYSKEYDOWN, WNDCLASSEXW,
+    WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP,
 };
 use windows::core::{HSTRING, PCWSTR};
 
@@ -44,6 +44,15 @@ static MAIN_HWND: AtomicIsize = AtomicIsize::new(0);
 /// counts: the character it completes is on its way.
 fn types_a_character(message: &MSG) -> bool {
     char::from_u32(u32::from(message.wParam.0 as u16)).is_none_or(|c| !c.is_control())
+}
+
+/// Client-area coordinates packed into `lParam` by mouse messages: x in the
+/// low 16 bits, y in the high 16 bits, each a signed value.
+fn mouse_position(lparam: LPARAM) -> (i32, i32) {
+    let raw = lparam.0 as u32;
+    let x = (raw & 0xFFFF) as u16 as i16 as i32;
+    let y = ((raw >> 16) & 0xFFFF) as u16 as i16 as i32;
+    (x, y)
 }
 
 pub fn post_event(id: u32) {
@@ -103,6 +112,11 @@ unsafe extern "system" fn dispatch(
         }
         WM_KILLFOCUS => {
             handler(&window, WindowEvent::FocusLost);
+            LRESULT(0)
+        }
+        WM_LBUTTONDOWN => {
+            let (x, y) = mouse_position(lparam);
+            handler(&window, WindowEvent::MouseClicked { x, y });
             LRESULT(0)
         }
         WM_CHAR => {
@@ -560,6 +574,17 @@ mod tests {
     const VK_F13: u16 = 0x7C;
     const VK_F14: u16 = 0x7D;
 
+    #[test]
+    fn mouse_position_unpacks_x_and_y_from_lparam() {
+        assert_eq!(mouse_position(LPARAM(0x00C8_0064)), (100, 200));
+    }
+
+    #[test]
+    fn mouse_position_handles_negative_coordinates() {
+        // -1 packed as an unsigned 16-bit value is 0xFFFF in each half.
+        assert_eq!(mouse_position(LPARAM(0xFFFF_FFFFu32 as isize)), (-1, -1));
+    }
+
     unsafe extern "system" fn noop_wnd_proc(
         hwnd: HWND,
         msg: u32,
@@ -640,6 +665,44 @@ mod tests {
         assert!(
             TASKBAR_RESTARTED_CALLED.load(std::sync::atomic::Ordering::SeqCst),
             "the handler must receive TaskbarRestarted when Explorer's taskbar-created message arrives"
+        );
+
+        unsafe {
+            let _ = DestroyWindow(hwnd);
+            let _ = UnregisterClassW(&class_name, Some(GetModuleHandleW(None).unwrap().into()));
+        }
+    }
+
+    static LAST_CLICK: std::sync::Mutex<Option<(i32, i32)>> = std::sync::Mutex::new(None);
+
+    fn mouse_click_test_handler(_window: &Window, event: WindowEvent) {
+        if let WindowEvent::MouseClicked { x, y } = event {
+            *LAST_CLICK.lock().unwrap() = Some((x, y));
+        }
+    }
+
+    #[test]
+    fn left_button_down_reports_the_click_position() {
+        *LAST_CLICK.lock().unwrap() = None;
+
+        let class_name = HSTRING::from("WinSpTest_MouseClickWindow");
+        let hwnd = create_test_window(&class_name);
+        assert!(!hwnd.is_invalid(), "test window creation should succeed");
+
+        unsafe {
+            SetWindowLongPtrW(
+                hwnd,
+                GWLP_USERDATA,
+                mouse_click_test_handler as *const () as isize,
+            )
+        };
+
+        let _ = unsafe { dispatch(hwnd, WM_LBUTTONDOWN, WPARAM(0), LPARAM(0x0032_0014)) };
+
+        assert_eq!(
+            *LAST_CLICK.lock().unwrap(),
+            Some((20, 50)),
+            "expected the handler to receive the coordinates packed into lParam"
         );
 
         unsafe {

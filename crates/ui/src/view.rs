@@ -20,6 +20,20 @@ pub(super) fn result_list_height(results_count: usize) -> i32 {
     }
 }
 
+/// Index of the result row rendered under the given client-area y, mirroring
+/// the layout `render` lays the rows out with.
+pub(super) fn result_index_at(y: i32, results_count: usize) -> Option<usize> {
+    if results_count == 0 {
+        return None;
+    }
+    let list_top = SEARCH_BAR_HEIGHT + 8;
+    if y < list_top {
+        return None;
+    }
+    let index = usize::try_from((y - list_top) / ITEM_ROW_HEIGHT).ok()?;
+    (index < results_count).then_some(index)
+}
+
 static INTER_REGULAR: &[u8] = include_bytes!("../assets/fonts/Inter-Regular.ttf");
 static INTER_SEMIBOLD: &[u8] = include_bytes!("../assets/fonts/Inter-SemiBold.ttf");
 static INTER_DISPLAY_REGULAR: &[u8] = include_bytes!("../assets/fonts/InterDisplay-Regular.ttf");
@@ -230,6 +244,33 @@ mod tests {
     #[test]
     fn result_list_height_with_no_results_is_just_the_search_bar() {
         assert_eq!(result_list_height(0), SEARCH_BAR_HEIGHT);
+    }
+
+    #[test]
+    fn result_index_at_is_none_with_no_results() {
+        assert_eq!(result_index_at(SEARCH_BAR_HEIGHT + 20, 0), None);
+    }
+
+    #[test]
+    fn result_index_at_is_none_above_the_result_list() {
+        assert_eq!(result_index_at(SEARCH_BAR_HEIGHT, 3), None);
+    }
+
+    #[test]
+    fn result_index_at_finds_the_first_row() {
+        assert_eq!(result_index_at(SEARCH_BAR_HEIGHT + 8, 3), Some(0));
+    }
+
+    #[test]
+    fn result_index_at_finds_a_later_row() {
+        let y = SEARCH_BAR_HEIGHT + 8 + ITEM_ROW_HEIGHT + 5;
+        assert_eq!(result_index_at(y, 3), Some(1));
+    }
+
+    #[test]
+    fn result_index_at_is_none_past_the_last_row() {
+        let y = SEARCH_BAR_HEIGHT + 8 + (3 * ITEM_ROW_HEIGHT);
+        assert_eq!(result_index_at(y, 3), None);
     }
 
     #[test]
