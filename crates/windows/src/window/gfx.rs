@@ -1,10 +1,10 @@
 use windows::Win32::Foundation::{COLORREF, RECT, SIZE};
 use windows::Win32::Graphics::Gdi::{
-    AddFontMemResourceEx, CreateFontW, CreatePen, CreateSolidBrush, DEFAULT_GUI_FONT, DT_CENTER,
-    DT_LEFT, DT_SINGLELINE, DT_VCENTER, DeleteObject, DrawTextW, FONT_CHARSET, FONT_CLIP_PRECISION,
-    FONT_OUTPUT_PRECISION, FONT_QUALITY, FW_NORMAL, FW_SEMIBOLD, FillRect, GetStockObject,
-    GetTextExtentPoint32W, HDC, HFONT, HGDIOBJ, LineTo, MoveToEx, PS_SOLID, SelectObject,
-    SetTextColor,
+    AddFontMemResourceEx, CLEARTYPE_QUALITY, CreateFontW, CreatePen, CreateSolidBrush,
+    DEFAULT_GUI_FONT, DT_CENTER, DT_LEFT, DT_SINGLELINE, DT_VCENTER, DeleteObject, DrawTextW,
+    FONT_CHARSET, FONT_CLIP_PRECISION, FONT_OUTPUT_PRECISION, FW_NORMAL, FW_SEMIBOLD, FillRect,
+    GetStockObject, GetTextExtentPoint32W, HDC, HFONT, HGDIOBJ, LineTo, MoveToEx, PS_SOLID,
+    SelectObject, SetTextColor,
 };
 use windows::Win32::UI::WindowsAndMessaging::{DI_NORMAL, DrawIconEx, HICON};
 use windows::core::HSTRING;
@@ -195,7 +195,7 @@ impl Font {
                 FONT_CHARSET(0),
                 FONT_OUTPUT_PRECISION(0),
                 FONT_CLIP_PRECISION(0),
-                FONT_QUALITY(0),
+                CLEARTYPE_QUALITY,
                 0,
                 &font_name,
             );
