@@ -89,6 +89,13 @@ impl UiState {
         self.stale = true;
     }
 
+    fn insert_text(&mut self, text: &str) {
+        let filtered = text.chars().filter(|c| !c.is_control());
+        let before = self.query.len();
+        self.query.extend(filtered);
+        self.stale = self.stale || self.query.len() != before;
+    }
+
     fn backspace(&mut self) {
         if self.query.pop().is_some() {
             self.stale = true;
@@ -204,6 +211,39 @@ mod tests {
 
         assert_eq!(state.query(), "calc");
         assert!(state.results().is_empty());
+    }
+
+    #[test]
+    fn insert_text_appends_pasted_text_and_refreshes() {
+        let service = empty_service();
+        let mut state = UiState::new(&service);
+
+        state.insert_text("calc");
+        state.settle(&service);
+
+        assert_eq!(state.query(), "calc");
+    }
+
+    #[test]
+    fn insert_text_strips_control_characters() {
+        let service = empty_service();
+        let mut state = UiState::new(&service);
+
+        state.insert_text("ca\nlc\t");
+        state.settle(&service);
+
+        assert_eq!(state.query(), "calc");
+    }
+
+    #[test]
+    fn insert_text_with_only_control_characters_does_not_mark_state_stale() {
+        let service = empty_service();
+        let mut state = UiState::new(&service);
+        state.settle(&service);
+
+        state.insert_text("\n\t");
+
+        assert!(!state.settle(&service), "an empty paste should not refresh");
     }
 
     #[test]
