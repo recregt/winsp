@@ -165,9 +165,10 @@ fn insert_if_shortcut(
     if ext_lower != "lnk" && ext_lower != "url" {
         return;
     }
-    let Some(stem) = path.file_stem().and_then(|s| s.to_str()) else {
+    let Some(stem) = path.file_stem() else {
         return;
     };
+    let stem = stem.to_string_lossy();
     let stem_lower = stem.to_lowercase();
 
     let resolved = shortcut::resolve_target(path, &ext_lower);
@@ -746,6 +747,28 @@ mod tests {
         let apps = Apps::for_test_dirs(vec![dir.path().into()]);
 
         assert_eq!(names(&apps.items()), vec!["Uninstall Foo"]);
+    }
+
+    #[test]
+    fn keeps_a_shortcut_whose_stem_is_not_valid_unicode() {
+        use std::os::windows::ffi::OsStringExt;
+
+        let dir = tempfile::tempdir().unwrap();
+        // A lone low surrogate is a valid Windows filename character but has
+        // no UTF-8 representation.
+        let mut wide: Vec<u16> = "App".encode_utf16().collect();
+        wide.push(0xDC00);
+        wide.extend(".lnk".encode_utf16());
+        let path = dir.path().join(std::ffi::OsString::from_wide(&wide));
+
+        let mut shortcuts = HashMap::new();
+        insert_if_shortcut(&path, 0, &mut shortcuts);
+
+        assert_eq!(
+            shortcuts.len(),
+            1,
+            "a shortcut with a non-Unicode stem should still be indexed, not skipped"
+        );
     }
 
     #[test]
