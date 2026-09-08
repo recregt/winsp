@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::sync::OnceLock;
 
 use winsp_service::{ResultRow, RowIcon};
@@ -32,6 +33,32 @@ pub(super) fn result_index_at(y: i32, results_count: usize) -> Option<usize> {
     }
     let index = usize::try_from((y - list_top) / ITEM_ROW_HEIGHT).ok()?;
     (index < results_count).then_some(index)
+}
+
+/// Shortens a filesystem-path-shaped subtitle to `drive\folder\...\filename`
+/// before drawing, so the collapsed portion always lands in the same
+/// predictable place rather than wherever `DrawTextW`'s own `DT_PATH_ELLIPSIS`
+/// happens to cut. That GDI-level ellipsis still runs on the result (via
+/// `draw_text_ellipsized`) as a fallback for when even this shortened form is
+/// still too wide for the row, e.g. an unusually long file name.
+fn shorten_path_for_display(text: &str) -> Cow<'_, str> {
+    if !text.contains('\\') {
+        return Cow::Borrowed(text);
+    }
+
+    let is_unc = text.starts_with(r"\\");
+    let segments: Vec<&str> = text.split('\\').filter(|s| !s.is_empty()).collect();
+    let Some((filename, rest)) = segments.split_last() else {
+        return Cow::Borrowed(text);
+    };
+    if segments.len() <= 3 {
+        return Cow::Borrowed(text);
+    }
+
+    let head_len = 2.min(rest.len());
+    let head = rest[..head_len].join("\\");
+    let prefix = if is_unc { r"\\" } else { "" };
+    Cow::Owned(format!("{prefix}{head}\\...\\{filename}"))
 }
 
 static INTER_REGULAR: &[u8] = include_bytes!("../assets/fonts/Inter-Regular.ttf");
@@ -230,7 +257,7 @@ pub(super) fn render(canvas: &Canvas, state: &UiState, client_rect: Rect) {
                 right: WINDOW_WIDTH - 32,
                 bottom: current_y + ITEM_ROW_HEIGHT - 8,
             };
-            canvas.draw_text_ellipsized(sub, sub_rect);
+            canvas.draw_text_ellipsized(&shorten_path_for_display(sub), sub_rect);
         }
 
         current_y += ITEM_ROW_HEIGHT;
@@ -244,6 +271,48 @@ mod tests {
     #[test]
     fn result_list_height_with_no_results_is_just_the_search_bar() {
         assert_eq!(result_list_height(0), SEARCH_BAR_HEIGHT);
+    }
+
+    #[test]
+    fn shortens_a_deeply_nested_path_to_drive_folder_ellipsis_filename() {
+        assert_eq!(
+            shorten_path_for_display(r"C:\Program Files\Vendor\Product\1.2.3\bin\app.exe"),
+            r"C:\Program Files\...\app.exe"
+        );
+    }
+
+    #[test]
+    fn leaves_a_short_path_unchanged() {
+        assert_eq!(
+            shorten_path_for_display(r"C:\Windows\app.exe"),
+            r"C:\Windows\app.exe"
+        );
+    }
+
+    #[test]
+    fn leaves_plain_text_without_backslashes_unchanged() {
+        assert_eq!(
+            shorten_path_for_display("Microsoft Calculator"),
+            "Microsoft Calculator"
+        );
+    }
+
+    #[test]
+    fn preserves_the_unc_prefix_on_a_long_network_path() {
+        assert_eq!(
+            shorten_path_for_display(r"\\server\share\folder\file.exe"),
+            r"\\server\share\...\file.exe"
+        );
+    }
+
+    #[test]
+    fn does_not_panic_on_a_path_of_only_separators() {
+        assert_eq!(shorten_path_for_display(r"\\\"), r"\\\");
+    }
+
+    #[test]
+    fn does_not_panic_on_an_empty_string() {
+        assert_eq!(shorten_path_for_display(""), "");
     }
 
     #[test]
