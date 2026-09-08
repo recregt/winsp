@@ -1,5 +1,5 @@
-use winsp_core::index::{Index, Match};
 use winsp_core::models::{AppItem, LaunchTarget, SearchResult, SearchResultKind};
+use winsp_index::{Index, Match};
 
 fn to_results(matches: Vec<Match<AppItem>>) -> Vec<SearchResult> {
     matches

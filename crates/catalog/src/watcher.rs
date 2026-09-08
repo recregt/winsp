@@ -2,8 +2,8 @@ use std::sync::mpsc::{RecvTimeoutError, Sender, TryRecvError};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use winsp_core::index::Index;
 use winsp_core::models::AppItem;
+use winsp_index::Index;
 use winsp_windows::system::watcher::{WatchEvent, Watcher};
 
 use crate::Sources;

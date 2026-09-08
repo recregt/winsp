@@ -790,16 +790,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "nucleo-matcher"
-version = "0.3.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bf33f538733d1a5a3494b836ba913207f14d9d4a1d3cd67030c5061bdd2cac85"
-dependencies = [
- "memchr",
- "unicode-segmentation",
-]
-
-[[package]]
 name = "num-derive"
 version = "0.3.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1729,6 +1719,7 @@ dependencies = [
  "tempfile",
  "walkdir",
  "winsp-core",
+ "winsp-index",
  "winsp-windows",
 ]
 
@@ -1749,8 +1740,17 @@ dependencies = [
  "codspeed-criterion-compat",
  "compact_str",
  "logos",
- "nucleo-matcher",
+ "winsp-index",
+]
+
+[[package]]
+name = "winsp-index"
+version = "0.3.0"
+dependencies = [
+ "codspeed-criterion-compat",
+ "memchr",
  "trybuild",
+ "unicode-segmentation",
 ]
 
 [[package]]
@@ -1760,6 +1760,7 @@ dependencies = [
  "codspeed-criterion-compat",
  "compact_str",
  "winsp-core",
+ "winsp-index",
 ]
 
 [[package]]
@@ -1769,6 +1770,7 @@ dependencies = [
  "winsp-catalog",
  "winsp-config",
  "winsp-core",
+ "winsp-index",
  "winsp-search",
  "winsp-windows",
 ]

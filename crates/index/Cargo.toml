@@ -1,0 +1,33 @@
+[package]
+name = "winsp-index"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license = "MPL-2.0"
+authors.workspace = true
+
+[dependencies]
+memchr = "2.5.0"
+unicode-segmentation = { version = "1.10", optional = true }
+
+[features]
+default = ["unicode-normalization", "unicode-casefold", "unicode-segmentation"]
+unicode-normalization = []
+unicode-casefold = []
+unicode-segmentation = ["dep:unicode-segmentation"]
+
+[dev-dependencies]
+criterion = { version = "5.0.1", package = "codspeed-criterion-compat", features = ["html_reports"] }
+trybuild = "1"
+
+[[bench]]
+name = "search"
+harness = false
+
+[[bench]]
+name = "indexing"
+harness = false
+
+[[test]]
+name = "compile_fail"
+path = "tests/compile_fail/mod.rs"

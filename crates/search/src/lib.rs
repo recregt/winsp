@@ -2,8 +2,8 @@
 
 use compact_str::CompactString;
 use winsp_core::calc;
-use winsp_core::index::{Index, Match};
 use winsp_core::models::{AppItem, SearchResult};
+use winsp_index::{Index, Match};
 
 trait LiveSource {
     fn query(&self, input: &str) -> Option<SearchResult>;

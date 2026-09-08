@@ -1,6 +1,7 @@
 [workspace]
 members = [
     "crates/core",
+    "crates/index",
     "crates/windows",
     "crates/search",
     "crates/catalog",

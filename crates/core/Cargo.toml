@@ -9,24 +9,11 @@ authors.workspace = true
 [dependencies]
 compact_str = "0.10"
 logos = "0.16"
-nucleo-matcher = "=0.3.1"
+winsp-index = { path = "../index" }
 
 [dev-dependencies]
 criterion = { version = "5.0.1", package = "codspeed-criterion-compat", features = ["html_reports"] }
-trybuild = "1"
-
-[[bench]]
-name = "search"
-harness = false
 
 [[bench]]
 name = "calculator"
 harness = false
-
-[[bench]]
-name = "indexing"
-harness = false
-
-[[test]]
-name = "compile_fail"
-path = "tests/compile_fail/mod.rs"

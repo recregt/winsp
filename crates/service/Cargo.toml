@@ -13,5 +13,6 @@ test-support = []
 winsp-catalog = { path = "../catalog" }
 winsp-config = { path = "../config" }
 winsp-core = { path = "../core" }
+winsp-index = { path = "../index" }
 winsp-search = { path = "../search" }
 winsp-windows = { path = "../windows" }

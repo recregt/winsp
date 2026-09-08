@@ -10,6 +10,7 @@ authors.workspace = true
 lnk = "0.6"
 walkdir = "2.5.0"
 winsp-core = { path = "../core" }
+winsp-index = { path = "../index" }
 winsp-windows = { path = "../windows" }
 
 [dev-dependencies]
