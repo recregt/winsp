@@ -202,7 +202,7 @@ impl Ranking {
     }
 
     fn rebuild<T: IndexableItem>(&mut self, items: &[Arc<T>]) {
-        self.scan = ScanTable::build(items);
+        self.scan.rebuild(items);
         self.narrowing.get_mut().take();
     }
 
@@ -803,26 +803,28 @@ impl ScanRow {
 }
 
 impl ScanTable {
-    fn build<T: IndexableItem>(items: &[Arc<T>]) -> Self {
+    fn rebuild<T: IndexableItem>(&mut self, items: &[Arc<T>]) {
+        self.names.clear();
+        self.keywords.clear();
+        self.prefilter.clear();
+        self.launch_counts.clear();
+        self.rows.clear();
+
         let names_len: usize = items.iter().map(|item| item.name().len()).sum();
         let keywords_len: usize = items
             .iter()
             .flat_map(|item| item.keywords())
             .map(|keyword| keyword.len() + 1)
             .sum();
-        let mut table = Self {
-            names: String::with_capacity(names_len),
-            keywords: String::with_capacity(keywords_len),
-            prefilter: Vec::with_capacity(items.len()),
-            launch_counts: Vec::with_capacity(items.len()),
-            rows: Vec::with_capacity(items.len()),
-            spare_matched: RefCell::new(Vec::new()),
-            scratch: RefCell::new(ScanScratch::default()),
-        };
+        self.names.reserve(names_len);
+        self.keywords.reserve(keywords_len);
+        self.prefilter.reserve(items.len());
+        self.launch_counts.reserve(items.len());
+        self.rows.reserve(items.len());
+
         for item in items {
-            table.push(item.as_ref());
+            self.push(item.as_ref());
         }
-        table
     }
 
     fn push<T: IndexableItem>(&mut self, item: &T) {
