@@ -1,5 +1,3 @@
-use lnk::encoding::WINDOWS_1252;
-
 pub(crate) fn resolve_target(path: &std::path::Path, ext_lower: &str) -> Option<String> {
     match ext_lower {
         "lnk" => resolve_lnk_target(path),
@@ -9,7 +7,8 @@ pub(crate) fn resolve_target(path: &std::path::Path, ext_lower: &str) -> Option<
 }
 
 fn resolve_lnk_target(path: &std::path::Path) -> Option<String> {
-    let shell_link = lnk::ShellLink::open(path, WINDOWS_1252).ok()?;
+    let shell_link =
+        lnk::ShellLink::open(path, winsp_windows::system::codepage::system_encoding()).ok()?;
     identity_from_shell_link(&shell_link)
 }
 
@@ -79,7 +78,8 @@ fn expand_env_vars(raw: &str) -> String {
 }
 
 fn resolve_url_target(path: &std::path::Path) -> Option<String> {
-    let contents = std::fs::read_to_string(path).ok()?;
+    let bytes = std::fs::read(path).ok()?;
+    let contents = winsp_windows::system::codepage::decode(&bytes);
     contents.lines().find_map(|line| {
         let (key, value) = line.split_once('=')?;
         if key.trim().eq_ignore_ascii_case("URL") {
@@ -115,5 +115,38 @@ mod tests {
         let shell_link = lnk::ShellLink::default();
 
         assert_eq!(identity_from_shell_link(&shell_link), None);
+    }
+
+    #[test]
+    fn resolves_url_target_from_a_legacy_code_page_encoded_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("App.url");
+        let text = "[InternetShortcut]\nURL=https://example.com/café\n";
+        let (encoded, _, had_unmappable) =
+            winsp_windows::system::codepage::system_encoding().encode(text);
+        assert!(
+            !had_unmappable,
+            "the system code page should be able to represent this test string"
+        );
+        std::fs::write(&path, &encoded).unwrap();
+
+        assert_eq!(
+            resolve_url_target(&path),
+            Some("https://example.com/café".to_string())
+        );
+    }
+
+    #[test]
+    fn resolves_url_target_from_a_utf8_bom_encoded_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("App.url");
+        let mut bytes = vec![0xEF, 0xBB, 0xBF];
+        bytes.extend_from_slice(b"[InternetShortcut]\nURL=https://example.com/app\n");
+        std::fs::write(&path, &bytes).unwrap();
+
+        assert_eq!(
+            resolve_url_target(&path),
+            Some("https://example.com/app".to_string())
+        );
     }
 }

@@ -1787,6 +1787,7 @@ dependencies = [
 name = "winsp-windows"
 version = "0.3.0"
 dependencies = [
+ "encoding_rs",
  "lru",
  "notify-debouncer-mini",
  "tempfile",

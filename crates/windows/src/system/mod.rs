@@ -3,6 +3,7 @@ mod registry;
 
 pub mod autostart;
 pub mod clipboard;
+pub mod codepage;
 pub mod single_instance;
 pub mod theme;
 pub mod toast;
