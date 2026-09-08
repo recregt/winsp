@@ -94,11 +94,20 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+          if existing_assets=$(gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name' 2>/dev/null); then
+            conflict=0
+            for asset in winsp.msix winsp.msix.sha256; do
+              if grep -qx "$asset" <<< "$existing_assets"; then
+                echo "::error::Release $GITHUB_REF_NAME already has asset '$asset'. Refusing to silently overwrite a published release asset; delete it from the release manually first if this rerun is intentional."
+                conflict=1
+              fi
+            done
+            if [ "$conflict" -eq 1 ]; then
+              exit 1
+            fi
             echo "Release $GITHUB_REF_NAME already exists, uploading assets only."
             gh release upload "$GITHUB_REF_NAME" \
               --repo "$GITHUB_REPOSITORY" \
-              --clobber \
               winsp.msix winsp.msix.sha256
           else
             gh release create "$GITHUB_REF_NAME" \
