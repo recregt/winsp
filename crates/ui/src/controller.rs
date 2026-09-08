@@ -12,6 +12,7 @@ const CMD_POSITION_TOP: usize = 1005;
 const CMD_POSITION_CENTER: usize = 1006;
 
 const STARTUP_TASK_ID: &str = "WinSPStartup";
+const VK_V: u16 = 0x56;
 
 pub(super) fn handle_event(window: &Window, event: WindowEvent) {
     match event {
@@ -122,6 +123,12 @@ pub(super) fn handle_event(window: &Window, event: WindowEvent) {
                     }
                     Key::Escape => {
                         should_hide = true;
+                    }
+                    Key::Other(VK_V) if modifiers.ctrl => {
+                        if let Some(text) = winsp_windows::system::clipboard::paste() {
+                            ui_state.insert_text(&text);
+                        }
+                        settled = !more_typing && ui_state.settle(&ctx.service);
                     }
                     _ => {
                         settled = !more_typing && ui_state.settle(&ctx.service);
