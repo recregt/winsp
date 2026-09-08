@@ -5,7 +5,7 @@
 // Portions Copyright (c) 2023-2024 Pascal Kuthe <pascalkuthe@pm.me>
 // Portions Copyright (c) 2026 Ömer Tekin
 
-use crate::matcher::chars::Char;
+use crate::matcher::chars::{AsciiChar, Char, CharClass, ascii_char_class};
 use crate::matcher::pattern::{CaseMatching, Normalization, Pattern};
 use crate::matcher::score::{
     BONUS_BOUNDARY, BONUS_CAMEL123, BONUS_CONSECUTIVE, BONUS_FIRST_CHAR_MULTIPLIER, BONUS_NON_WORD,
@@ -743,4 +743,40 @@ fn umlaut() {
     let matches = Pattern::parse("e", CaseMatching::Ignore, Normalization::Smart)
         .match_list(paths, &mut matcher);
     assert_eq!(matches.len(), 2);
+}
+
+/// Every configuration a matcher can be built with answers with the tables it
+/// was built with, and those tables hold what the definitions they are built
+/// from say. What this really pins is that nothing changes a field a table is
+/// derived from without rebuilding it.
+#[test]
+fn tables_agree_with_their_definitions() {
+    let mut match_paths = Config::DEFAULT;
+    match_paths.set_match_paths();
+    let configs = [Config::DEFAULT, Config::DEFAULT.match_paths(), match_paths];
+
+    for config in configs {
+        for byte in 0..=u8::MAX {
+            assert_eq!(
+                AsciiChar(byte).char_class(&config),
+                ascii_char_class(byte, config.delimiter_chars),
+                "class of {byte:#04x} with delimiters {:?}",
+                config.delimiter_chars,
+            );
+        }
+
+        for prev_class in 0..CharClass::COUNT {
+            for class in 0..CharClass::COUNT {
+                let (prev_class, class) = (
+                    CharClass::from_index(prev_class),
+                    CharClass::from_index(class),
+                );
+                assert_eq!(
+                    config.bonus_for(prev_class, class),
+                    config.compute_bonus(prev_class, class),
+                    "bonus for {class:?} after {prev_class:?}",
+                );
+            }
+        }
+    }
 }

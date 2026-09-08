@@ -55,9 +55,21 @@ pub(crate) const BONUS_CONSECUTIVE: u16 = PENALTY_GAP_START + PENALTY_GAP_EXTENS
 pub(crate) const BONUS_FIRST_CHAR_MULTIPLIER: u16 = 2;
 
 impl Config {
+    /// The bonus a character of `class` earns where the character before it is
+    /// of `prev_class`.
+    ///
+    /// Read out of the table a config builds instead of tested for: the answer
+    /// depends on nothing that changes while a haystack is scored, and the
+    /// scoring loops ask for one per character.
     #[inline]
     pub(crate) fn bonus_for(&self, prev_class: CharClass, class: CharClass) -> u16 {
-        if class > CharClass::Delimiter {
+        self.bonuses[prev_class as usize * CharClass::COUNT + class as usize]
+    }
+
+    /// What [`Config::bonus_for`] answers with, and the definition it is built
+    /// from.
+    pub(crate) const fn compute_bonus(&self, prev_class: CharClass, class: CharClass) -> u16 {
+        if class as u8 > CharClass::Delimiter as u8 {
             // transition from non word to word
             match prev_class {
                 CharClass::Whitespace => return self.bonus_boundary_white,
@@ -66,14 +78,14 @@ impl Config {
                 _ => (),
             }
         }
-        if prev_class == CharClass::Lower && class == CharClass::Upper
-            || prev_class != CharClass::Number && class == CharClass::Number
+        if matches!(prev_class, CharClass::Lower) && matches!(class, CharClass::Upper)
+            || !matches!(prev_class, CharClass::Number) && matches!(class, CharClass::Number)
         {
             // camelCase letter123
             BONUS_CAMEL123
-        } else if class == CharClass::Whitespace {
+        } else if matches!(class, CharClass::Whitespace) {
             self.bonus_boundary_white
-        } else if class == CharClass::NonWord {
+        } else if matches!(class, CharClass::NonWord) {
             return BONUS_NON_WORD;
         } else {
             0
