@@ -142,10 +142,6 @@ pub enum SearchResultKind {
         query: String,
         url: String,
     },
-    SystemCommand {
-        command: String,
-        description: String,
-    },
 }
 
 const CALCULATION_SCORE: i32 = i32::MAX;

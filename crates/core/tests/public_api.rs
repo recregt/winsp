@@ -67,7 +67,6 @@ fn test_search_result_kind_is_exhaustively_matchable() {
         SearchResultKind::App(item) => item.name().to_string(),
         SearchResultKind::Calculation { result, .. } => result.to_string(),
         SearchResultKind::WebSearch { query, .. } => query.clone(),
-        SearchResultKind::SystemCommand { command, .. } => command.clone(),
     };
     assert_eq!(description, "4");
 }
