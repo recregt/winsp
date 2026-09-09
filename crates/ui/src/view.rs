@@ -207,16 +207,26 @@ pub(super) fn render(canvas: &Canvas, state: &UiState, client_rect: Rect) {
         };
         {
             let _font = canvas.select_font(&fonts().item_title);
-            draw_highlighted_title(
-                canvas,
-                &result.title,
-                &result.matched_char_indices,
+            let title_rect = if result.subtitle.is_some() {
                 Rect {
                     left: TEXT_LEFT,
                     top: current_y + 4,
                     right: WINDOW_WIDTH - 32,
                     bottom: current_y + 26,
-                },
+                }
+            } else {
+                Rect {
+                    left: TEXT_LEFT,
+                    top: current_y,
+                    right: WINDOW_WIDTH - 32,
+                    bottom: current_y + ITEM_ROW_HEIGHT - 6,
+                }
+            };
+            draw_highlighted_title(
+                canvas,
+                &result.title,
+                &result.matched_char_indices,
+                title_rect,
                 base_color,
             );
         }

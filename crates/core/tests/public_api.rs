@@ -39,7 +39,7 @@ fn test_full_flow_from_construction_to_search_result() {
     let results = to_results(index.search("notepad", 5));
     assert_eq!(results.len(), 1);
     assert_eq!(results[0].title.as_ref(), "Notepad");
-    assert_eq!(results[0].subtitle.as_deref(), Some("notepad.exe"));
+    assert_eq!(results[0].subtitle.as_deref(), None);
     let SearchResultKind::App(item) = &results[0].kind else {
         panic!("expected an App result");
     };

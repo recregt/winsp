@@ -157,12 +157,7 @@ pub struct SearchResult {
 
 impl SearchResult {
     pub fn from_app(item: Arc<AppItem>, score: i32, matched_char_indices: Vec<usize>) -> Self {
-        // Copied straight into the `Arc<str>`: cloning the `String` first would
-        // allocate a buffer that the conversion only reads and then frees.
-        let subtitle = item.description_arc().or_else(|| match item.target() {
-            LaunchTarget::Path(p) => Some(Arc::from(p.as_str())),
-            _ => None,
-        });
+        let subtitle = item.description_arc();
 
         Self {
             title: item.name_arc(),
